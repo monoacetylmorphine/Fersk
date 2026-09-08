@@ -47,16 +47,16 @@
     },
     "models": {
       "text": {
-        "model": "deepseek-v4-flash",
-        "provider": "deepseek"
+        "model": "gpt-5.6-terra",
+        "provider": "openai"
       },
       "image": {
-        "model": "deepseek-v4-flash-vision-exp",
-        "provider": "deepseek"
+        "model": "gpt-5.6-terra",
+        "provider": "openai"
       },
       "multimodal": {
-        "model": "deepseek-v4-flash-vision-exp",
-        "provider": "deepseek"
+        "model": "gpt-5.6-terra",
+        "provider": "openai"
       }
     },
     "retry": {

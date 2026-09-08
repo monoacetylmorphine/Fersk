@@ -8,9 +8,18 @@ dependencies = [
     "mcp[cli]>=2.2.0",
 ]
 
-[project.scripts]
-fersk-mcp = "fersk_mcp:main"
 
-[build-system]
-requires = ["uv_build>=0.12.10,<0.13.0"]
-build-backend = "uv_build"
+
+# [project.scripts]
+# fersk-codex = "fersk_mcp:main"
+
+# [build-system]
+# requires = ["uv_build>=0.12.10,<0.13.0"]
+# build-backend = "uv_build"
+
+[tool.uv]
+package = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]

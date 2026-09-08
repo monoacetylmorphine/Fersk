@@ -3,7 +3,7 @@
 !Dockerfile
 !.dockerignore
 !pyproject.toml
-!requirements.txt
+!uv.lock
 !README.md
 !__init__.py
 !gateway.py
