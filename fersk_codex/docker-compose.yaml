@@ -1,0 +1,38 @@
+services:
+  fersk-codex:
+    build:
+      context: .
+      args:
+        APP_USER: ${APP_USER:-app}
+        APP_UID: ${LOCAL_UID:-1000}
+        APP_GID: ${LOCAL_GID:-1000}
+        PYTHON_PACKAGE_INDEX: ${PYTHON_PACKAGE_INDEX:-https://pypi.org/simple}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      HOME: /home/${APP_USER:-app}
+      CODEX_HOME: /home/${APP_USER:-app}/.codex
+      # Credentials and the installed tracing plugin come from the .codex mount.
+      TRACE_TO_LANGFUSE: ${TRACE_TO_LANGFUSE:-true}
+      LANGFUSE_CODEX_BASE_URL: ${LANGFUSE_CODEX_BASE_URL:-http://langfuse-web:3000}
+    networks:
+      - ai-infra
+    volumes:
+      - type: bind
+        source: ${HOST_CODEX_DIR:-${HOME}/.codex}
+        target: /home/${APP_USER:-app}/.codex
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_FERSK_DIR:-${HOME}/.fersk}
+        target: /home/${APP_USER:-app}/.fersk
+        bind:
+          create_host_path: false
+    # The application reads ~/.fersk/.env directly using python-dotenv.
+    # The gateway connects to Lark over WebSocket; no published port is needed.
+
+networks:
+  ai-infra:
+    external: true
+    name: ${LANGFUSE_NETWORK:-ai-infra}

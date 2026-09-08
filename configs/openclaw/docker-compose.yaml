@@ -1,0 +1,52 @@
+services:
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-gateway
+    restart: unless-stopped
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: 59736ac9cdc7a717948d5bcfb5e814a2bbc2955fe6f70c49
+      OPENCLAW_GATEWAY_MODE: local 
+      TZ: Asia/Shanghai
+    env_file:
+      - ~/.openclaw/.env
+    volumes:
+      - ~/.openclaw:/home/node/.openclaw
+    ports:
+      - "127.0.0.1:18789:18789"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    init: true
+    command:
+      [
+        "node",
+        "dist/index.js",
+        "gateway",
+        "--bind",
+        "lan",
+        "--port",
+        "18789",
+        # "--allow-unconfigured",
+      ]
+    networks:
+      - ai-infra
+
+  # openclaw-cli:
+  #   image: ghcr.io/openclaw/openclaw:latest
+  #   container_name: openclaw-cli
+  #   network_mode: "service:openclaw-gateway"
+  #   environment:
+  #     OPENCLAW_GATEWAY_TOKEN: 59736ac9cdc7a717948d5bcfb5e814a2bbc2955fe6f70c49
+  #     TZ: Asia/Shanghai
+  #   volumes:
+  #     - ~/.openclaw:/home/node/.openclaw
+  #     - ~/.openclaw-auth-profile-secrets:/home/node/.config/openclaw
+  #   stdin_open: true
+  #   tty: true
+  #   init: true
+  #   entrypoint: ["node", "dist/index.js"]
+  #   depends_on:
+  #     - openclaw-gateway
+
+networks:
+  ai-infra:
+    external: true

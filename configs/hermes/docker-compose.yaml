@@ -1,0 +1,42 @@
+services:
+  hermes:
+    image: nousresearch/hermes-agent:latest
+    user: "0:0"
+    container_name: hermes
+    restart: unless-stopped
+    command: ["gateway", "run"]
+
+    env_file:
+      - /Users/renxiaoyao/.hermes/.env
+
+    ports:
+      - 127.0.0.1:9119:9119
+
+    volumes:
+      - ~/.hermes:/opt/data
+
+    environment:
+      HERMES_DASHBOARD: "1"
+      HERMES_UID: 501
+      HERMES_GID: 20
+      HERMES_WORKSPACE: /opt/data/workspace
+      ENV_CHECK_VENV_ROOT: /opt/data/workspace
+      ENV_CHECK_WORKSPACE_DIR: /opt/data/workspace
+      SKILL_PYTHON_VERSION: "3.13"
+      HERMES_WRITE_SAFE_ROOT: /opt/data/workspace
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: admin
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: renxiaoyao
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9119/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    networks:
+      - ai-infra
+
+networks:
+  ai-infra:
+    external: true

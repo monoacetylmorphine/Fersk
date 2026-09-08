@@ -1,0 +1,1517 @@
+{
+  "env": {
+    "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+    "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY}",
+    "MOONSHOT_API_KEY": "${MOONSHOT_API_KEY}",
+    "ZHIPU_API_KEY": "${ZHIPU_API_KEY}",
+    "TAVILY_API_KEY": "${TAVILY_API_KEY}",
+    "LANGFUSE_SECRET_KEY": "${LANGFUSE_SECRET_KEY}",
+    "LANGFUSE_PUBLIC_KEY": "${LANGFUSE_PUBLIC_KEY}"
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/home/node/.openclaw/workspace",
+      "contextInjection": "continuation-skip",
+      "heartbeat": {
+        "every": "0m"
+      },
+      "skipOptionalBootstrapFiles": [
+        "HEARTBEAT.md"
+      ],
+      "startupContext": {
+        "enabled": true,
+        "applyOn": [
+          "new",
+          "reset"
+        ],
+        "dailyMemoryDays": 3,
+        "maxFileBytes": 32768,
+        "maxFileChars": 2400,
+        "maxTotalChars": 24000
+      },
+      "contextLimits": {
+        "memoryGetMaxChars": 50000,
+        "memoryGetDefaultLines": 120,
+        "postCompactionMaxChars": 10000
+      },
+      "imageQuality": "auto",
+      "userTimezone": "Asia/Shanghai",
+      "timeFormat": "24",
+      "models": {
+        "custom-ai-soulecho-cc/gpt-5.6-sol": {
+          "alias": "GPT-5.6-SOL"
+        },
+        "custom-ai-soulecho-cc/gpt-5.6-terra": {
+          "alias": "GPT-5.6-TERRA"
+        },
+        "deepseek/deepseek-v4-flash": {
+          "alias": "DeepSeek-V4-FLASH"
+        },
+        "deepseek/deepseek-v4-pro": {
+          "alias": "DeepSeek-V4-PRO"
+        },
+        "moonshot/kimi-k3": {
+          "alias": "Kimi-K3"
+        },
+        "moonshot/kimi-k2.6": {
+          "alias": "Kimi-K2.6"
+        },
+        "zai/glm-5.2": {
+          "alias": "GLM-5.2"
+        },
+        "zai/glm-5.1": {
+          "alias": "GLM-5.1"
+        }
+      },
+      "model": {
+        "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
+        "fallbacks": [
+          "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "deepseek/deepseek-v4-pro",
+          "zai/glm-5.2",
+          "moonshot/kimi-k3"
+        ]
+      },
+      "memorySearch": {
+        "provider": "none"
+      },
+      "reasoningDefault": "stream",
+      "thinkingDefault": "low",
+      "compaction": {
+        "mode": "safeguard",
+        "timeoutSeconds": 600,
+        "reserveTokensFloor": 80000,
+        "keepRecentTokens": 200000,
+        "recentTurnsPreserve": 5,
+        "maxHistoryShare": 0.4,
+        "identifierPolicy": "strict",
+        "qualityGuard": {
+          "enabled": true,
+          "maxRetries": 2
+        },
+        "midTurnPrecheck": {
+          "enabled": true
+        },
+        "postIndexSync": "async",
+        "postCompactionSections": [
+          "Session Startup",
+          "Red Lines"
+        ],
+        "truncateAfterCompaction": true,
+        "maxActiveTranscriptBytes": "2.8mb",
+        "notifyUser": true,
+        "memoryFlush": {
+          "enabled": true,
+          "model": "deepseek/deepseek-v4-flash",
+          "softThresholdTokens": 10000,
+          "forceFlushTranscriptBytes": "3mb",
+          "systemPrompt": "Session nearing compaction. Store durable memories now.",
+          "prompt": "Write any lasting notes to memory/YYYY-MM-DD.md; reply with the exact silent token NO_REPLY if nothing to store."
+        }
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "name": "main",
+        "workspace": "/home/node/.openclaw/workspace",
+        "agentDir": "/home/node/.openclaw/agents/main/agent",
+        "tools": {
+          "alsoAllow": [
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node",
+            "message",
+            "agents_list",
+            "feishu_ask_user_question",
+            "feishu_task_section",
+            "tavily_extract",
+            "tavily_search"
+          ],
+          "deny": [
+            "x_search",
+            "video_generate",
+            "music_generate",
+            "image_generate"
+          ]
+        },
+        "skills": [
+          "feishu-bitable",
+          "feishu-calendar",
+          "feishu-channel-rules",
+          "feishu-create-doc",
+          "feishu-fetch-doc",
+          "feishu-im-read",
+          "feishu-task",
+          "feishu-troubleshoot",
+          "feishu-update-doc",
+          "tavily",
+          "speak-to-text",
+          "docx",
+          "multi-search-engine",
+          "opencli",
+          "pdf",
+          "pptx",
+          "self-improving-agent",
+          "skill-vetter"
+        ]
+      },
+      {
+        "id": "ceo",
+        "name": "ceo",
+        "workspace": "/home/node/.openclaw/workspace/ceo",
+        "agentDir": "/home/node/.openclaw/agents/ceo/agent",
+        "tools": {
+          "alsoAllow": [
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node",
+            "agents_list",
+            "feishu_ask_user_question",
+            "feishu_task_section",
+            "message",
+            "tavily_extract",
+            "tavily_search"
+          ],
+          "deny": [
+            "x_search",
+            "video_generate",
+            "music_generate",
+            "image_generate"
+          ]
+        },
+        "skills": [
+          "feishu-bitable",
+          "feishu-calendar",
+          "feishu-channel-rules",
+          "feishu-create-doc",
+          "feishu-fetch-doc",
+          "feishu-im-read",
+          "feishu-task",
+          "feishu-troubleshoot",
+          "feishu-update-doc",
+          "tavily",
+          "speak-to-text",
+          "agents-collaborative-scheduling-guide",
+          "docx",
+          "pdf",
+          "pptx",
+          "multi-search-engine",
+          "opencli",
+          "self-improving-agent",
+          "skill-vetter"
+        ],
+       "model": {
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "fallbacks": [
+            "deepseek/deepseek-v4-pro",
+            "zai/glm-5.2",
+            "moonshot/kimi-k3"
+          ]
+        }
+      },
+      {
+        "id": "information",
+        "name": "information",
+        "workspace": "/home/node/.openclaw/workspace/information",
+        "agentDir": "/home/node/.openclaw/agents/information/agent",
+        "tools": {
+          "alsoAllow": [
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node",
+            "message",
+            "agents_list",
+            "feishu_ask_user_question",
+            "feishu_task_section",
+            "tavily_extract",
+            "tavily_search"
+          ],
+          "deny": [
+            "x_search",
+            "video_generate",
+            "music_generate",
+            "image_generate"
+          ]
+        },
+        "skills": [
+          "feishu-bitable",
+          "feishu-calendar",
+          "feishu-channel-rules",
+          "feishu-create-doc",
+          "feishu-fetch-doc",
+          "feishu-im-read",
+          "feishu-task",
+          "feishu-troubleshoot",
+          "feishu-update-doc",
+          "tavily",
+          "speak-to-text",
+          "docx",
+          "pdf",
+          "pptx",
+          "multi-search-engine",
+          "opencli",
+          "self-improving-agent",
+          "skill-vetter"
+        ],
+        "model": "zai/glm-5.2"
+      },
+      {
+        "id": "product",
+        "name": "product",
+        "workspace": "/home/node/.openclaw/workspace/product",
+        "agentDir": "/home/node/.openclaw/agents/product/agent",
+        "tools": {
+          "alsoAllow": [
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node",
+            "agents_list",
+            "feishu_ask_user_question",
+            "feishu_task_section",
+            "tavily_extract",
+            "tavily_search"
+          ],
+          "deny": [
+            "x_search",
+            "image_generate",
+            "video_generate"
+          ]
+        },
+        "skills": [
+          "feishu-bitable",
+          "feishu-calendar",
+          "feishu-channel-rules",
+          "feishu-create-doc",
+          "feishu-fetch-doc",
+          "feishu-im-read",
+          "feishu-task",
+          "feishu-troubleshoot",
+          "feishu-update-doc",
+          "tavily",
+          "speak-to-text",
+          "docx",
+          "pdf",
+          "pptx",
+          "multi-search-engine",
+          "opencli",
+          "self-improving-agent",
+          "skill-vetter"
+        ],
+        "model": "zai/glm-5.2"
+      },
+      {
+        "id": "super",
+        "name": "super",
+        "workspace": "/home/node/.openclaw/workspace/super",
+        "agentDir": "/home/node/.openclaw/agents/super/agent",
+        "tools": {
+          "alsoAllow": [
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node",
+            "agents_list",
+            "feishu_ask_user_question",
+            "feishu_task_section",
+            "tavily_extract",
+            "tavily_search"
+          ],
+          "deny": [
+            "x_search",
+            "image_generate",
+            "video_generate"
+          ]
+        },
+        "skills": [
+          "feishu-bitable",
+          "feishu-calendar",
+          "feishu-channel-rules",
+          "feishu-create-doc",
+          "feishu-fetch-doc",
+          "feishu-im-read",
+          "feishu-task",
+          "feishu-troubleshoot",
+          "feishu-update-doc",
+          "tavily",
+          "speak-to-text",
+          "docx",
+          "pdf",
+          "pptx",
+          "multi-search-engine",
+          "opencli",
+          "self-improving-agent",
+          "skill-vetter"
+        ],
+        "model": "zai/glm-5.2"
+      },
+      {
+        "id": "legal",
+        "name": "legal",
+        "workspace": "/home/node/.openclaw/workspace/legal",
+        "agentDir": "/home/node/.openclaw/agents/legal/agent",
+        "tools": {
+          "alsoAllow": [
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node",
+            "agents_list",
+            "feishu_ask_user_question",
+            "feishu_task_section",
+            "tavily_extract",
+            "tavily_search"
+          ],
+          "deny": [
+            "x_search",
+            "image_generate",
+            "video_generate"
+          ]
+        },
+        "skills": [
+          "feishu-bitable",
+          "feishu-calendar",
+          "feishu-channel-rules",
+          "feishu-create-doc",
+          "feishu-fetch-doc",
+          "feishu-im-read",
+          "feishu-task",
+          "feishu-troubleshoot",
+          "feishu-update-doc",
+          "tavily",
+          "speak-to-text",
+          "skill-vetter",
+          "self-improving-agent",
+          "multi-search-engine",
+          "opencli",
+          "docx",
+          "pdf",
+          "pptx"
+        ],
+        "model": "zai/glm-5.2"
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "59736ac9cdc7a717948d5bcfb5e814a2bbc2955fe6f70c49"
+    },
+    "port": 18789,
+    "bind": "loopback",
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "controlUi": {
+      "allowInsecureAuth": false
+    },
+    "nodes": {
+      "denyCommands": [
+        "camera.snap",
+        "camera.clip",
+        "screen.record",
+        "contacts.add",
+        "calendar.add",
+        "reminders.add",
+        "sms.send",
+        "sms.search"
+      ]
+    }
+  },
+  "session": {
+    "scope": "per-sender",
+    "dmScope": "per-account-channel-peer",
+    "resetTriggers": [
+      "/new",
+      "/reset"
+    ],
+    "reset": {
+      "mode": "daily",
+      "atHour": 4,
+      "idleMinutes": 240
+    },
+    "resetByType": {
+      "thread": {
+        "mode": "daily",
+        "atHour": 4
+      },
+      "direct": {
+        "mode": "idle",
+        "idleMinutes": 240
+      },
+      "group": {
+        "mode": "idle",
+        "idleMinutes": 240
+      }
+    },
+    "resetByChannel": {
+      "feishu": {
+        "mode": "idle",
+        "idleMinutes": 240
+      }
+    },
+    "store": "~/.openclaw/agents/{agentId}/sessions/sessions.json",
+    "typingMode": "thinking",
+    "typingIntervalSeconds": 5,
+    "writeLock": {
+      "acquireTimeoutMs": 60000,
+      "staleMs": 1800000,
+      "maxHoldMs": 180000
+    },
+    "agentToAgent": {
+      "maxPingPongTurns": 10
+    },
+    "maintenance": {
+      "mode": "warn",
+      "pruneAfter": "30d",
+      "maxEntries": 500,
+      "resetArchiveRetention": "30d",
+      "maxDiskBytes": "500mb",
+      "highWaterBytes": "400mb"
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "sessions": {
+      "visibility": "all"
+    },
+    "loopDetection":{
+      "enabled":true
+    },
+    "exec": {
+      "timeoutSec": 1800,
+      "backgroundMs": 300000
+    },
+    "agentToAgent": {
+      "enabled": true,
+      "allow": [
+        "ceo",
+        "information",
+        "product"
+      ]
+    }
+  },
+  "wizard": {
+    "securityAcknowledgedAt": "2026-08-13T05:58:14.414Z",
+    "lastRunAt": "2026-08-13T06:24:20.004Z",
+    "lastRunVersion": "2026.7.1",
+    "lastRunCommand": "configure",
+    "lastRunMode": "local"
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.7.1",
+    "lastTouchedAt": "2026-08-20T03:40:23.206Z"
+  },
+  "plugins": {
+    "entries": {
+      "openai": {
+        "enabled": true
+      },
+      "deepseek": {
+        "enabled": true
+      },
+      "moonshot": {
+        "enabled": true
+      },
+      "zai": {
+        "enabled": true
+      },
+      "openclaw-lark": {
+        "enabled": true
+      },
+      "tavily": {
+        "enabled": true,
+        "config": {
+          "webSearch": {
+            "apiKey": "${TAVILY_API_KEY}",
+            "baseUrl": "https://api.tavily.com"
+          }
+        }
+      },
+      "diagnostics-prometheus": {
+        "enabled": true
+      },
+      "langfuse-bridge": {
+        "enabled": true,
+        "config": {
+          "secretKey": "${LANGFUSE_SECRET_KEY}",
+          "publicKey": "${LANGFUSE_PUBLIC_KEY}",
+          "baseUrl": "http://langfuse-web.observability.orb.local:3000"
+        }
+      }
+    },
+    "allow": [
+      "openai",
+      "deepseek",
+      "moonshot",
+      "zai",
+      "openclaw-lark",
+      "tavily",
+      "diagnostics-prometheus",
+      "langfuse-bridge"
+    ]
+  },
+  "diagnostics": {
+    "enabled": true
+  },
+  "auth": {
+    "profiles": {
+      "openai:api-key": {
+        "provider": "openai",
+        "mode": "api_key"
+      },
+      "deepseek:default": {
+        "provider": "deepseek",
+        "mode": "api_key"
+      },
+      "moonshot:default": {
+        "provider": "moonshot",
+        "mode": "api_key"
+      },
+      "zai:default": {
+        "provider": "zai",
+        "mode": "api_key"
+      }
+    }
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "custom-ai-soulecho-cc": {
+        "baseUrl": "https://hk.ai.soulecho.cc/v1",
+        "api": "openai-completions",
+        "apiKey": "${OPENAI_API_KEY}",
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "name": "gpt-5.6-sol (Custom Provider)",
+            "contextWindow": 1050000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "reasoning": false
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "gpt-5.6-terra (Custom Provider)",
+            "contextWindow": 1050000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "reasoning": false
+          }
+        ]
+      },
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "deepseek-v4-flash",
+            "name": "DeepSeek V4 Flash",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.14,
+              "output": 0.28,
+              "cacheRead": 0.028,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1000000,
+            "maxTokens": 384000,
+            "compat": {
+              "supportsReasoningEffort": true,
+              "supportsUsageInStreaming": true,
+              "maxTokensField": "max_tokens"
+            },
+            "api": "openai-completions"
+          },
+          {
+            "id": "deepseek-v4-pro",
+            "name": "DeepSeek V4 Pro",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 1.74,
+              "output": 3.48,
+              "cacheRead": 0.145,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1000000,
+            "maxTokens": 384000,
+            "compat": {
+              "supportsReasoningEffort": true,
+              "supportsUsageInStreaming": true,
+              "maxTokensField": "max_tokens"
+            },
+            "api": "openai-completions"
+          },
+          {
+            "id": "deepseek-chat",
+            "name": "DeepSeek Chat",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.28,
+              "output": 0.42,
+              "cacheRead": 0.028,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192,
+            "compat": {
+              "supportsUsageInStreaming": true,
+              "maxTokensField": "max_tokens"
+            },
+            "api": "openai-completions"
+          },
+          {
+            "id": "deepseek-reasoner",
+            "name": "DeepSeek Reasoner",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.28,
+              "output": 0.42,
+              "cacheRead": 0.028,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 65536,
+            "compat": {
+              "supportsReasoningEffort": false,
+              "supportsUsageInStreaming": true,
+              "maxTokensField": "max_tokens"
+            },
+            "api": "openai-completions"
+          }
+        ]
+      },
+      "moonshot": {
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "kimi-k3",
+            "name": "Kimi K3",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0.95,
+              "output": 4,
+              "cacheRead": 0.16,
+              "cacheWrite": 0
+            },
+            "contextWindow": 262144,
+            "maxTokens": 262144
+          },
+          {
+            "id": "kimi-k2.6",
+            "name": "Kimi K2.6",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0.95,
+              "output": 4,
+              "cacheRead": 0.16,
+              "cacheWrite": 0
+            },
+            "contextWindow": 262144,
+            "maxTokens": 262144
+          }
+        ]
+      },
+      "zai": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "glm-5.2",
+            "name": "GLM-5.2",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1000000,
+            "maxTokens": 131072
+          },
+          {
+            "id": "glm-5.1",
+            "name": "GLM-5.1",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 1.2,
+              "output": 4,
+              "cacheRead": 0.24,
+              "cacheWrite": 0
+            },
+            "contextWindow": 202800,
+            "maxTokens": 131100
+          },
+          {
+            "id": "glm-5",
+            "name": "GLM-5",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 1,
+              "output": 3.2,
+              "cacheRead": 0.2,
+              "cacheWrite": 0
+            },
+            "contextWindow": 202800,
+            "maxTokens": 131100
+          },
+          {
+            "id": "glm-5-turbo",
+            "name": "GLM-5 Turbo",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 1.2,
+              "output": 4,
+              "cacheRead": 0.24,
+              "cacheWrite": 0
+            },
+            "contextWindow": 202800,
+            "maxTokens": 131100
+          },
+          {
+            "id": "glm-5v-turbo",
+            "name": "GLM-5V Turbo",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 1.2,
+              "output": 4,
+              "cacheRead": 0.24,
+              "cacheWrite": 0
+            },
+            "contextWindow": 202800,
+            "maxTokens": 131100
+          },
+          {
+            "id": "glm-4.7",
+            "name": "GLM-4.7",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.6,
+              "output": 2.2,
+              "cacheRead": 0.11,
+              "cacheWrite": 0
+            },
+            "contextWindow": 204800,
+            "maxTokens": 131072
+          },
+          {
+            "id": "glm-4.7-flash",
+            "name": "GLM-4.7 Flash",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.07,
+              "output": 0.4,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 131072
+          },
+          {
+            "id": "glm-4.7-flashx",
+            "name": "GLM-4.7 FlashX",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.06,
+              "output": 0.4,
+              "cacheRead": 0.01,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 128000
+          },
+          {
+            "id": "glm-4.6",
+            "name": "GLM-4.6",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.6,
+              "output": 2.2,
+              "cacheRead": 0.11,
+              "cacheWrite": 0
+            },
+            "contextWindow": 204800,
+            "maxTokens": 131072
+          },
+          {
+            "id": "glm-4.6v",
+            "name": "GLM-4.6V",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0.3,
+              "output": 0.9,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 32768
+          },
+          {
+            "id": "glm-4.5",
+            "name": "GLM-4.5",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.6,
+              "output": 2.2,
+              "cacheRead": 0.11,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 98304
+          },
+          {
+            "id": "glm-4.5-air",
+            "name": "GLM-4.5 Air",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0.2,
+              "output": 1.1,
+              "cacheRead": 0.03,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 98304
+          },
+          {
+            "id": "glm-4.5-flash",
+            "name": "GLM-4.5 Flash",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 98304
+          },
+          {
+            "id": "glm-4.5v",
+            "name": "GLM-4.5V",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0.6,
+              "output": 1.8,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 64000,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "domain": "feishu",
+      "connectionMode": "websocket",
+      "typingIndicator": true,
+      "resolveSenderNames": true,
+      "requireMention": true,
+      "streaming": true,
+      "accounts": {
+        "main": {
+          "enabled": false,
+          "appId": "cli_a976d2e502b9dcb6",
+          "appSecret": "CFHXjN6mkUE1KXDIfckVJeSRQVD2ywiC",
+          "dmPolicy": "open",
+          "allowFrom": [
+            "*"
+          ],
+          "groupPolicy": "open",
+          "groupAllowFrom": [
+            "*"
+          ]
+        },
+        "ceo": {
+          "enabled": true,
+          "appId": "cli_aace18c2af789bdb",
+          "appSecret": "mW5rNEE1gTzSaoBonWwfEdaT2uzSrJLP",
+          "dmPolicy": "open",
+          "allowFrom": [
+            "*"
+          ],
+          "groupPolicy": "open",
+          "groupAllowFrom": [
+            "*"
+          ]
+        },
+        "product": {
+          "enabled": true,
+          "appId": "cli_aacf67d345b99be0",
+          "appSecret": "jYqR2TUXlFmdVjIQzlcb6fJp4TI8qaPc",
+          "dmPolicy": "open",
+          "allowFrom": [
+            "*"
+          ],
+          "groupPolicy": "open",
+          "groupAllowFrom": [
+            "*"
+          ]
+        },
+        "information": {
+          "enabled": true,
+          "appId": "cli_aace3ea373791bd8",
+          "appSecret": "cTV7qTFgaRTwzkweTkRCme0Rvg8pF65y",
+          "dmPolicy": "open",
+          "allowFrom": [
+            "*"
+          ],
+          "groupPolicy": "open",
+          "groupAllowFrom": [
+            "*"
+          ]
+        },
+        "super": {
+          "enabled": true,
+          "appId": "cli_aac98b09dca5dbd9",
+          "appSecret": "K7WFpSxHmxC7nvBFPGUJbhEwK6OfWgDS",
+          "dmPolicy": "open",
+          "allowFrom": [
+            "*"
+          ],
+          "groupPolicy": "open",
+          "groupAllowFrom": [
+            "*"
+          ]
+        },
+        "legal": {
+          "enabled": true,
+          "appId": "cli_aacc8f8aebf99be2",
+          "appSecret": "tG58uT4rxFCwVf6UmA5VKbXny782iWh2",
+          "dmPolicy": "open",
+          "allowFrom": [
+            "*"
+          ],
+          "groupPolicy": "open",
+          "groupAllowFrom": [
+            "*"
+          ]
+        }
+      }
+    }
+  },
+  "secrets": {
+    "providers": {
+      "lark-secrets": {
+        "source": "file",
+        "path": "~/.openclaw/credentials/lark.secrets.json"
+      }
+    }
+  },
+  "skills": {
+    "entries": {
+      "1password": {
+        "enabled": false
+      },
+      "apple-notes": {
+        "enabled": false
+      },
+      "apple-reminders": {
+        "enabled": false
+      },
+      "bear-notes": {
+        "enabled": false
+      },
+      "blogwatcher": {
+        "enabled": false
+      },
+      "blucli": {
+        "enabled": false
+      },
+      "camsnap": {
+        "enabled": false
+      },
+      "clawhub": {
+        "enabled": false
+      },
+      "coding-agent": {
+        "enabled": false
+      },
+      "diagram-maker": {
+        "enabled": false
+      },
+      "eightctl": {
+        "enabled": false
+      },
+      "gemini": {
+        "enabled": false
+      },
+      "gh-issues": {
+        "enabled": false
+      },
+      "gifgrep": {
+        "enabled": false
+      },
+      "github": {
+        "enabled": false
+      },
+      "gog": {
+        "enabled": false
+      },
+      "goplaces": {
+        "enabled": false
+      },
+      "healthcheck": {
+        "enabled": false
+      },
+      "himalaya": {
+        "enabled": false
+      },
+      "mcporter": {
+        "enabled": false
+      },
+      "meme-maker": {
+        "enabled": false
+      },
+      "model-usage": {
+        "enabled": false
+      },
+      "nano-pdf": {
+        "enabled": false
+      },
+      "node-connect": {
+        "enabled": false
+      },
+      "node-inspect-debugger": {
+        "enabled": false
+      },
+      "notion": {
+        "enabled": false
+      },
+      "obsidian": {
+        "enabled": false
+      },
+      "openai-whisper": {
+        "enabled": false
+      },
+      "openai-whisper-api": {
+        "enabled": false
+      },
+      "openhue": {
+        "enabled": false
+      },
+      "oracle": {
+        "enabled": false
+      },
+      "ordercli": {
+        "enabled": false
+      },
+      "peekaboo": {
+        "enabled": false
+      },
+      "python-debugpy": {
+        "enabled": false
+      },
+      "sag": {
+        "enabled": false
+      },
+      "session-logs": {
+        "enabled": false
+      },
+      "sherpa-onnx-tts": {
+        "enabled": false
+      },
+      "skill-creator": {
+        "enabled": false
+      },
+      "songsee": {
+        "enabled": false
+      },
+      "sonoscli": {
+        "enabled": false
+      },
+      "spike": {
+        "enabled": false
+      },
+      "spotify-player": {
+        "enabled": false
+      },
+      "summarize": {
+        "enabled": false
+      },
+      "taskflow": {
+        "enabled": false
+      },
+      "taskflow-inbox-triage": {
+        "enabled": false
+      },
+      "things-mac": {
+        "enabled": false
+      },
+      "tmux": {
+        "enabled": false
+      },
+      "trello": {
+        "enabled": false
+      },
+      "video-frames": {
+        "enabled": false
+      },
+      "weather": {
+        "enabled": false
+      },
+      "xurl": {
+        "enabled": false
+      }
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "feishu",
+        "accountId": "main"
+      }
+    },
+    {
+      "agentId": "ceo",
+      "match": {
+        "channel": "feishu",
+        "accountId": "ceo"
+      }
+    },
+    {
+      "agentId": "product",
+      "match": {
+        "channel": "feishu",
+        "accountId": "product"
+      }
+    },
+    {
+      "agentId": "information",
+      "match": {
+        "channel": "feishu",
+        "accountId": "information"
+      }
+    },
+    {
+      "agentId": "super",
+      "match": {
+        "channel": "feishu",
+        "accountId": "super"
+      }
+    },
+    {
+      "agentId": "legal",
+      "match": {
+        "channel": "feishu",
+        "accountId": "legal"
+      }
+    }
+  ],
+  "messages": {
+    "queue": {
+      "mode": "steer",
+      "debounceMs": 500,
+      "cap": 20,
+      "drop": "old"
+    }
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "global-env-checking": {
+          "enabled": true
+        },
+        "session-memory": {
+          "enabled": true
+        },
+        "command-logger": {
+          "enabled": true
+        }
+      }
+    }
+  }
+}

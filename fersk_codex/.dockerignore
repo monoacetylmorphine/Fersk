@@ -1,0 +1,24 @@
+# Only application source and build inputs enter the image context.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!requirements.txt
+!README.md
+!__init__.py
+!gateway.py
+!configs/
+!configs/*.json
+!configs/*.py
+!core/
+!core/*.py
+!middleware/
+!middleware/*.py
+!services/
+!services/*.py
+!services/lark/
+!services/lark/*.py
+!utils/
+!utils/*.py
+!docker/
+!docker/entrypoint.sh

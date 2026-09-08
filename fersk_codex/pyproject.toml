@@ -1,0 +1,74 @@
+[project]
+name = "fersk_codex"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiosqlite",
+    "annotated-doc",
+    "annotated-types",
+    "anyio",
+    "attrs",
+    "certifi",
+    "cffi",
+    "charset-normalizer",
+    "click",
+    "cryptography",
+    "h11",
+    "httpcore",
+    "httpcore2",
+    "httpx",
+    "httpx2",
+    "idna",
+    "jiter",
+    "jsonschema",
+    "jsonschema-specifications",
+    "lark-oapi",
+    "markdown-it-py",
+    "mcp",
+    "mcp-types",
+    "mdurl",
+    "openai",
+    "openai-codex",
+    "openai-codex-cli-bin",
+    "opentelemetry-api",
+    "pycparser",
+    "pycryptodome",
+    "pydantic",
+    "pydantic-core",
+    "pygments",
+    "pyjwt",
+    "python-dotenv",
+    "python-multipart",
+    "referencing",
+    "requests",
+    "requests-toolbelt",
+    "rich",
+    "rpds-py",
+    "shellingham",
+    "sniffio",
+    "sse-starlette",
+    "starlette",
+    "truststore",
+    "typer",
+    "typing-extensions",
+    "typing-inspection",
+    "urllib3",
+    "uvicorn",
+    "websockets",
+]
+
+# [project.scripts]
+# fersk-codex = "fersk_codex:main"
+
+# [build-system]
+# requires = ["uv_build>=0.12.10,<0.13.0"]
+# build-backend = "uv_build"
+
+[tool.uv]
+package = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]

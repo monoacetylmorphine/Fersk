@@ -1,0 +1,176 @@
+"""Run probes and an append-only JSONL journal; no IM or SDK dependencies."""
+
+import asyncio
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+import json
+from itertools import groupby
+from pathlib import Path
+import threading
+import time
+
+from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.utils.logger import get_logger
+
+logger = get_logger("Watchdog")
+
+
+def settings():
+    return CONFIG["codex"]["watchdog"]
+
+
+def should_log_event(method: str) -> bool:
+    """Keep lifecycle notifications and final items, not streaming fragments."""
+    return (not method.lower().endswith("delta")
+            and (not method.startswith("item/") or method == "item/completed"))
+
+
+class RunJournal:
+    """One writer per process. Append one JSON object per line.
+
+    ``path`` is a directory; records use their enqueue date in the configured
+    timezone. Disk I/O runs in one background writer, and failed batches retry
+    their original daily file.
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._timezone = timezone(timedelta(hours=CONFIG["runtime"]["timezoneOffsetHours"]))
+        self._lock = threading.Lock()
+        self._records = deque()
+        self._revision = 0
+        self._saved = 0
+        self._thread = None
+
+    def record(self, record):
+        with self._lock:
+            day = datetime.now(self._timezone).strftime("%Y-%m-%d")
+            self._records.append((self.path / f"{day}_logs.jsonl", record))
+            self._revision += 1
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._write, daemon=True)
+                self._thread.start()
+
+    def _write_pending(self):
+        with self._lock:
+            records = list(self._records)
+        # Commit each contiguous date group separately. If a later file fails,
+        # successful groups have already left the queue and cannot be duplicated.
+        for path, group in groupby(records, key=lambda entry: entry[0]):
+            batch = list(group)
+            payload = "".join(json.dumps(record, ensure_ascii=False) + "\n"
+                              for _, record in batch).encode("utf-8")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "ab") as file:
+                offset = file.tell()
+                try:
+                    file.write(payload)
+                    file.flush()
+                except Exception:
+                    file.truncate(offset)
+                    raise
+            with self._lock:
+                for _ in batch:
+                    self._records.popleft()
+                self._saved += len(batch)
+
+    def _write(self):
+        while True:
+            time.sleep(0.1)
+            try:
+                self._write_pending()
+            except Exception:
+                logger.exception("写入运行日志失败: %s", self.path)
+                time.sleep(1)
+
+    async def flush(self):
+        with self._lock:
+            target = self._revision
+        async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+            while True:
+                with self._lock:
+                    if self._saved >= target:
+                        return
+                await asyncio.sleep(0.05)
+
+journal = RunJournal(CONFIG["storage"]["runLogPath"])
+probes = {}
+
+
+@dataclass
+class RunProbe:
+    run_id: str
+    chat_id: str
+    message_ids: frozenset[str]
+    received_at: float = field(default_factory=time.monotonic)
+    phase: str = "queued"
+    phase_at: float = field(default_factory=time.monotonic)
+    last_activity: float = field(default_factory=time.monotonic)
+    last_event: str | None = None
+    thread_id: str | None = None
+    turn_id: str | None = None
+    terminal: str | None = None
+    stop_reason: str | None = None
+    stop_confirmed: bool = False
+    tools: set[str] = field(default_factory=set)
+    event_count: int = 0
+
+    def record(self, event, **details):
+        journal.record({
+            "time": datetime.now(timezone.utc).isoformat(),
+            "runId": self.run_id, "chatId": self.chat_id,
+            "messageIds": sorted(self.message_ids),
+            "threadId": self.thread_id, "turnId": self.turn_id,
+            "phase": self.phase, "terminal": self.terminal,
+            "stopReason": self.stop_reason, "stopConfirmed": self.stop_confirmed,
+            "elapsedSeconds": round(time.monotonic() - self.received_at, 3),
+            "idleSeconds": round(time.monotonic() - self.last_activity, 3),
+            "lastEvent": self.last_event, "eventCount": self.event_count,
+            "tools": sorted(self.tools), "event": event, **details,
+        })
+
+    def stage(self, phase):
+        if self.phase == phase:
+            return
+        self.phase = phase
+        self.phase_at = time.monotonic()
+        self.record("stage")
+
+    def finish(self, result):
+        if self.terminal is None:
+            self.terminal = result
+            self.record("terminal")
+
+    def activity(self, event):
+        self.last_activity = time.monotonic()
+        if should_log_event(event.method):
+            self.last_event = event.method
+        self.event_count += 1
+        if event.method in {"item/started", "item/completed"}:
+            item = event.payload.item.root
+            if item.type in {"commandExecution", "mcpToolCall", "dynamicToolCall", "webSearch"}:
+                if event.method == "item/started":
+                    self.tools.add(item.id)
+                else:
+                    self.tools.discard(item.id)
+            if event.method == "item/completed":
+                self.record(event.method, item=item.model_dump(mode="json", by_alias=True))
+        if event.method == "turn/completed":
+            status = event.payload.turn.status
+            self.finish(self.stop_reason or getattr(status, "value", status))
+
+    def expired(self, now=None):
+        now = time.monotonic() if now is None else now
+        if self.terminal or self.stop_reason:
+            return None
+        policy = settings()
+        if now - self.received_at >= policy["maxRunSeconds"]:
+            return "run_timeout"
+        if self.phase == "starting" and now - self.phase_at >= policy["startupTimeoutSeconds"]:
+            return "startup_timeout"
+        # Tool execution can legitimately be silent; the hard deadline remains.
+        if (policy["idleTimeoutSeconds"] and self.phase == "running" and not self.tools
+                and now - self.last_activity >= policy["idleTimeoutSeconds"]):
+            return "idle_timeout"
+        return None

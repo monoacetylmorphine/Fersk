@@ -1,0 +1,4 @@
+name: global-env-checking
+description: Check and repair shared skill dependencies when the Hermes gateway starts
+events:
+  - gateway:startup

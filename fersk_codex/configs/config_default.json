@@ -1,0 +1,211 @@
+{
+  "$schema": "./config_schema.json",
+  "schemaVersion": 1,
+  "runtime": {
+    "timezoneOffsetHours": 8
+  },
+  "storage": {
+    "runLogPath": "~/.fersk/logs",
+    "workspaceRoot": "~/.codex/workspace",
+    "inboundSubdirectory": "resources/inbound",
+    "databasePath": "~/.fersk/state.sqlite",
+    "tokenUsagePath": "~/.fersk/usage/token_usage.csv"
+  },
+  "messaging": {
+    "bufferWindowSeconds": 10.0,
+    "historyPageSize": 10,
+    "recallCacheMaxEntries": 1024,
+    "directTypes": [
+      "text",
+      "post",
+      "audio"
+    ],
+    "bufferedTypes": [
+      "image",
+      "file"
+    ],
+    "supportedTypes": [
+      "text",
+      "image",
+      "post",
+      "file",
+      "audio"
+    ],
+    "newThreadCommand": "/new",
+    "stopThreadCommand": "/stop"
+  },
+  "codex": {
+    "sandbox": "workspace-write",
+    "watchdog": {
+      "maxRunSeconds": 900,
+      "startupTimeoutSeconds": 120,
+      "idleTimeoutSeconds": 0,
+      "checkIntervalSeconds": 1,
+      "interruptGraceSeconds": 10,
+      "cleanupTimeoutSeconds": 5,
+      "cardRequestTimeoutSeconds": 10
+    },
+    "models": {
+      "text": {
+        "model": "deepseek-v4-flash",
+        "provider": "deepseek"
+      },
+      "image": {
+        "model": "deepseek-v4-flash-vision-exp",
+        "provider": "deepseek"
+      },
+      "multimodal": {
+        "model": "deepseek-v4-flash-vision-exp",
+        "provider": "deepseek"
+      }
+    },
+    "retry": {
+      "maxAttempts": 3,
+      "initialDelaySeconds": 0.25,
+      "maxDelaySeconds": 2.0,
+      "jitterRatio": 0.2,
+      "backoffMultiplier": 2.0
+    }
+  },
+  "lark": {
+    "credentials": {
+      "appIdEnv": "LARK_APP_ID",
+      "appSecretEnv": "LARK_APP_SECRET",
+      "robotNameEnv": "LARK_ROBOT_NAME",
+      "robotOpenIdEnv": "LARK_ROBOT_OPEN_ID"
+    },
+    "reaction": {
+      "processingEmoji": "OnIt"
+    },
+    "upload": {
+      "nativeFileTypes": [
+        "opus",
+        "mp4",
+        "pdf",
+        "doc",
+        "xls",
+        "ppt"
+      ],
+      "fallbackFileType": "stream",
+      "imageType": "message"
+    }
+  },
+  "resources": {
+    "acceptedExtensions": {
+      "image": [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp"
+      ],
+      "document": [
+        ".pdf",
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".rtf",
+        ".json",
+        ".jsonl",
+        ".txt",
+        ".md",
+        ".csv",
+        ".py",
+        ".js",
+        ".ts",
+        ".html",
+        ".xml",
+        ".yml",
+        ".yaml",
+        ".toml",
+        ".sh"
+      ],
+      "audio": [
+        ".aac",
+        ".aiff",
+        ".alac",
+        ".amr",
+        ".flac",
+        ".m4a",
+        ".mp3",
+        ".ogg",
+        ".opus",
+        ".wav",
+        ".wma",
+        ".webm"
+      ]
+    },
+    "fileName": {
+      "timestampFormat": "%Y%m%d%H%M%S%f",
+      "fallbackStem": "resource"
+    }
+  },
+  "audio": {
+    "tools": {
+      "ffmpeg": "ffmpeg",
+      "ffprobe": "ffprobe"
+    },
+    "limits": {
+      "maxBytes": 26214400,
+      "maxDurationSeconds": 7200,
+      "targetBytes": 24000000,
+      "minimumSegmentSeconds": 1.0,
+      "conversionTimeoutSeconds": 540
+    },
+    "output": {
+      "sampleRateHz": 16000,
+      "channels": 1,
+      "codec": "aac",
+      "bitrateBps": 64000,
+      "container": "m4a",
+      "fastStart": true
+    },
+    "asr": {
+      "apiKeyEnv": "DOUBAO_API_KEY",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "doubao-seed-2-0-lite-260428",
+      "temporaryDirectoryPrefix": "audio-asr-",
+      "instructions": "You are a highly advanced AI specialized in Automatic Speech Recognition (ASR). Output only the transcribed text, without introductions, explanations, or Markdown. If there is no intelligible speech, output an empty string.",
+      "userPrompt": "请识别音频中的内容"
+    }
+  },
+  "logging": {
+    "tokenUsageTable": "token_usage",
+    "timestampFormat": "%Y-%m-%d-%H-%M-%S-%f"
+  },
+  "mcp": {
+    "name": "toolsets",
+    "description": "工具集",
+    "version": "1.0.0",
+    "transport": "streamable-http",
+    "host": "127.0.0.1",
+    "port": 8000,
+    "path": "/mcp",
+    "logLevel": "DEBUG"
+  },
+  "messages": {
+    "steerAccepted": "已收到补充，继续处理中。",
+    "steerCompleted": "补充已接收，当前任务已结束。",
+    "steerImageUnsupported": "当前任务使用的模型与图片模型不同，无法在运行中切换模型。请等待任务结束，或 /stop 后重新发送图片和任务描述。",
+    "stopRequested": "当前任务已停止。",
+    "stopIdle": "当前没有正在处理的任务。",
+    "stopFailed": "已请求停止，但尚未确认任务停止。当前会话暂不可提交新任务，请稍后重试 /stop。",
+    "recallStopped": "消息已撤回，对应任务已停止。",
+    "taskTimeout": "当前任务执行失败：超过执行时间限制，任务已停止。请缩小任务范围后重新发送。",
+    "taskTimeoutUnconfirmed": "当前任务执行失败：执行超时，已请求停止，但尚未确认进程退出。请稍后重试 /stop。",
+    "taskInterrupted": "当前任务已中断。",
+    "newThreadCreated": "会话已重置，下一条消息将开始新会话。",
+    "codexBusy": "Codex 服务暂时繁忙，自动重试后仍未恢复，请稍后再试。",
+    "invalidRequest": "提交给 Codex 的请求参数无效，请检查输入后重试。",
+    "unsupportedMethod": "当前 Codex 运行环境不支持该操作，请检查 SDK 与 CLI 版本。",
+    "codexFailure": "Codex 本次处理失败，请稍后重试。",
+    "emptyInput": "没有识别到有效内容，请重新发送。",
+    "missingResourceKeySuffix": "（缺少资源标识）",
+    "downloadFailedSuffix": "（下载失败）",
+    "transcriptionFailedSuffix": "（音频转写失败）",
+    "emptyTranscriptionSuffix": "（未识别到语音内容）",
+    "newThreadFailed": "会话重置失败，未完成旧线程归档和绑定重置，请稍后重试。",
+    "audioConversionTimeout": "音频转换失败：处理时间超过 {minutes} 分钟，请缩短音频或转换格式后重试。",
+    "unsupportedMessageType": "暂不支持此类型的消息，请发送文本、图片、富文本、文件或语音。"
+  }
+}
