@@ -1,5 +1,5 @@
 notify = ["/Users/fersk/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]
-model = "gpt-6-astra"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "medium"
 service_tier = "default"
 
@@ -16,7 +16,7 @@ source_type = "local"
 source = "/Users/fersk/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
 
 [marketplaces.codex-observability-plugin]
-last_updated = "2026-09-08T09:38:43Z"
+last_updated = "2026-09-09T10:17:26Z"
 last_revision = "1db5c0f5ddce569afc112c6476e21d00cf9a482e"
 source_type = "git"
 source = "https://github.com/langfuse/codex-observability-plugin.git"
@@ -83,6 +83,9 @@ command = "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.
 args = ["mcp"]
 cwd = "."
 enabled = false
+
+[mcp_servers.fersk-mcp]
+url = "http://fersk-mcp:8000/mcp"
 
 [features]
 plugin_hooks = true
