@@ -572,6 +572,26 @@
         },
         "logLevel": {
           "$ref": "#/$defs/logLevel"
+        },
+        "imageModel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apiKeyEnv", "baseUrl", "model"],
+          "properties": {
+            "apiKeyEnv": { "type": "string", "minLength": 1 },
+            "baseUrl": { "type": "string", "minLength": 1 },
+            "model": { "type": "string", "minLength": 1 }
+          }
+        },
+        "videoModel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apiKeyEnv", "baseUrl", "model"],
+          "properties": {
+            "apiKeyEnv": { "type": "string", "minLength": 1 },
+            "baseUrl": { "type": "string", "minLength": 1 },
+            "model": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

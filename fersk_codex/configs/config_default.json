@@ -181,7 +181,17 @@
     "host": "127.0.0.1",
     "port": 8000,
     "path": "/mcp",
-    "logLevel": "DEBUG"
+    "logLevel": "DEBUG",
+    "imageModel": {
+      "apiKeyEnv": "DOUBAO_API_KEY",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "doubao-seedream-5-0-lite-260128"
+    },
+    "videoModel": {
+      "apiKeyEnv": "DOUBAO_API_KEY",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "doubao-seedance-2-0-260128"
+    }
   },
   "messages": {
     "steerAccepted": "已收到补充，继续处理中。",

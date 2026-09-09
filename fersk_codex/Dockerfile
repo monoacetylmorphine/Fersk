@@ -40,7 +40,7 @@ RUN uv sync --locked --no-dev --no-install-project --python /usr/local/bin/pytho
         /usr/local/bin/codex \
     && codex --version
 COPY . .
-# package=false: run the copied source via PYTHONPATH instead of building a wheel.
+# Dependencies are cached above; run the copied source via PYTHONPATH.
 RUN install -m 0755 docker/entrypoint.sh /usr/local/bin/fersk-entrypoint \
     && mkdir -p "${HOME}/.fersk" "${CODEX_HOME}/workspace" \
     && chown -R "${APP_UID}:${APP_GID}" "${HOME}"

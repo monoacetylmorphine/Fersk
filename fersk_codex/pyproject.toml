@@ -1,7 +1,7 @@
 [project]
 name = "fersk_codex"
 version = "0.1.0"
-description = "Add your description here"
+description = "Fersk Codex & Lark Bridge"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -26,8 +26,6 @@ dependencies = [
     "jsonschema-specifications",
     "lark-oapi",
     "markdown-it-py",
-    "mcp",
-    "mcp-types",
     "mdurl",
     "openai",
     "openai-codex",
@@ -59,16 +57,27 @@ dependencies = [
     "websockets",
 ]
 
-# [project.scripts]
-# fersk-codex = "fersk_codex:main"
+[project.scripts]
+fersk-codex = "fersk_codex.gateway:main"
 
-# [build-system]
-# requires = ["uv_build>=0.12.10,<0.13.0"]
-# build-backend = "uv_build"
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [tool.uv]
-package = false
+package = true
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["*"]
+[tool.setuptools]
+packages = [
+    "fersk_codex",
+    "fersk_codex.configs",
+    "fersk_codex.core",
+    "fersk_codex.middleware",
+    "fersk_codex.services",
+    "fersk_codex.services.lark",
+    "fersk_codex.utils",
+]
+package-dir = { fersk_codex = "." }
+
+[tool.setuptools.package-data]
+fersk_codex = ["configs/*.json"]

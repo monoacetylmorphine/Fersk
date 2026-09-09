@@ -4,7 +4,6 @@ import lark_oapi as lark
 from fersk_codex.utils.config_loader import CONFIG
 
 
-
 def _required_setting(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -14,13 +13,6 @@ def _required_setting(name: str) -> str:
 
 LARK_APP_ID = _required_setting(CONFIG["lark"]["credentials"]["appIdEnv"])
 LARK_APP_SECRET = _required_setting(CONFIG["lark"]["credentials"]["appSecretEnv"])
-
-
-def _log_level(name: str):
-    try:
-        return getattr(lark.LogLevel, name.upper())
-    except AttributeError as exc:
-        raise RuntimeError(f"不支持的飞书日志级别: {name}") from exc
 
 
 # OpenAPI client: used for normal HTTP calls such as sending messages and
