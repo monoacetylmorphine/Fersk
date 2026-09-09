@@ -139,8 +139,7 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
                 await asyncio.wait_for(asyncio.gather(control, consumer), 1)
             self.assertNotIn("actual", FerskCodex._live_turns)
-            saving.assert_awaited_once()
-            self.assertEqual(saving.call_args.kwargs["log"]["taskDuration_ms"], 10)
+            saving.assert_not_awaited()
 
     async def test_stream_preserves_message_phase_and_filters_tool_content(self):
         async def stream():
@@ -535,7 +534,7 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
                 })
                 await queue.put(NS(method="turn/completed", payload=completed))
                 await asyncio.wait_for(task, 1)
-            saving.assert_awaited_once()
+            saving.assert_not_awaited()
             low.unregister_turn_notifications.assert_called_once_with("turn-1")
 
 

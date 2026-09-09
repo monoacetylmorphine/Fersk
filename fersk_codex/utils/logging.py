@@ -26,6 +26,7 @@ REQUIRED_KEYS = [
     "output_tokens",
     "reasoning_output_tokens",
     "total_tokens",
+    "runId",
 ]
 
 
@@ -41,6 +42,7 @@ DEFAULT_VALUES = {
     "output_tokens": 0,
     "reasoning_output_tokens": 0,
     "total_tokens": 0,
+    "runId": "",
 }
 
 
@@ -58,7 +60,8 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     output_tokens INTEGER,
     reasoning_output_tokens INTEGER,
     total_tokens INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    runId TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -75,8 +78,9 @@ INSERT INTO {TABLE_NAME} (
     input_tokens,
     output_tokens,
     reasoning_output_tokens,
-    total_tokens
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    total_tokens,
+    runId
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -138,6 +142,12 @@ async def SavingLog(log: Dict[str, Any]) -> None:
                 if (await cursor.fetchone())[0] != "wal":
                     raise aiosqlite.OperationalError("无法启用 SQLite WAL 模式")
             await db.execute(CREATE_TABLE_SQL)
+            # 写事务串行化旧表检查和追加字段，避免并发首次写入重复迁移。
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(f"PRAGMA table_info({TABLE_NAME})") as cursor:
+                columns = {row[1] for row in await cursor.fetchall()}
+            if "runId" not in columns:
+                await db.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN runId TEXT NOT NULL DEFAULT ''")
 
             await db.execute(
                 INSERT_SQL,
@@ -153,6 +163,7 @@ async def SavingLog(log: Dict[str, Any]) -> None:
                     fixed_log["output_tokens"],
                     fixed_log["reasoning_output_tokens"],
                     fixed_log["total_tokens"],
+                    fixed_log["runId"],
                 ),
             )
 
@@ -163,3 +174,13 @@ async def SavingLog(log: Dict[str, Any]) -> None:
         print(f"数据库操作失败：{exc}")
         raise
 
+
+async def finalize_usage(run_id: str, duration_ms: int) -> None:
+    """回填已接收明细的任务总耗时，不新增用量记录。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            f"UPDATE {TABLE_NAME} SET taskDuration_ms = ? WHERE runId = ?",
+            (duration_ms, run_id),
+        )
+        await db.commit()
+    await export_to_csv()

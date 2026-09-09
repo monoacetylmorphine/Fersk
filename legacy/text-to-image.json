@@ -1,0 +1,454 @@
+{
+  "id": "283d636c-f23f-4004-9342-ebe05a3408a3",
+  "revision": 0,
+  "last_node_id": 9,
+  "last_link_id": 20,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "CLIPTextEncode",
+      "pos": [
+        504,
+        144
+      ],
+      "size": [
+        432,
+        216
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "title": "Positive",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "(Masterpiece, best quality:1.2), photorealistic, night photography, Japanese countryside train station, abandoned, nameplate reading \"Kisaragi Station\". Lonely platform stretching into pitch-black void, no train schedule, no exit gate. Overhead fluorescent lights buzzing and strobing. Thick mist creeping along the ground. A feeling of being watched from the dark woods beyond the fence. Visual connection to the 2channel urban legend: the sound of bells and drums materializing as ghostly vibrations. Eerie stillness, unsettling calm, otherworldly portal, liminal space. Color palette: desaturated blues, toxic yellows, and crushing blacks. (No humans, no animals:1.3) except for a distant, blurry humanoid leg sticking out from behind a pillar"
+      ],
+      "widgets_values_named": {
+        "text": "(Masterpiece, best quality:1.2), photorealistic, night photography, Japanese countryside train station, abandoned, nameplate reading \"Kisaragi Station\". Lonely platform stretching into pitch-black void, no train schedule, no exit gate. Overhead fluorescent lights buzzing and strobing. Thick mist creeping along the ground. A feeling of being watched from the dark woods beyond the fence. Visual connection to the 2channel urban legend: the sound of bells and drums materializing as ghostly vibrations. Eerie stillness, unsettling calm, otherworldly portal, liminal space. Color palette: desaturated blues, toxic yellows, and crushing blacks. (No humans, no animals:1.3) except for a distant, blurry humanoid leg sticking out from behind a pillar"
+      }
+    },
+    {
+      "id": 2,
+      "type": "CLIPTextEncode",
+      "pos": [
+        504,
+        432
+      ],
+      "size": [
+        432,
+        216
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "title": "Negative",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "cartoon, anime, bright, sunny, daytime, happy, crowded, overexposed."
+      ],
+      "widgets_values_named": {
+        "text": "cartoon, anime, bright, sunny, daytime, happy, crowded, overexposed."
+      }
+    },
+    {
+      "id": 3,
+      "type": "KSampler",
+      "pos": [
+        1008,
+        144
+      ],
+      "size": [
+        288,
+        288
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 13
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 14
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 15
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 16
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            19
+          ]
+        }
+      ],
+      "title": "KSampler",
+      "properties": {
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        42,
+        "randomize",
+        30,
+        5,
+        "dpmpp_2m",
+        "simple",
+        1
+      ],
+      "widgets_values_named": {
+        "seed": 42,
+        "control_after_generate": "randomize",
+        "steps": 30,
+        "cfg": 5,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "simple",
+        "denoise": 1
+      }
+    },
+    {
+      "id": 4,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        72,
+        144
+      ],
+      "size": [
+        288,
+        144
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            13
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            11,
+            12
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            20
+          ]
+        }
+      ],
+      "title": "Load Checkpoint",
+      "properties": {
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"
+      ],
+      "widgets_values_named": {
+        "ckpt_name": "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"
+      }
+    },
+    {
+      "id": 6,
+      "type": "PreviewImage",
+      "pos": [
+        1584,
+        144
+      ],
+      "size": [
+        288,
+        72
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 17
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "title": "Preview Image",
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      }
+    },
+    {
+      "id": 7,
+      "type": "SaveImage",
+      "pos": [
+        1800,
+        144
+      ],
+      "size": [
+        288,
+        72
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 18
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "Save Image",
+      "properties": {},
+      "widgets_values": [
+        "ComfyUI"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "ComfyUI"
+      }
+    },
+    {
+      "id": 8,
+      "type": "VAEDecode",
+      "pos": [
+        1368,
+        144
+      ],
+      "size": [
+        288,
+        72
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 19
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 20
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "title": "VAE Decode",
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      }
+    },
+    {
+      "id": 9,
+      "type": "EmptyLatentImage",
+      "pos": [
+        72,
+        360
+      ],
+      "size": [
+        288,
+        144
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "title": "Empty Latent Image",
+      "properties": {
+        "Node name for S&R": "EmptyLatentImage"
+      },
+      "widgets_values": [
+        1216,
+        832,
+        1
+      ],
+      "widgets_values_named": {
+        "width": 1216,
+        "height": 832,
+        "batch_size": 1
+      }
+    }
+  ],
+  "links": [
+    [
+      11,
+      4,
+      1,
+      1,
+      0,
+      "CLIP"
+    ],
+    [
+      12,
+      4,
+      1,
+      2,
+      0,
+      "CLIP"
+    ],
+    [
+      13,
+      4,
+      0,
+      3,
+      0,
+      "MODEL"
+    ],
+    [
+      14,
+      1,
+      0,
+      3,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      15,
+      2,
+      0,
+      3,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      16,
+      9,
+      0,
+      3,
+      3,
+      "LATENT"
+    ],
+    [
+      17,
+      8,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      18,
+      6,
+      0,
+      7,
+      0,
+      "IMAGE"
+    ],
+    [
+      19,
+      3,
+      0,
+      8,
+      0,
+      "LATENT"
+    ],
+    [
+      20,
+      4,
+      2,
+      8,
+      1,
+      "VAE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.6830134553650705,
+      "offset": [
+        630.2913832031253,
+        351.08144531249997
+      ]
+    },
+    "frontendVersion": "1.49.6"
+  },
+  "version": 0.4
+}

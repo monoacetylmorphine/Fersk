@@ -1,0 +1,692 @@
+{
+  "id": "679dde00-670a-44f6-8282-4f462a3379e3",
+  "revision": 0,
+  "last_node_id": 60,
+  "last_link_id": 87,
+  "nodes": [
+    {
+      "id": 45,
+      "type": "LoadImage",
+      "pos": [
+        -576,
+        128
+      ],
+      "size": [
+        360,
+        504
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            63,
+            81
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage",
+        "image": "clipspace-painted-masked-1787724512514.png [input]"
+      },
+      "widgets_values": [
+        "ref.png",
+        "image"
+      ],
+      "widgets_values_named": {
+        "image": "ref.png",
+        "upload": "image"
+      }
+    },
+    {
+      "id": 46,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        -576,
+        792
+      ],
+      "size": [
+        360,
+        216
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            69
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            70,
+            71
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "majicmixRealistic_v7.safetensors"
+      ],
+      "widgets_values_named": {
+        "ckpt_name": "majicmixRealistic_v7.safetensors"
+      }
+    },
+    {
+      "id": 47,
+      "type": "VAEEncode",
+      "pos": [
+        576,
+        1088
+      ],
+      "size": [
+        360,
+        216
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pixels",
+          "type": "IMAGE",
+          "link": 65
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 64
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            78
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEEncode"
+      }
+    },
+    {
+      "id": 49,
+      "type": "VAELoader",
+      "pos": [
+        -576,
+        1152
+      ],
+      "size": [
+        360,
+        216
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            64,
+            74,
+            80
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "vae-ft-mse-840000-ema-pruned.safetensors"
+      ],
+      "widgets_values_named": {
+        "vae_name": "vae-ft-mse-840000-ema-pruned.safetensors"
+      }
+    },
+    {
+      "id": 50,
+      "type": "CLIPTextEncode",
+      "pos": [
+        504,
+        216
+      ],
+      "size": [
+        504,
+        360
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 70
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            82,
+            86
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "(photorealistic:1.3), masterpiece, best quality, ultra-detailed, 8k resolution, RAW photo, realistic photography, 1girl, solo, looking at viewer, portrait, long wavy brown hair, green eyes, pale skin, detailed skin texture, realistic hair strands, beautiful detailed face, black off-shoulder top, green earrings, green jacket, cinematic lighting, rim light, backlighting, warm sunlight, soft light, depth of field, bokeh, natural environment, film grain"
+      ],
+      "widgets_values_named": {
+        "text": "(photorealistic:1.3), masterpiece, best quality, ultra-detailed, 8k resolution, RAW photo, realistic photography, 1girl, solo, looking at viewer, portrait, long wavy brown hair, green eyes, pale skin, detailed skin texture, realistic hair strands, beautiful detailed face, black off-shoulder top, green earrings, green jacket, cinematic lighting, rim light, backlighting, warm sunlight, soft light, depth of field, bokeh, natural environment, film grain"
+      }
+    },
+    {
+      "id": 51,
+      "type": "CLIPTextEncode",
+      "pos": [
+        504,
+        648
+      ],
+      "size": [
+        504,
+        360
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 71
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            83,
+            87
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "(worst quality:2), (low quality:2), (normal quality:2), lowres, 2d, anime, illustration, painting, drawing, cartoon, sketch, flat colors, digital art, CGI, 3D render, plastic skin, smooth skin, deformed, disfigured, mutated, bad anatomy, bad proportions, bad hands, extra fingers, missing fingers, watermark, text, signature, blurry, out of focus, bad lighting, bad shadow"
+      ],
+      "widgets_values_named": {
+        "text": "(worst quality:2), (low quality:2), (normal quality:2), lowres, 2d, anime, illustration, painting, drawing, cartoon, sketch, flat colors, digital art, CGI, 3D render, plastic skin, smooth skin, deformed, disfigured, mutated, bad anatomy, bad proportions, bad hands, extra fingers, missing fingers, watermark, text, signature, blurry, out of focus, bad lighting, bad shadow"
+      }
+    },
+    {
+      "id": 52,
+      "type": "ImageScale",
+      "pos": [
+        -64,
+        512
+      ],
+      "size": [
+        360,
+        288
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 63
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            65
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageScale"
+      },
+      "widgets_values": [
+        "nearest-exact",
+        816,
+        1456,
+        "center"
+      ],
+      "widgets_values_named": {
+        "upscale_method": "nearest-exact",
+        "width": 816,
+        "height": 1456,
+        "crop": "center"
+      }
+    },
+    {
+      "id": 53,
+      "type": "KSampler",
+      "pos": [
+        1152,
+        576
+      ],
+      "size": [
+        360,
+        432
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 69
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 86
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 87
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 78
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            72
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        42,
+        "fixed",
+        30,
+        6,
+        "dpmpp_2m_sde",
+        "karras",
+        0.6
+      ],
+      "widgets_values_named": {
+        "seed": 42,
+        "control_after_generate": "fixed",
+        "steps": 30,
+        "cfg": 6,
+        "sampler_name": "dpmpp_2m_sde",
+        "scheduler": "karras",
+        "denoise": 0.6
+      }
+    },
+    {
+      "id": 55,
+      "type": "VAEDecode",
+      "pos": [
+        1656,
+        216
+      ],
+      "size": [
+        360,
+        216
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 72
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 74
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            73
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      }
+    },
+    {
+      "id": 56,
+      "type": "PreviewImage",
+      "pos": [
+        1600,
+        576
+      ],
+      "size": [
+        768,
+        930
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 73
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      }
+    },
+    {
+      "id": 59,
+      "type": "ControlNetLoader",
+      "pos": [
+        -576,
+        1472
+      ],
+      "size": [
+        432,
+        114
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CONTROL_NET",
+          "type": "CONTROL_NET",
+          "links": [
+            79
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ControlNetLoader"
+      },
+      "widgets_values": [
+        "control_v11p_sd15_lineart.pth"
+      ],
+      "widgets_values_named": {
+        "control_net_name": "control_v11p_sd15_lineart.pth"
+      }
+    },
+    {
+      "id": 60,
+      "type": "ControlNetApplyAdvanced",
+      "pos": [
+        1088,
+        1280
+      ],
+      "size": [
+        384,
+        290
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 82
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 83
+        },
+        {
+          "name": "control_net",
+          "type": "CONTROL_NET",
+          "link": 79
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 81
+        },
+        {
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": 80
+        }
+      ],
+      "outputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": []
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ControlNetApplyAdvanced"
+      },
+      "widgets_values": [
+        0.7,
+        0,
+        1
+      ],
+      "widgets_values_named": {
+        "strength": 0.7,
+        "start_percent": 0,
+        "end_percent": 1
+      }
+    }
+  ],
+  "links": [
+    [
+      63,
+      45,
+      0,
+      52,
+      0,
+      "IMAGE"
+    ],
+    [
+      64,
+      49,
+      0,
+      47,
+      1,
+      "VAE"
+    ],
+    [
+      65,
+      52,
+      0,
+      47,
+      0,
+      "IMAGE"
+    ],
+    [
+      69,
+      46,
+      0,
+      53,
+      0,
+      "MODEL"
+    ],
+    [
+      70,
+      46,
+      1,
+      50,
+      0,
+      "CLIP"
+    ],
+    [
+      71,
+      46,
+      1,
+      51,
+      0,
+      "CLIP"
+    ],
+    [
+      72,
+      53,
+      0,
+      55,
+      0,
+      "LATENT"
+    ],
+    [
+      73,
+      55,
+      0,
+      56,
+      0,
+      "IMAGE"
+    ],
+    [
+      74,
+      49,
+      0,
+      55,
+      1,
+      "VAE"
+    ],
+    [
+      78,
+      47,
+      0,
+      53,
+      3,
+      "LATENT"
+    ],
+    [
+      79,
+      59,
+      0,
+      60,
+      2,
+      "CONTROL_NET"
+    ],
+    [
+      80,
+      49,
+      0,
+      60,
+      4,
+      "VAE"
+    ],
+    [
+      81,
+      45,
+      0,
+      60,
+      3,
+      "IMAGE"
+    ],
+    [
+      82,
+      50,
+      0,
+      60,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      83,
+      51,
+      0,
+      60,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      86,
+      50,
+      0,
+      53,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      87,
+      51,
+      0,
+      53,
+      2,
+      "CONDITIONING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.5644739300537774,
+      "offset": [
+        889.6838135800716,
+        72.09871724756835
+      ]
+    },
+    "frontendVersion": "1.49.6"
+  },
+  "version": 0.4
+}

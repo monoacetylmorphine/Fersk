@@ -12,6 +12,24 @@ from fersk_codex.utils import logging as usage
 
 
 class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_migrate_old_table_preserves_rows_and_adds_run_id(self):
+        self.database.parent.mkdir()
+        old_schema = usage.CREATE_TABLE_SQL.replace(
+            ",\n    runId TEXT NOT NULL DEFAULT ''", "")
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(old_schema)
+            db.execute(f"INSERT INTO {usage.TABLE_NAME} (timeStamp, total_tokens) VALUES ('old', 99)")
+            db.commit()
+        await usage.SavingLog(dict(usage.DEFAULT_VALUES, runId="run-new", total_tokens=10))
+        await usage.SavingLog(dict(usage.DEFAULT_VALUES, runId="run-new", total_tokens=25))
+        with closing(sqlite3.connect(self.database)) as db:
+            rows = db.execute(f"SELECT total_tokens, runId FROM {usage.TABLE_NAME} ORDER BY id").fetchall()
+        self.assertEqual(rows, [(99, ""), (10, "run-new"), (25, "run-new")])
+        with self.csv_path.open(newline='', encoding='utf-8') as file:
+            rows = list(csv.DictReader(file))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row['runId'] for row in rows}, {'', 'run-new'})
+
     def setUp(self):
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.database = self.directory / 'state' / 'usage.sqlite'

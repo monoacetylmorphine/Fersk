@@ -7,6 +7,7 @@ from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Awaitable, Callable, TypeVar
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.utils.logger import get_logger
@@ -24,7 +25,7 @@ from openai_codex import (
 )
 from openai_codex.types import TurnStatus
 
-from fersk_codex.utils.logging import SavingLog
+from fersk_codex.utils.logging import SavingLog, finalize_usage
 from fersk_codex.core.thread_manager import get_user_thread, set_user_thread
 from fersk_codex.core.thread_watchdog import probes, settings, should_log_event
 
@@ -111,12 +112,15 @@ def _error_event(exc: Exception, *, operation: str) -> dict[str, str]:
     return {"type": "error", "code": code, "content": content}
 
 
-async def _save_turn_usage(log: dict) -> None:
-    """Finish one bounded write even if stop/cleanup cancels its caller again."""
+async def _save_turn_usage(log: dict, *, duration_ms: int | None = None) -> None:
+    """在有限时间内完成单条写入或耗时回填，抵御调用方重复取消。"""
     async def save():
         try:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
-                await SavingLog(log=log)
+                if duration_ms is None:
+                    await SavingLog(log=log)
+                else:
+                    await finalize_usage(log["runId"], duration_ms)
         except Exception:
             # A commit may already have succeeded; do not retry and duplicate it.
             logger.exception("Token usage 日志保存失败: user_id=%s, thread_id=%s",
@@ -515,8 +519,9 @@ class FerskCodex:
                 probe.turn_id = handle.id
                 probe.last_activity = asyncio.get_running_loop().time()
                 probe.stage("running")
-            usage = {}
-            duration_ms = 0
+            usage_run_id = run_id or uuid4().hex
+            usage_received = False
+            duration_ms = None
             completed = False
             interrupted = False
             message_phases = {}
@@ -561,6 +566,18 @@ class FerskCodex:
                             elif event.method == "thread/tokenUsage/updated":
                                 if hasattr(event.payload.token_usage.last, "model_dump"):
                                     usage = event.payload.token_usage.last.model_dump()
+                                    usage_received = True
+                                    await _save_turn_usage({
+                                        "timeStamp": datetime.now(runningTimestamp.tzinfo).strftime(
+                                            CONFIG["logging"]["timestampFormat"]),
+                                        "userId": user_id,
+                                        "threadId": thread.id,
+                                        "runId": usage_run_id,
+                                        "model": model,
+                                        # 收到完成事件后回填；0 表示尚未获得任务总耗时。
+                                        "taskDuration_ms": 0,
+                                        **usage,
+                                    })
                                     yield {"type": "usage", "content": str(usage)}
 
                             elif event.method == "turn/completed":
@@ -603,15 +620,12 @@ class FerskCodex:
                                 FerskCodex._active_turns.pop(run_id, None)
                                 FerskCodex._pending_interrupts.discard(run_id)
                 finally:
-                    # Persist the latest received snapshot on every stream exit,
-                    # including failure, cancellation, aclose and cleanup errors.
-                    await _save_turn_usage({
-                        "timeStamp": runningTimestamp.strftime(CONFIG["logging"]["timestampFormat"]),
-                        "userId": user_id,
-                        "threadId": thread.id,
-                        "model": model,
-                        "taskDuration_ms": duration_ms,
-                        **usage,
-                    })
+                    # 退出时只回填耗时，不重复插入末次用量。
+                    if usage_received and duration_ms is not None:
+                        await _save_turn_usage({
+                            "userId": user_id,
+                            "threadId": thread.id,
+                            "runId": usage_run_id,
+                        }, duration_ms=duration_ms)
 
             yield {"type": "interrupted" if interrupted else "done"}
