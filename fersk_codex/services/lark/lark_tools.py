@@ -1,4 +1,3 @@
-import re
 import json
 import asyncio
 from pathlib import Path

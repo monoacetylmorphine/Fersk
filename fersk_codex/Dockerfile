@@ -1,5 +1,6 @@
+# syntax=docker/dockerfile:1
 FROM node:lts-bookworm-slim AS node-runtime
-FROM python:3.13-slim-bookworm
+FROM python:3.13.15-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY --from=node-runtime /usr/local /usr/local

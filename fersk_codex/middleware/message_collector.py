@@ -29,13 +29,6 @@ class MessageBatch:
     messages: tuple[CollectedMessage, ...]
 
     @property
-    def is_multimodal(self) -> bool:
-        return any(
-            message.message_type != "text"
-            for message in self.messages
-        )
-
-    @property
     def unsupported_message_types(self) -> set[str]:
         return {
             message.message_type

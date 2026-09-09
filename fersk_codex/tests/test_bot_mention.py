@@ -70,3 +70,8 @@ class BotMentionTests(unittest.IsolatedAsyncioTestCase):
         data.event.message.mentions = [NS(id=NS(open_id="ou_bot"))]
         await self.g.processing(data)
         self.g._route_message.assert_awaited_once()
+
+    def test_console_entry_runs_async_main(self):
+        self.g.main = AsyncMock()
+        self.g.cli()
+        self.g.main.assert_awaited_once()

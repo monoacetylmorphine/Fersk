@@ -65,6 +65,8 @@ class UsagePathTests(unittest.IsolatedAsyncioTestCase):
                 usage, "CSV_PATH", csv_path
             ):
                 await usage.SavingLog(record)
+                self.assertFalse(csv_path.exists())
+                await usage.finalize_usage(record["runId"], None)
             with csv_path.open(newline="", encoding="utf-8") as file:
                 rows = list(csv.DictReader(file))
             self.assertEqual(rows[0]["userId"], "test-user")

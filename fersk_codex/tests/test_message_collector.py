@@ -85,9 +85,7 @@ class MessageCollectorTests(unittest.TestCase):
 
     def test_batch_properties_include_unique_unsupported_types(self):
         empty = MessageBatch("c", "u", "p2p", ())
-        self.assertFalse(empty.is_multimodal)
         self.assertEqual(empty.unsupported_message_types, set())
         batch = MessageBatch("c", "u", "p2p", tuple(
             CollectedMessage(str(i), kind, {}, i) for i, kind in enumerate(("text", "sticker", "sticker", "video"))))
-        self.assertTrue(batch.is_multimodal)
         self.assertEqual(batch.unsupported_message_types, {"sticker", "video"})

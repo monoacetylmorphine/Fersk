@@ -346,7 +346,6 @@ async def sending_card(
                     if accepted and delivery_error is None:
                         # Drop the old unsent buffer; already shown text remains.
                         await close_card()
-                        reset_card()
                         session.accumulated = chunk.content
                         await create_card()
                         session.placeholder = True

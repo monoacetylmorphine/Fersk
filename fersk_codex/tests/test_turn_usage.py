@@ -30,6 +30,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(codex, "set_user_thread", AsyncMock()))
         self.enterContext(patch.object(codex.Path, "mkdir"))
         self.save = self.enterContext(patch.object(codex, "SavingLog", AsyncMock(wraps=usage_log.SavingLog)))
+        self.export = self.enterContext(patch.object(usage_log, "export_to_csv", AsyncMock(wraps=usage_log.export_to_csv)))
         self.factory = self.enterContext(patch.object(codex, "AsyncCodex"))
 
     def events(self, ending, totals=(10, 25), run_id="run-1"):
@@ -59,6 +60,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         return codex.FerskCodex.running("user", "hello", run_id)
 
     def assert_saved_all(self):
+        self.export.assert_awaited_once()
         self.assertEqual(self.save.await_count, 2)
         with sqlite3.connect(self.db) as db:
             rows = db.execute("SELECT userId, threadId, total_tokens, runId FROM token_usage ORDER BY id").fetchall()
@@ -80,13 +82,17 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         await anext(events)
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT total_tokens, runId FROM token_usage").fetchall(), [(10, "run-1")])
+        self.assertFalse(self.csv.exists())
+        self.export.assert_not_awaited()
         await events.aclose()
         self.save.assert_awaited_once()
+        self.export.assert_awaited_once()
 
     async def test_no_usage_does_not_insert_zero_row(self):
         await self.drain(self.events(TurnStatus.completed, totals=()))
         self.save.assert_not_awaited()
         self.assertFalse(self.db.exists())
+        self.export.assert_not_awaited()
 
     async def test_generated_run_id_is_shared_and_unique_per_run(self):
         for _ in range(2):
@@ -161,6 +167,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(closing, 1)
         self.save.assert_awaited_once()
+        self.export.assert_awaited_once()
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT total_tokens FROM token_usage").fetchall(), [(10,)])
 

@@ -575,7 +575,6 @@ async def _stop_chat(data, *, advance_generation=True):
                 state.probe.stop_reason = "stopped"
         had_work = bool(states or pending_chat_requests.get(chat_id) or chat_id in buffered_events)
     await _cancel_buffer(chat_id)
-    succeeded = True
     results = await asyncio.gather(*(_interrupt_run(state) for state in states.values()))
     succeeded = all(results)
     try:
@@ -879,5 +878,10 @@ async def main() -> None:
             logger.exception("退出时运行日志尚未写入完成")
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """同步命令入口，负责启动异步网关。"""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli()

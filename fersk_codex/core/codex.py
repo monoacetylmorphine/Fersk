@@ -17,7 +17,6 @@ from openai_codex import (
     InvalidParamsError,
     InvalidRequestError,
     LocalImageInput,
-    MentionInput,
     MethodNotFoundError,
     Sandbox,
     TextInput,
@@ -112,15 +111,15 @@ def _error_event(exc: Exception, *, operation: str) -> dict[str, str]:
     return {"type": "error", "code": code, "content": content}
 
 
-async def _save_turn_usage(log: dict, *, duration_ms: int | None = None) -> None:
+async def _save_turn_usage(log: dict, *, duration_ms: int | None = None, finalize: bool = False) -> None:
     """在有限时间内完成单条写入或耗时回填，抵御调用方重复取消。"""
     async def save():
         try:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
-                if duration_ms is None:
-                    await SavingLog(log=log)
-                else:
+                if finalize:
                     await finalize_usage(log["runId"], duration_ms)
+                else:
+                    await SavingLog(log=log)
         except Exception:
             # A commit may already have succeeded; do not retry and duplicate it.
             logger.exception("Token usage 日志保存失败: user_id=%s, thread_id=%s",
@@ -297,9 +296,6 @@ class FerskCodex:
             logger.exception("中断或停止确认超时/失败: run_id=%s", run_id)
         return await cls.force_close(run_id)
 
-    def __init__(self):
-        pass
-
     @classmethod
     async def steer(cls, run_id: str, prompt: str | list,
                     *, cancelled: Callable[[], bool] = lambda: False) -> dict:
@@ -411,17 +407,9 @@ class FerskCodex:
                 isinstance(item, LocalImageInput)
                 for item in prompt
             )
-            file = any(
-                isinstance(item, MentionInput)
-                for item in prompt
-            )
 
             if image:
                 selection = CONFIG["codex"]["models"]["image"]
-                model = selection["model"]
-                model_provider = selection["provider"]
-            elif file:
-                selection = CONFIG["codex"]["models"]["multimodal"]
                 model = selection["model"]
                 model_provider = selection["provider"]
 
@@ -620,12 +608,12 @@ class FerskCodex:
                                 FerskCodex._active_turns.pop(run_id, None)
                                 FerskCodex._pending_interrupts.discard(run_id)
                 finally:
-                    # 退出时只回填耗时，不重复插入末次用量。
-                    if usage_received and duration_ms is not None:
+                    # 所有退出路径仅导出一次；已知耗时时回填，不重复插入用量。
+                    if usage_received:
                         await _save_turn_usage({
                             "userId": user_id,
                             "threadId": thread.id,
                             "runId": usage_run_id,
-                        }, duration_ms=duration_ms)
+                        }, duration_ms=duration_ms, finalize=True)
 
             yield {"type": "interrupted" if interrupted else "done"}

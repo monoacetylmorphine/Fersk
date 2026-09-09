@@ -18,6 +18,13 @@ class ConfigTests(unittest.TestCase):
     def test_current_config(self):
         self.assertEqual(self.load(CONFIG), CONFIG)
 
+    def test_extension_configuration_is_optional_and_owned_by_extension(self):
+        config = copy.deepcopy(CONFIG)
+        config.pop('mcp', None)
+        self.load(config)
+        config['mcp'] = {'port': '由扩展项目校验', 'custom': True}
+        self.load(config)
+
     def test_bot_identity_requires_at_least_one_environment_field(self):
         for fields in (("robotOpenIdEnv",), ("robotNameEnv",),
                        ("robotOpenIdEnv", "robotNameEnv"), ()):
@@ -35,7 +42,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_full_schema_and_finite_numbers(self):
         cases = [('messaging', 'historyPageSize', '10'), ('audio', 'limits', {}),
-                 ('mcp', 'port', 70000), ('runtime', 'timezoneOffsetHours', float('nan'))]
+                 ('messaging', 'historyPageSize', 70000), ('runtime', 'timezoneOffsetHours', float('nan'))]
         for section, key, value in cases:
             with self.subTest(key=key):
                 config = copy.deepcopy(CONFIG)
@@ -57,10 +64,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_errors_do_not_echo_sensitive_values(self):
         config = copy.deepcopy(CONFIG)
-        config['mcp']['port'] = 'private-secret-value'
+        config['messaging']['historyPageSize'] = 'private-secret-value'
         with self.assertRaises(RuntimeError) as error:
             self.load(config)
-        self.assertIn('mcp.port', str(error.exception))
+        self.assertIn('messaging.historyPageSize', str(error.exception))
         self.assertNotIn('private-secret-value', str(error.exception))
 
     def test_missing_and_malformed_config_report_cause(self):
@@ -87,7 +94,7 @@ class ConfigTests(unittest.TestCase):
                         self.assertIsNotNone(caught.exception.__cause__)
 
     def test_unknown_keys_and_missing_required_sections_are_rejected(self):
-        for section in ('storage', 'messaging', 'audio', 'codex', 'lark', 'mcp'):
+        for section in ('storage', 'messaging', 'audio', 'codex', 'lark'):
             for operation in ('missing', 'unknown'):
                 with self.subTest(section=section, operation=operation):
                     config = copy.deepcopy(CONFIG)
@@ -100,7 +107,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_boolean_numbers_and_out_of_range_values_are_rejected(self):
         for section, key, value in [
-            ('mcp', 'port', True), ('mcp', 'port', 0),
+            ('messaging', 'historyPageSize', True), ('messaging', 'historyPageSize', 0),
             ('messaging', 'historyPageSize', 0),
             ('runtime', 'timezoneOffsetHours', float('inf')),
             ('runtime', 'timezoneOffsetHours', float('-inf')),
@@ -148,3 +155,21 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded['storage']['databasePath'], str(path.parent.resolve() / 'state.sqlite'))
             self.assertEqual(path.read_text(encoding='utf-8'), raw)
         self.assertEqual(CONFIG, before)
+
+    def test_deprecated_fields_are_rejected(self):
+        for keys, value in [(('storage', 'logdatabasePath'), 'unused.sqlite'),
+                            (('codex', 'models', 'file'), {'model': 'unused', 'provider': 'unused'})]:
+            config = copy.deepcopy(CONFIG)
+            parent = config
+            for key in keys[:-1]:
+                parent = parent[key]
+            parent[keys[-1]] = value
+            with self.assertRaises(RuntimeError):
+                self.load(config)
+
+    def test_upload_is_owned_by_mcp(self):
+        config = copy.deepcopy(CONFIG)
+        config['lark'].pop('upload', None)
+        self.load(config)
+        config['lark']['upload'] = {'fallbackFileType': None}
+        self.load(config)

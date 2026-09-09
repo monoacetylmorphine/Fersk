@@ -1,25 +1,37 @@
 [project]
-name = "fersk-mcp"
+name = "fersk_mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Fersk MCP server"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "mcp[cli]>=2.2.0",
+    "lark-oapi>=1.7.3",
+    "mcp>=2.2.0",
+    "openai>=3.10.0",
+    "python-dotenv>=1.0.0",
+    "jsonschema>=4.0.0",
 ]
 
+[project.scripts]
+fersk-mcp = "fersk_mcp.server:main"
 
-
-# [project.scripts]
-# fersk-codex = "fersk_mcp:main"
-
-# [build-system]
-# requires = ["uv_build>=0.12.10,<0.13.0"]
-# build-backend = "uv_build"
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [tool.uv]
-package = false
+package = true
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["*"]
+[tool.setuptools]
+packages = [
+    "fersk_mcp",
+    "fersk_mcp.configs",
+    "fersk_mcp.utils",
+    "fersk_mcp.tools",
+    "fersk_mcp.tools.internal_tools",
+    "fersk_mcp.tools.lark_tools",
+]
+package-dir = { fersk_mcp = "." }
+
+[tool.setuptools.package-data]
+fersk_mcp = ["configs/*.json"]

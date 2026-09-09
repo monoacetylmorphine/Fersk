@@ -25,6 +25,7 @@ class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
         with closing(sqlite3.connect(self.database)) as db:
             rows = db.execute(f"SELECT total_tokens, runId FROM {usage.TABLE_NAME} ORDER BY id").fetchall()
         self.assertEqual(rows, [(99, ""), (10, "run-new"), (25, "run-new")])
+        await usage.export_to_csv()
         with self.csv_path.open(newline='', encoding='utf-8') as file:
             rows = list(csv.DictReader(file))
         self.assertEqual(len(rows), 3)
@@ -56,6 +57,7 @@ class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
         with closing(sqlite3.connect(self.database)) as db:
             row = db.execute(f'SELECT userId, threadId, input_tokens, output_tokens, total_tokens, taskDuration_ms FROM {usage.TABLE_NAME}').fetchone()
         self.assertEqual(row, (record['userId'], record['threadId'], 11, 7, 18, 123))
+        await usage.export_to_csv()
         with self.csv_path.open(newline='', encoding='utf-8') as file:
             rows = list(csv.DictReader(file))
         self.assertEqual(len(rows), 1)
@@ -65,6 +67,7 @@ class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
     async def test_export_sorts_timestamps_and_retains_all_records(self):
         for timestamp, user in (('2026-09-09', 'later'), ('2026-09-08', 'earlier')):
             await usage.SavingLog(dict(usage.DEFAULT_VALUES, timeStamp=timestamp, userId=user))
+        await usage.export_to_csv()
         with self.csv_path.open(newline='', encoding='utf-8') as file:
             self.assertEqual([row['userId'] for row in csv.DictReader(file)], ['earlier', 'later'])
         await usage.export_to_csv()
@@ -96,7 +99,8 @@ class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_csv_failure_propagates_but_committed_record_is_retained(self):
         self.csv_path.mkdir(parents=True)
+        await usage.SavingLog(dict(usage.DEFAULT_VALUES, userId='retained'))
         with self.assertRaises(OSError):
-            await usage.SavingLog(dict(usage.DEFAULT_VALUES, userId='retained'))
+            await usage.finalize_usage('', None)
         with closing(sqlite3.connect(self.database)) as db:
             self.assertEqual(db.execute(f'SELECT userId FROM {usage.TABLE_NAME}').fetchall(), [('retained',)])

@@ -86,7 +86,6 @@ MIME_FORMATS = {
     "audio/mpeg": "mp3",
 }
 
-OFFICE_EXTENSIONS = {".doc", ".xls", ".ppt"}
 STRICT_FORMATS = {
     "jpeg", "png", "gif", "webp", "bmp", "pdf", "mp4", "m4a", "zip", "ole",
     "json", "text", "ogg", "opus", "wav", "mp3",
@@ -284,10 +283,6 @@ def _choose_extension(
     # validated content. Only repair the name when metadata and bytes disagree.
     if EXTENSION_FORMATS.get(original_extension) == detected_format:
         return original_extension
-    if detected_format == "ole" and original_extension in OFFICE_EXTENSIONS:
-        return original_extension
-    if detected_format == "opus":
-        return ".opus"
     if detected_format in FORMAT_EXTENSIONS:
         return FORMAT_EXTENSIONS[detected_format]
     if original_extension:

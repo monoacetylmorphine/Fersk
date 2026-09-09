@@ -14,22 +14,6 @@ CSV_PATH = CONFIG["storage"]["tokenUsagePath"]
 TABLE_NAME = CONFIG["logging"]["tokenUsageTable"]
 
 
-REQUIRED_KEYS = [
-    "timeStamp",
-    "userId",
-    "threadId",
-    "model",
-    "taskDuration_ms",
-    "cache_write_input_tokens",
-    "cached_input_tokens",
-    "input_tokens",
-    "output_tokens",
-    "reasoning_output_tokens",
-    "total_tokens",
-    "runId",
-]
-
-
 DEFAULT_VALUES = {
     "timeStamp": "",
     "userId": "",
@@ -44,6 +28,9 @@ DEFAULT_VALUES = {
     "total_tokens": 0,
     "runId": "",
 }
+
+
+REQUIRED_KEYS = tuple(DEFAULT_VALUES)
 
 
 CREATE_TABLE_SQL = f"""
@@ -169,18 +156,18 @@ async def SavingLog(log: Dict[str, Any]) -> None:
 
             await db.commit()
             logger.info("Usage : detail=%s", log)
-            await export_to_csv()
     except aiosqlite.Error as exc:
         print(f"数据库操作失败：{exc}")
         raise
 
 
-async def finalize_usage(run_id: str, duration_ms: int) -> None:
-    """回填已接收明细的任务总耗时，不新增用量记录。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            f"UPDATE {TABLE_NAME} SET taskDuration_ms = ? WHERE runId = ?",
-            (duration_ms, run_id),
-        )
-        await db.commit()
+async def finalize_usage(run_id: str, duration_ms: int | None) -> None:
+    """任务退出时回填已知耗时并导出一次，不新增用量记录。"""
+    if duration_ms is not None:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET taskDuration_ms = ? WHERE runId = ?",
+                (duration_ms, run_id),
+            )
+            await db.commit()
     await export_to_csv()
