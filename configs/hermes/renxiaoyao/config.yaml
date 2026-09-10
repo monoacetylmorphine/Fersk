@@ -1,7 +1,7 @@
 model:
   default: gpt-5.6-terra
   provider: custom:ai.soulecho.cc
-  base_url: https://hk.ai.soulecho.cc/v1
+  base_url: ''
 max_concurrent_sessions: 8
 agent:
   max_turns: 150
@@ -228,7 +228,7 @@ updates:
 _config_version: 39
 fallback_model:
   provider: deepseek
-  model: deepseek/deepseek-v4-pro
+  model: deepseek/deepseek-v4-flash
 session_reset:
   mode: both
   idle_minutes: 120
