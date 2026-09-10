@@ -1,7 +1,7 @@
 model:
-  default: gpt-5.6-terra
-  provider: custom:ai.soulecho.cc
-  base_url: 'https://hk.ai.soulecho.cc/v1'
+  default: deepseek-v4-flash
+  provider: deepseek
+  base_url: https://api.deepseek.com/v1
 max_concurrent_sessions: 8
 agent:
   max_turns: 150
@@ -206,6 +206,13 @@ approvals:
   destructive_slash_confirm: true
 command_allowlist:
   - script execution via -e/-c flag
+plugins:
+  enabled:
+    - model-providers/deepseek
+    - observability/langfuse
+    - platforms/feishu
+    - web/tavily
+  disabled: []
 hooks_auto_accept: true
 security:
   redact_secrets: true
@@ -225,7 +232,7 @@ updates:
   pre_update_backup: true
   backup_keep: 5
   non_interactive_local_changes: stash
-_config_version: 38
+_config_version: 39
 fallback_model:
   provider: deepseek
   model: deepseek/deepseek-v4-pro
@@ -265,22 +272,17 @@ custom_providers:
       gpt-5.3-codex-spark: {}
       gpt-5.6-sol: {}
       gpt-5.6-terra: {}
+      gpt-image-2: {}
+      gpt-image-2-4k: {}
+      gpt-image-2-adobe: {}
     api_mode: chat_completions
     models_discovered: true
-plugins:
-  enabled:
-    - model-providers/deepseek
-    - observability/langfuse
-    - platforms/feishu
-    - web/tavily
-  disabled: []
 known_plugin_toolsets:
   cli:
     - a2a
     - spotify
 known_builtin_toolsets:
   cli:
-    - bfl
     - browser
     - clarify
     - code_execution
