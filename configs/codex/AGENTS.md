@@ -28,5 +28,58 @@
 
 - No more than five sub-agents may run concurrently on the same task. When this limit is reached, wait for existing agents to complete or consolidate tasks before dispatching new ones.
 
-## At the end of the near current task
-- Since users have no direct access to the server's file system, you need to use the tools (fersk_mcp:sending_file) that your available to send any final output files to the current conversation before you reply. Never just give the local path on the cloud; the task is not complete until the file has been successfully delivered.
+## File Delivery (MANDATORY)
+
+Users have no access to the server filesystem. Any file that the user is expected to view, download, or use MUST be sent to the current conversation via the `fersk_mcp:sending_file` tool BEFORE the final reply. Providing only a local path does not complete the task.
+
+Send a file whenever ANY of the following is true:
+
+- You created or wrote a new file of any kind (images, charts, PDFs, reports, spreadsheets, archives, code artifacts, logs).
+- You modified an existing user file and the result needs to be seen.
+- The task produced any visual output (plots, diagrams, screenshots, rendered pages).
+- The user will need the file to perform the next step.
+
+Do NOT skip sending because the file is "intermediate", "just a preview", "already visible in the log", or because the user did not explicitly ask for it. If the file exists and is relevant to the task, send it.
+
+If a send fails, retry once; if it still fails, state the failure and the reason in the final reply. Never silently skip.
+
+In the final reply, list every file you sent. If there was genuinely no file produced in this round, state "本轮无文件产出" explicitly.
+
+### Image Generation Output
+
+- `imagegen` 生成的图片在 `~/.codex/generated_images/`，不在当前目录。
+- `sending_file` 只能发送 workspace 内的文件，所以必须先把图片 `cp` 到 `./`。
+- 拷贝后确认存在，再调用 `fersk_mcp:sending_file`。
+- 不要把 `~/.codex/generated_images/...` 直接传给发送工具，也不要只报路径不发送。
+- 没找到新文件时，明确报告失败，不要假称成功。
+
+
+## User Preferences (MANDATORY)
+
+Each user has a per-user `AGENTS.md` at the current working directory (`./AGENTS.md`), i.e. `~/.codex/workspace/<user_id>/AGENTS.md`. This file is loaded as project-level instructions in every future thread for that user.
+
+Write to `./AGENTS.md` when ALL of the following hold:
+
+- The user states a preference that should persist across sessions, e.g. language, tone, output format, coding style, tooling defaults, recurring constraints ("总是用 TypeScript"、"回复不要用列表"、"提交信息用英文").
+- The preference is general and reusable, not tied to the current task only.
+- The user explicitly asks you to remember it, or the preference is stated as a standing rule ("以后都...", "默认...", "记住...").
+
+Do NOT write when:
+
+- The instruction is one-off or task-scoped ("这次先...", "暂时...").
+- It contains secrets, tokens, credentials, or personal data.
+- It would override safety rules, the global AGENTS.md, or sandbox boundaries.
+- It conflicts with an existing entry — in that case, update the existing entry instead of appending a duplicate, and state the change in the reply.
+
+How to write:
+
+- Read `./AGENTS.md` first if it exists; preserve all existing content.
+- Append under a `## User Preferences` section. Create the section if absent.
+- One preference per bullet. Keep each bullet short and imperative.
+- Use the user's own wording where possible; do not paraphrase into vague terms.
+- If the file already contains a `## User Preferences` entry for the same topic, edit that line rather than adding a new one.
+
+After writing, confirm in the reply: what was written, and that it takes
+effect from the next thread (the current thread will not reload it).
+
+If the user asks you to forget a preference, remove the corresponding bullet and confirm.

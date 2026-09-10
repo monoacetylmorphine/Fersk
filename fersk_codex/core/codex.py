@@ -2,6 +2,7 @@ __all__ = ["FerskCodex", "LiveTurn"]
 
 import asyncio
 import random
+import subprocess
 from dataclasses import dataclass, field
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
@@ -418,8 +419,25 @@ class FerskCodex:
                 f"不支持的 prompt 类型: {type(prompt).__name__}"
             )
 
-        workspace = Path(CONFIG["storage"]["workspaceRoot"]) / user_id
+        workspace = Path(CONFIG["storage"]["workspaceRoot"]).expanduser() / user_id
         workspace.mkdir(parents=True, exist_ok=True)
+
+        # 1. 执行 git init：如果还没有 .git 就初始化
+        try:
+            subprocess.run(
+                ["git", "init", "-q", "-b", "main"],
+                cwd=workspace,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            logger.warning("git init failed in %s: %s", workspace, e.stderr)
+
+        # 2. 检查 AGENTS.md，不存在就创建空文件
+        agents_md = workspace / "AGENTS.md"
+        if not agents_md.exists():
+            agents_md.touch()
 
         thread_config = {
             "cwd":str(workspace),
