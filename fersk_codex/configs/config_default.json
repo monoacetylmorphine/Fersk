@@ -72,7 +72,7 @@
       "appIdEnv": "LARK_APP_ID",
       "appSecretEnv": "LARK_APP_SECRET",
       "robotNameEnv": "LARK_ROBOT_NAME",
-      "robotOpenIdEnv": "LARK_ROBOT_OPEN_ID"
+      "robotUnionIdEnv": "LARK_ROBOT_UNION_ID"
     },
     "reaction": {
       "processingEmoji": "OnIt"

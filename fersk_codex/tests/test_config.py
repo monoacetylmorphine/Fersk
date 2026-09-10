@@ -26,12 +26,12 @@ class ConfigTests(unittest.TestCase):
         self.load(config)
 
     def test_bot_identity_requires_at_least_one_environment_field(self):
-        for fields in (("robotOpenIdEnv",), ("robotNameEnv",),
-                       ("robotOpenIdEnv", "robotNameEnv"), ()):
+        for fields in (("robotUnionIdEnv",), ("robotNameEnv",),
+                       ("robotUnionIdEnv", "robotNameEnv"), ()):
             with self.subTest(fields=fields):
                 config = copy.deepcopy(CONFIG)
                 credentials = config["lark"]["credentials"]
-                for key in ("robotOpenIdEnv", "robotNameEnv"):
+                for key in ("robotUnionIdEnv", "robotNameEnv"):
                     if key not in fields:
                         credentials.pop(key, None)
                 if fields:
@@ -39,6 +39,12 @@ class ConfigTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(RuntimeError, "lark.credentials"):
                         self.load(config)
+
+        config = copy.deepcopy(CONFIG)
+        credentials = config["lark"]["credentials"]
+        credentials["robotOpenIdEnv"] = credentials.pop("robotUnionIdEnv")
+        with self.assertRaisesRegex(RuntimeError, "lark.credentials"):
+            self.load(config)
 
     def test_full_schema_and_finite_numbers(self):
         cases = [('messaging', 'historyPageSize', '10'), ('audio', 'limits', {}),

@@ -29,4 +29,4 @@
 - No more than five sub-agents may run concurrently on the same task. When this limit is reached, wait for existing agents to complete or consolidate tasks before dispatching new ones.
 
 ## At the end of the near current task
-- Since users have no direct access to the server's file system, you need to use the skills that your available to send any final output files to the current conversation before you reply. Never just give the local path on the cloud; the task is not complete until the file has been successfully delivered.
+- Since users have no direct access to the server's file system, you need to use the tools (fersk_mcp:sending_file) that your available to send any final output files to the current conversation before you reply. Never just give the local path on the cloud; the task is not complete until the file has been successfully delivered.

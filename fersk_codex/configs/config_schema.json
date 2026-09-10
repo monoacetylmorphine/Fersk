@@ -52,6 +52,18 @@
         "credentials": {
           "type": "object",
           "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "robotUnionIdEnv"
+              ]
+            },
+            {
+              "required": [
+                "robotNameEnv"
+              ]
+            }
+          ],
           "required": [
             "appIdEnv",
             "appSecretEnv"
@@ -63,8 +75,12 @@
             "appSecretEnv": {
               "$ref": "#/$defs/envName"
             },
-            "robotNameEnv": {},
-            "robotOpenIdEnv": {}
+            "robotNameEnv": {
+              "$ref": "#/$defs/envName"
+            },
+            "robotUnionIdEnv": {
+              "$ref": "#/$defs/envName"
+            }
           }
         },
         "reaction": {},

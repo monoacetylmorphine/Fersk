@@ -47,6 +47,8 @@ docker run --rm \
 
 环境变量统一从 `~/.fersk/.env` 加载，模块不再搜索或覆盖其他 `.env`。修改挂载配置后重启服务生效。JSON 语法和共享 Schema 错误仍会阻止启动。
 
+共享配置中的机器人身份字段统一为 `lark.credentials.robotUnionIdEnv`，其默认环境变量为 `LARK_ROBOT_UNION_ID`；旧字段 `robotOpenIdEnv` 不再通过 Schema 校验。
+
 离线验证：从仓库根目录运行 `fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py`，测试使用临时配置和模拟客户端，不发送真实请求。
 
 独立配置示例位于本项目 `configs/config_default.json`，测试不再读取主项目文件。已有挂载的配置保持不变。

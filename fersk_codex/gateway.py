@@ -753,20 +753,20 @@ def _bot_identity(*, required=False):
     def value(key):
         env_name = credentials.get(key)
         return (os.getenv(env_name, "").strip() if env_name else "")
-    robot_open_id = value("robotOpenIdEnv")
+    robot_union_id = value("robotUnionIdEnv")
     robot_name = value("robotNameEnv")
-    if required and not (robot_open_id or robot_name):
-        raise RuntimeError("群聊机器人标识未配置：robotOpenIdEnv 或 robotNameEnv 对应的环境变量至少一个非空")
-    return robot_open_id, robot_name
+    if required and not (robot_union_id or robot_name):
+        raise RuntimeError("群聊机器人标识未配置：robotUnionIdEnv 或 robotNameEnv 对应的环境变量至少一个非空")
+    return robot_union_id, robot_name
 
 
 def _is_bot_mentioned(mentions) -> bool:
-    """Match a nonempty Open ID or name; Open ID survives bot renaming."""
-    robot_open_id, robot_name = _bot_identity()
+    """Match a nonempty Union ID or name; Union ID survives bot renaming."""
+    robot_union_id, robot_name = _bot_identity()
     for mention in mentions or []:
         mention_id = getattr(mention, "id", None)
-        mentioned_open_id = getattr(mention_id, "open_id", None)
-        if robot_open_id and mentioned_open_id == robot_open_id:
+        mentioned_union_id = getattr(mention_id, "union_id", None)
+        if robot_union_id and mentioned_union_id == robot_union_id:
             return True
         if robot_name and getattr(mention, "name", None) == robot_name:
             return True
