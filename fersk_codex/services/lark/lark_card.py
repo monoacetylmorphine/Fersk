@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterable
 from contextlib import asynccontextmanager
@@ -27,6 +28,9 @@ logger = get_logger("Card")
 UPDATE_INTERVAL = 0.25
 STREAM_LIFETIME = 9 * 60
 ELEMENT_ID = "response_content"
+MARKDOWN_IMAGE_PATTERN = re.compile(
+    r"(?<!\\)!\[((?:\\.|[^\]\\\r\n])*)\]\(((?:\\.|[^)\\\r\n])*)\)"
+)
 
 
 class CardDeliveryError(RuntimeError):
@@ -70,6 +74,11 @@ class CardSteer:
         for future in (self.ready, self.applied):
             if not future.done():
                 future.set_result(False)
+
+
+def _replace_markdown_images(content: str) -> str:
+    """将飞书卡片不支持的 Markdown 图片降级为裸地址。"""
+    return MARKDOWN_IMAGE_PATTERN.sub(r"\2", content)
 
 
 class CardStreamSession:
@@ -171,7 +180,7 @@ def _card(content: str, streaming: bool) -> dict:
             "padding": "12px 12px 20px 12px",
             "elements": [{
                 "tag": "markdown", "element_id": ELEMENT_ID,
-                "content": content, "text_size": "body",
+                "content": _replace_markdown_images(content), "text_size": "body",
             }],
         },
     }
@@ -257,7 +266,8 @@ async def sending_card(
         request = (ContentCardElementRequest.builder()
             .card_id(session.card_id).element_id(ELEMENT_ID)
             .request_body(ContentCardElementRequestBody.builder()
-                .content(session.accumulated).sequence(session.sequence).uuid(uuid4().hex).build())
+                .content(_replace_markdown_images(session.accumulated))
+                .sequence(session.sequence).uuid(uuid4().hex).build())
             .build())
         try:
             await _call(client.cardkit.v1.card_element.content, request)

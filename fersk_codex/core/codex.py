@@ -26,7 +26,7 @@ from openai_codex.types import TurnStatus
 
 from fersk_codex.utils.logging import SavingLog, finalize_usage
 from fersk_codex.core.thread_manager import get_user_thread, set_user_thread
-from fersk_codex.core.thread_watchdog import probes, settings, should_log_event
+from fersk_codex.core.thread_watchdog import probes, settings, should_log_event, summarize_event
 
 logger = get_logger("Codex")
 
@@ -529,7 +529,7 @@ class FerskCodex:
                     async with aclosing(handle.stream()) as stream:
                         async for event in stream:
                             if should_log_event(event.method):
-                                logger.info("Codex event: run_id=%s, event=%s", run_id, event)
+                                logger.info("Codex event: run_id=%s, event=%s", run_id, summarize_event(event))
                             if probe:
                                 probe.activity(event)
 

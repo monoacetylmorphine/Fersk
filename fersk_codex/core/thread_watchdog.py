@@ -26,6 +26,57 @@ def should_log_event(method: str) -> bool:
             and (not method.startswith("item/") or method == "item/completed"))
 
 
+def _summary_fields(source, fields):
+    """只取白名单标量；500 字符上限是本项目的日志策略。"""
+    result = {}
+    for attribute, key in fields:
+        value = getattr(source, attribute, None)
+        value = getattr(value, "value", value)
+        value = getattr(value, "root", value)
+        if isinstance(value, str):
+            result[key] = value[:500] + ("…" if len(value) > 500 else "")
+        elif isinstance(value, (bool, int, float)):
+            result[key] = value
+    return result
+
+
+def summarize_item(item):
+    """终端与 JSONL 共用摘要，不序列化命令输出、工具结果或图片数据。"""
+    result = _summary_fields(item, (
+        ("id", "id"), ("type", "type"), ("status", "status"),
+        ("duration_ms", "durationMs"), ("exit_code", "exitCode"),
+    ))
+    if item.type == "imageGeneration":
+        result.update(_summary_fields(item, (
+            ("saved_path", "savedPath"), ("transparent_background", "transparentBackground"),
+        )))
+    elif item.type == "agentMessage":
+        result.update(_summary_fields(item, (("phase", "phase"),)))
+        result["textLength"] = len(getattr(item, "text", "") or "")
+    return result
+
+
+def summarize_event(event):
+    """事件仅输出定位及状态字段；包括 turn 内嵌 items 在内均不展开。"""
+    payload = event.payload
+    result = {"method": event.method, **_summary_fields(payload, (
+        ("thread_id", "threadId"), ("turn_id", "turnId"), ("will_retry", "willRetry"),
+    ))}
+    if event.method == "item/completed":
+        result["item"] = summarize_item(payload.item.root)
+    turn = getattr(payload, "turn", None)
+    if turn is not None:
+        result["turn"] = _summary_fields(turn, (
+            ("id", "id"), ("status", "status"), ("duration_ms", "durationMs"),
+        ))
+    error = getattr(payload, "error", None) or getattr(turn, "error", None)
+    if error is not None:
+        result["error"] = _summary_fields(error, (
+            ("message", "message"), ("additional_details", "additionalDetails"),
+        ))
+    return result
+
+
 class RunJournal:
     """One writer per process. Append one JSON object per line.
 
@@ -155,7 +206,7 @@ class RunProbe:
                 else:
                     self.tools.discard(item.id)
             if event.method == "item/completed":
-                self.record(event.method, item=item.model_dump(mode="json", by_alias=True))
+                self.record(event.method, item=summarize_item(item))
         if event.method == "turn/completed":
             status = event.payload.turn.status
             self.finish(self.stop_reason or getattr(status, "value", status))

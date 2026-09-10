@@ -63,6 +63,41 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["body"]["elements"][0]["content"], "**你好**")
         self.client.cardkit.v1.card.create.assert_not_called()
 
+    async def test_markdown_images_are_sent_as_bare_urls(self):
+        content = (
+            "已生成：![预览](https://example.com/image.jpeg?x=1&y=2)\n"
+            "普通链接：[详情](https://example.com/detail)\n"
+            r"转义语法：\![示例](https://example.com/example.png)"
+        )
+        await self.card.sending_card("on_user", content)
+        request = self.client.im.v1.message.create.call_args.args[0]
+        body = json.loads(request.request_body.content)
+        self.assertEqual(
+            body["body"]["elements"][0]["content"],
+            "已生成：https://example.com/image.jpeg?x=1&y=2\n"
+            "普通链接：[详情](https://example.com/detail)\n"
+            r"转义语法：\![示例](https://example.com/example.png)",
+        )
+
+    async def test_stream_converts_image_only_after_markdown_is_complete(self):
+        async def chunks():
+            yield "已生成：![预览](https://example.com/image.jpeg?x=1"
+            yield "&y=2)"
+        with patch.object(self.card, "UPDATE_INTERVAL", 0):
+            await self.card.sending_card("on_user", chunks())
+        created = json.loads(
+            self.client.cardkit.v1.card.create.call_args.args[0].request_body.data
+        )
+        self.assertEqual(
+            created["body"]["elements"][0]["content"],
+            "已生成：![预览](https://example.com/image.jpeg?x=1",
+        )
+        write = self.client.cardkit.v1.card_element.content.call_args.args[0]
+        self.assertEqual(
+            write.request_body.content,
+            "已生成：https://example.com/image.jpeg?x=1&y=2",
+        )
+
     async def test_stream_sends_before_end_and_flushes_tail(self):
         async def chunks():
             yield "你"

@@ -12,7 +12,9 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from fersk_codex.core.codex import FerskCodex, LiveTurn
-from fersk_codex.core.thread_watchdog import RunProbe, RunJournal, settings, should_log_event
+from fersk_codex.core.thread_watchdog import (
+    RunProbe, RunJournal, settings, should_log_event, summarize_event,
+)
 from fersk_codex.utils.config_loader import CONFIG, _load_config
 import test_stop_command as helpers
 
@@ -51,7 +53,46 @@ class ProbeTests(unittest.TestCase):
             entry = record.call_args.args[0]
             self.assertEqual(entry["event"], "item/completed")
             self.assertEqual(entry["lastEvent"], "item/completed")
-            self.assertEqual(entry["item"], item_data)
+            self.assertEqual(entry["item"], {"id": "tool", "type": "commandExecution"})
+            item.model_dump.assert_not_called()
+
+    def test_large_payloads_are_absent_from_console_and_journal_summaries(self):
+        content = "PRIVATE_PAYLOAD" * 100000
+        items = [
+            NS(id="cmd", type="commandExecution", status="completed", exit_code=0,
+               aggregated_output=content, command=content),
+            NS(id="img", type="imageGeneration", status="completed", result=content,
+               revised_prompt=content, saved_path=NS(root="/tmp/image.png"),
+               transparent_background=False),
+            NS(id="msg", type="agentMessage", text=content, phase="commentary"),
+            NS(id="tool", type="mcpToolCall", result=content),
+        ]
+        probe = RunProbe("run", "chat", frozenset())
+        for item in items:
+            event = NS(method="item/completed", payload=NS(item=NS(root=item)))
+            with patch("fersk_codex.core.thread_watchdog.journal.record") as record:
+                probe.activity(event)
+                summary = summarize_event(event)
+                self.assertEqual(record.call_args.args[0]["item"], summary["item"])
+                self.assertNotIn("PRIVATE_PAYLOAD", json.dumps(summary))
+                self.assertLess(len(json.dumps(summary)), 500)
+        self.assertEqual(items[1].result, content)
+        self.assertEqual(summarize_event(NS(method="item/completed",
+                         payload=NS(item=NS(root=items[1]))))["item"]["savedPath"], "/tmp/image.png")
+
+    def test_turn_summary_omits_nested_items_and_preserves_retry_error(self):
+        error = NS(message="Reconnecting... 2/5", additional_details="request timed out")
+        event = NS(method="error", payload=NS(error=error, will_retry=True))
+        summary = summarize_event(event)
+        self.assertTrue(summary["willRetry"])
+        self.assertEqual(summary["error"]["message"], error.message)
+        turn = NS(id="turn", status="failed", duration_ms=42, error=error,
+                  items=[NS(result="PRIVATE_PAYLOAD")])
+        summary = summarize_event(NS(method="turn/completed", payload=NS(turn=turn)))
+        self.assertNotIn("PRIVATE_PAYLOAD", json.dumps(summary))
+        self.assertEqual(summary["turn"]["status"], "failed")
+        error.additional_details = "x" * 10000
+        self.assertEqual(len(summarize_event(event)["error"]["additionalDetails"]), 501)
 
     def test_startup_idle_and_terminal_rules(self):
         with patch.dict(settings(), maxRunSeconds=1000, startupTimeoutSeconds=10, idleTimeoutSeconds=5):
