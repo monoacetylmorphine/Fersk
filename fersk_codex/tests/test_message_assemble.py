@@ -189,3 +189,25 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(task, 2)
         self.assertEqual(finished, {"a", "b"})
         self.transcribe.assert_not_awaited()
+
+    async def test_post_attachment_limit_before_download(self):
+        nodes = [[{'tag': 'img', 'image_key': f'img-{i}'} for i in range(11)]]
+        with self.assertRaisesRegex(self.assembly.InputAssemblyError, '最多接收 10 个附件'):
+            await self.assemble(message('post', {'content': nodes, 'content_v2': nodes}))
+        self.download.assert_not_awaited()
+        self.transcribe.assert_not_awaited()
+
+    async def test_post_dual_content_counts_once_at_configured_boundary(self):
+        nodes = [[{'tag': 'img', 'image_key': 'img'}, {'tag': 'text', 'text': 'ssssssss'}]]
+        self.download.return_value = '/tmp/photo.png'
+        with patch.dict(CONFIG['messaging'], historyPageSize=1):
+            result = await self.assemble(message('post', {'content': nodes, 'content_v2': nodes}))
+        self.download.assert_awaited_once()
+        self.assertEqual(len(result.codex_input), 2)
+
+    async def test_image_and_file_share_one_limit(self):
+        with patch.dict(CONFIG['messaging'], historyPageSize=1):
+            with self.assertRaisesRegex(self.assembly.InputAssemblyError, '最多接收 1 个附件'):
+                await self.assemble(message('image', {'image_key': 'i'}),
+                                    message('file', {'file_key': 'f'}, 2))
+        self.download.assert_not_awaited()

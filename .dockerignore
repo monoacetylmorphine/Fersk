@@ -1,9 +1,43 @@
-# 根目录构建上下文仅发送两个服务源码及共享配置。
+# 两个服务统一使用仓库根目录作为构建上下文。
 **
+
+# Codex 仅包含应用源码、共享配置和构建输入。
 !fersk_codex/
+fersk_codex/**
+!fersk_codex/Dockerfile
+!fersk_codex/pyproject.toml
+!fersk_codex/uv.lock
+!fersk_codex/README.md
+!fersk_codex/__init__.py
+!fersk_codex/gateway.py
+!fersk_codex/configs/
+fersk_codex/configs/**
+!fersk_codex/configs/*.json
+!fersk_codex/configs/*.py
+!fersk_codex/core/
+fersk_codex/core/**
+!fersk_codex/core/*.py
+!fersk_codex/middleware/
+fersk_codex/middleware/**
+!fersk_codex/middleware/*.py
+!fersk_codex/services/
+fersk_codex/services/**
+!fersk_codex/services/*.py
+!fersk_codex/services/lark/
+fersk_codex/services/lark/**
+!fersk_codex/services/lark/*.py
+!fersk_codex/utils/
+fersk_codex/utils/**
+!fersk_codex/utils/*.py
+!fersk_codex/docker/
+fersk_codex/docker/**
+!fersk_codex/docker/entrypoint.sh
+
+# MCP 保留目录内容，再统一排除开发环境和构建产物。
 !fersk_mcp/
-!fersk_codex/**
 !fersk_mcp/**
+
+# 公共排除规则必须放在白名单之后，避免被重新包含。
 **/.venv
 **/__pycache__
 **/*.egg-info

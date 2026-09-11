@@ -12,6 +12,7 @@ import time
 
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.utils.logger import get_logger
+from fersk_codex.middleware.session_cache import RETENTION_SECONDS
 
 logger = get_logger("Watchdog")
 
@@ -92,12 +93,13 @@ class RunJournal:
         self._records = deque()
         self._revision = 0
         self._saved = 0
+        self._discarded = 0
         self._thread = None
 
     def record(self, record):
         with self._lock:
             day = datetime.now(self._timezone).strftime("%Y-%m-%d")
-            self._records.append((self.path / f"{day}_logs.jsonl", record))
+            self._records.append((self.path / f"{day}_logs.jsonl", record, time.monotonic()))
             self._revision += 1
             if self._thread is None:
                 self._thread = threading.Thread(target=self._write, daemon=True)
@@ -105,13 +107,21 @@ class RunJournal:
 
     def _write_pending(self):
         with self._lock:
+            expired = 0
+            now = time.monotonic()
+            while self._records and now - self._records[0][2] >= RETENTION_SECONDS:
+                self._records.popleft()
+                self._discarded += 1
+                expired += 1
             records = list(self._records)
+        if expired:
+            logger.error("运行日志超过 24 小时仍未写入，已丢弃 %s 条；这些记录未落盘", expired)
         # Commit each contiguous date group separately. If a later file fails,
         # successful groups have already left the queue and cannot be duplicated.
         for path, group in groupby(records, key=lambda entry: entry[0]):
             batch = list(group)
             payload = "".join(json.dumps(record, ensure_ascii=False) + "\n"
-                              for _, record in batch).encode("utf-8")
+                              for _, record, _ in batch).encode("utf-8")
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "ab") as file:
                 offset = file.tell()
@@ -141,7 +151,9 @@ class RunJournal:
         async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
             while True:
                 with self._lock:
-                    if self._saved >= target:
+                    if self._saved + self._discarded >= target:
+                        if self._discarded:
+                            raise RuntimeError(f"有 {self._discarded} 条过期日志已丢弃，未全部写入")
                         return
                 await asyncio.sleep(0.05)
 
@@ -164,6 +176,8 @@ class RunProbe:
     terminal: str | None = None
     stop_reason: str | None = None
     stop_confirmed: bool = False
+    cleanup_at: float | None = None
+    cleanup_timed_out: bool = False
     tools: set[str] = field(default_factory=set)
     event_count: int = 0
 
@@ -191,7 +205,13 @@ class RunProbe:
     def finish(self, result):
         if self.terminal is None:
             self.terminal = result
+            self.begin_cleanup()
             self.record("terminal")
+
+    def begin_cleanup(self):
+        """模型结束或收到停止请求后，开始独立的收尾计时。"""
+        if self.cleanup_at is None:
+            self.cleanup_at = time.monotonic()
 
     def activity(self, event):
         self.last_activity = time.monotonic()
@@ -214,9 +234,12 @@ class RunProbe:
     def expired(self, now=None):
         now = time.monotonic() if now is None else now
         if self.terminal or self.stop_reason:
+            self.begin_cleanup()
+            if now - self.cleanup_at >= settings().get("finalizationTimeoutSeconds", 30):
+                return "cleanup_timeout"
             return None
         policy = settings()
-        if now - self.received_at >= policy["maxRunSeconds"]:
+        if now - self.received_at >= min(policy["maxRunSeconds"], RETENTION_SECONDS):
             return "run_timeout"
         if self.phase == "starting" and now - self.phase_at >= policy["startupTimeoutSeconds"]:
             return "startup_timeout"

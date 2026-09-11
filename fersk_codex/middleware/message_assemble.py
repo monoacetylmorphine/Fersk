@@ -10,6 +10,9 @@ from typing import Literal, Union
 from openai_codex import LocalImageInput, MentionInput, TextInput
 
 from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.utils.logger import get_logger
+
+logger = get_logger("Assembly")
 
 from fersk_codex.middleware.audio_transcription import ASR, AudioConversionTimeout
 from fersk_codex.services.lark.lark_tools import download_msg_resource
@@ -69,6 +72,11 @@ async def assemble_codex_input(batch: MessageBatch) -> AssemblyResult:
 
     parts, parse_rejections = _normalize_messages(batch)
     resource_parts = [part for part in parts if isinstance(part, _ResourcePart)]
+    limit = CONFIG["messaging"]["historyPageSize"]
+    if len(resource_parts) + len(parse_rejections) > limit:
+        # 按用户要求，历史消息分页和每批附件总量使用同一个参数。
+        # 超限整批拒绝，避免静默截断导致任务描述与实际附件不一致。
+        raise InputAssemblyError(f"每批最多接收 {limit} 个附件（图片、文件和语音合计），请分批发送。")
     downloaded, download_rejections = await _download_resources(
         batch.union_id,
         resource_parts,
@@ -238,7 +246,7 @@ async def _download_resources(
     rejected: list[str] = []
     for part, result in zip(resources, results):
         if isinstance(result, BaseException):
-            print(f"下载 {part.display_name} 异常: {result}")
+            logger.error("下载资源异常: name=%s", part.display_name, exc_info=result)
             rejected.append(f"{part.display_name}{CONFIG['messages']['downloadFailedSuffix']}")
         elif not result:
             rejected.append(f"{part.display_name}{CONFIG['messages']['downloadFailedSuffix']}")
@@ -278,7 +286,7 @@ async def _transcribe_audio(
         if isinstance(result, AudioConversionTimeout):
             rejected.append(f"{part.display_name}：{result}")
         elif isinstance(result, BaseException):
-            print(f"转写 {part.display_name} 异常: {result}")
+            logger.error("转写资源异常: name=%s", part.display_name, exc_info=result)
             rejected.append(f"{part.display_name}{CONFIG['messages']['transcriptionFailedSuffix']}")
         elif not result.strip():
             rejected.append(f"{part.display_name}{CONFIG['messages']['emptyTranscriptionSuffix']}")

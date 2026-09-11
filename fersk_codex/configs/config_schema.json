@@ -90,6 +90,11 @@
           "type": "number",
           "minimum": 0
         },
+        "maxPendingEvents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
         "historyPageSize": {
           "type": "integer",
           "minimum": 1,
@@ -201,6 +206,10 @@
               "exclusiveMinimum": 0
             },
             "cleanupTimeoutSeconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "finalizationTimeoutSeconds": {
               "type": "number",
               "exclusiveMinimum": 0
             },
@@ -325,6 +334,11 @@
         "upload"
       ],
       "properties": {
+        "requestConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
         "credentials": {
           "type": "object",
           "additionalProperties": false,
@@ -616,6 +630,10 @@
         "timestampFormat"
       ],
       "properties": {
+        "logLevel": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
         "tokenUsageTable": {
           "type": "string",
           "minLength": 1,
@@ -795,6 +813,10 @@
           "minLength": 1
         },
         "taskTimeout": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cleanupTimeout": {
           "type": "string",
           "minLength": 1
         },

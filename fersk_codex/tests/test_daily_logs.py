@@ -94,3 +94,27 @@ class DailyLogTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.read(root, '2026-09-08'),
                              [{'event': 'existing'}, {'event': 'before'}])
             self.assertEqual(self.read(root, '2026-09-09'), [{'event': 'after'}])
+
+    async def test_failed_records_expire_but_fresh_records_are_written(self):
+        with TemporaryDirectory() as directory:
+            journal = self.journal(directory)
+            with patch.object(watchdog.time, 'monotonic', return_value=100):
+                journal.record({'event': 'expired'})
+            with patch.object(watchdog.time, 'monotonic', return_value=100 + watchdog.RETENTION_SECONDS - 1):
+                with patch('builtins.open', side_effect=OSError('disk full')):
+                    with self.assertRaises(OSError):
+                        journal._write_pending()
+            self.assertEqual(len(journal._records), 1)
+            with patch.object(watchdog.time, 'monotonic', return_value=100 + watchdog.RETENTION_SECONDS):
+                journal.record({'event': 'fresh'})
+                with patch.object(watchdog.logger, 'error') as report:
+                    journal._write_pending()
+                    report.assert_called_once()
+            self.assertFalse(journal._records)
+            self.assertEqual(journal._saved, 1)
+            self.assertEqual(journal._discarded, 1)
+            records = [json.loads(line) for path in Path(directory).glob('*.jsonl')
+                       for line in path.read_text().splitlines()]
+            self.assertEqual(records, [{'event': 'fresh'}])
+            with self.assertRaisesRegex(RuntimeError, '未全部写入'):
+                await journal.flush()

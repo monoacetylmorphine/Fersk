@@ -20,6 +20,7 @@ from lark_oapi.api.cardkit.v1 import (
 from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
 from fersk_codex.services.lark.lark_client import client
+from fersk_codex.services.lark.lark_requests import call_lark
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from fersk_codex.core.thread_watchdog import settings
@@ -189,7 +190,7 @@ def _card(content: str, streaming: bool) -> dict:
 async def _call(operation, request):
     try:
         async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
-            response = await asyncio.to_thread(operation, request)
+            response = await call_lark(operation, request)
     except Exception as exc:
         raise CardRequestError(f"飞书卡片请求异常: {type(exc).__name__}: {exc}") from exc
     if not response.success():

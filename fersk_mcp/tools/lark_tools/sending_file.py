@@ -1,6 +1,5 @@
 """校验接收方后上传文件，失败通过异常明确返回给 MCP 调用方。"""
 
-import asyncio
 import json
 from pathlib import Path
 import re
@@ -12,6 +11,7 @@ from lark_oapi.api.im.v1 import (
 
 from fersk_mcp.utils.config_loader import CONFIG
 from fersk_mcp.configs.lark_client import get_client
+from fersk_mcp.configs.lark_requests import call_lark
 
 # 来源：用户提供的 ID 样例，共 35 字符（前缀 3 + ID 32）；同样应用于 oc_。
 RECIPIENT_ID_LENGTH = 35
@@ -40,12 +40,16 @@ async def sending_file(file_path: str) -> dict[str, str]:
     extension = path.suffix.lower().removeprefix(".")
     file_type = extension if extension in upload["nativeFileTypes"] else upload["fallbackFileType"]
     client = get_client()
-    with path.open("rb") as file:
-        request = (CreateFileRequest.builder()
-            .request_body(CreateFileRequestBody.builder()
-                .file_type(file_type).file_name(path.name).file(file).build())
-            .build())
-        response = await asyncio.to_thread(client.im.v1.file.create, request)
+
+    def upload_file():
+        # 文件必须由 worker 持有，调用方超时不能提前关闭仍在上传的句柄。
+        with path.open("rb") as file:
+            request = (CreateFileRequest.builder()
+                .request_body(CreateFileRequestBody.builder()
+                    .file_type(file_type).file_name(path.name).file(file).build())
+                .build())
+            return client.im.v1.file.create(request)
+    response = await call_lark(upload_file)
     if not response.success():
         raise RuntimeError(f"飞书文件上传失败: code={response.code}, log_id={response.get_log_id()}")
     if response.data is None or not response.data.file_key:
@@ -57,7 +61,7 @@ async def sending_file(file_path: str) -> dict[str, str]:
             .receive_id(recipient).msg_type("file")
             .content(json.dumps({"file_key": file_key})).build())
         .build())
-    response = await asyncio.to_thread(client.im.v1.message.create, request)
+    response = await call_lark(client.im.v1.message.create, request)
     if not response.success():
         raise RuntimeError(f"飞书文件消息发送失败: code={response.code}, log_id={response.get_log_id()}")
     if response.data is None or not response.data.message_id:

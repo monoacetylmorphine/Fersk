@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -155,6 +156,42 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 client.im.v1.message.create.assert_not_called()
             else:
                 client.im.v1.message.create.assert_called_once()
+
+    async def test_upload_timeout_does_not_close_worker_file_or_send_message(self):
+        module = importlib.import_module("fersk_mcp.tools.lark_tools.sending_file")
+        path = Path(self.temp.name) / ("on_" + "e" * 32) / "file.txt"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("测试")
+        release, entered, exited = threading.Event(), threading.Event(), threading.Event()
+        files = []
+        client = MagicMock()
+        def upload(request):
+            file = request.request_body.file
+            files.append(file)
+            entered.set()
+            release.wait(2)
+            try:
+                return file.read()
+            finally:
+                exited.set()
+        client.im.v1.file.create.side_effect = upload
+        try:
+            with patch.object(module, "get_client", return_value=client), patch.dict(
+                module.CONFIG["codex"]["watchdog"], cardRequestTimeoutSeconds=0.03
+            ):
+                task = asyncio.create_task(module.sending_file(str(path)))
+                while not entered.is_set():
+                    await asyncio.sleep(0.001)
+                with self.assertRaises(TimeoutError):
+                    await task
+                self.assertFalse(files[0].closed)
+                client.im.v1.message.create.assert_not_called()
+        finally:
+            release.set()
+            while not exited.is_set():
+                await asyncio.sleep(0.001)
+            await asyncio.sleep(0.01)
+        self.assertTrue(files[0].closed)
 
 
 class ConfigScopeTests(unittest.TestCase):

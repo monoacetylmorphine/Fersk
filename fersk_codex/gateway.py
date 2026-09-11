@@ -1,9 +1,8 @@
 import asyncio
-import os
 import sys
 import time
 from pathlib import Path
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from contextlib import aclosing, asynccontextmanager
 from uuid import uuid4
 
@@ -15,66 +14,121 @@ if not __package__:
 
 from fersk_codex.core.codex import FerskCodex
 from fersk_codex.utils.config_loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.logger import get_logger, configure_logging
+from fersk_codex.utils.event_dispatcher import EventDispatcher
 from fersk_codex.core.thread_watchdog import RunProbe, probes, settings, journal
 from fersk_codex.services.lark.lark_client import create_websocket_client
 from fersk_codex.services.lark.lark_tools import getting_chat_history, adding_reaction_emoji, delete_reaction_emoji
 from fersk_codex.services.lark.lark_card import CardDeliveryError, CardReplace, CardStreamSession, CardStreamStopped, sending_card
-from fersk_codex.middleware.message_collector import MessageBatch, batch_from_chat_history, is_stop_command, is_new_command
+from fersk_codex.middleware.message_collector import MessageBatch
+from fersk_codex.middleware.message_collector import is_stop_command, is_new_command
+from fersk_codex.middleware.session_cache import ActiveCodexRun, SessionCache
+from fersk_codex.middleware.message_router import MessageRouter, _bot_identity, _is_bot_mentioned
 from fersk_codex.middleware.message_assemble import InputAssemblyError, assemble_codex_input
 
 message_buffer_seconds = CONFIG["messaging"]["bufferWindowSeconds"]
-history_messages_num = CONFIG["messaging"]["historyPageSize"]
 
-codex_locks: dict[str, asyncio.Lock] = {}
-codex_locks_guard = asyncio.Lock()
-reset_tasks: dict[str, asyncio.Task] = {}
-direct_message_types = set(CONFIG["messaging"]["directTypes"])
-buffered_message_types = set(CONFIG["messaging"]["bufferedTypes"])
-buffered_events: dict[str, object] = {}
-buffer_tasks: dict[str, asyncio.Task[None]] = {}
-buffer_guard = asyncio.Lock()
-reaction_message_ids: dict[str, dict[str, str]] = {}
-reactions_being_cleared: set[tuple[str, str, str]] = set()
-recalled_message_ids: set[str] = set()
-chat_generations: dict[str, int] = {}
-pending_chat_requests: dict[str, int] = {}
-received_message_ids: dict[str, dict[str, None]] = {}
-processed_message_ids: dict[str, dict[str, None]] = {}
-received_at: dict[str, float] = {}
+cache = SessionCache()
+codex_locks = cache.codex_locks
+codex_locks_guard = cache.codex_locks_guard
+reset_tasks = cache.reset_tasks
+buffered_events = cache.buffered_events
+buffer_tasks = cache.buffer_tasks
+buffer_guard = cache.buffer_guard
+reaction_message_ids = cache.reaction_message_ids
+reactions_being_cleared = cache.reactions_being_cleared
+recalled_message_ids = cache.recalled_message_ids
+chat_generations = cache.chat_generations
+pending_chat_requests = cache.pending_chat_requests
+received_message_ids = cache.received_message_ids
+processed_message_ids = cache.processed_message_ids
+received_at = cache.received_at
+active_runs_by_message_id = cache.active_runs_by_message_id
+active_runs_guard = cache.active_runs_guard
+active_runs_by_chat = cache.active_runs_by_chat
+all_runs = cache.all_runs
+blocked_chats = cache.blocked_chats
 
 logger = get_logger("Message")
+detached_tasks = set()
 
 
-@dataclass
-class ActiveCodexRun:
-    run_id: str
-    chat_id: str
-    message_ids: frozenset[str]
-    interrupted: bool = False
-    codex_started: bool = False
-    controls: asyncio.Lock = field(default_factory=asyncio.Lock)
-    finished: asyncio.Event = field(default_factory=asyncio.Event)
-    target_id: str = ""
-    probe: RunProbe | None = None
-    task: asyncio.Task | None = None
-    stop_task: asyncio.Task | None = None
-    notified: bool = False
-    cards: CardStreamSession | None = None
+def _observe_detached(task):
+    """保留残留任务引用并消费异常；不等待不配合取消的协程。"""
+    if task in detached_tasks:
+        return
+    detached_tasks.add(task)
+    def done(completed):
+        detached_tasks.discard(completed)
+        if not completed.cancelled() and completed.exception() is not None:
+            logger.error("后台收尾任务失败", exc_info=completed.exception())
+    task.add_done_callback(done)
 
 
-active_runs_by_message_id: dict[str, ActiveCodexRun] = {}
-active_runs_guard = asyncio.Lock()
-active_runs_by_chat: dict[str, ActiveCodexRun] = {}
-all_runs: dict[str, ActiveCodexRun] = {}
-blocked_chats: dict[str, ActiveCodexRun] = {}
+def _release_run(state):
+    """事件循环内无 await 的幂等释放，不能依赖网络或异步锁。"""
+    if state.released:
+        return
+    state.released = True
+    for mid, owner in list(active_runs_by_message_id.items()):
+        if owner is state:
+            active_runs_by_message_id.pop(mid, None)
+    if active_runs_by_chat.get(state.chat_id) is state:
+        active_runs_by_chat.pop(state.chat_id, None)
+    all_runs.pop(state.run_id, None)
+    state.finished.set()
+    state.probe.finish(state.probe.stop_reason or "completed")
+    state.probe.record("released", cleanupTimedOut=state.probe.cleanup_timed_out)
+    logger.info("任务已释放: run_id=%s, terminal=%s, cleanup_timeout=%s",
+                state.run_id, state.probe.terminal, state.probe.cleanup_timed_out)
+    if blocked_chats.get(state.chat_id) is not state:
+        probes.pop(state.run_id, None)
+    # 未完成的 worker 仍可能使用 cards/task；不提前清空引用。
+    if state.task is None or state.task.done():
+        cache.finish_run(state)
+    else:
+        state.task.add_done_callback(lambda _: cache.finish_run(state))
 
+
+async def _cleanup_timeout(state):
+    """收尾期限耗尽后，有界尝试关闭进程并唤醒等待者。"""
+    if state.released:
+        return
+    state.probe.cleanup_timed_out = True
+    state.probe.record("cleanup_timeout")
+    logger.error("任务收尾超时: run_id=%s, terminal=%s", state.run_id, state.probe.terminal)
+    state.interrupted = True
+    if state.cards is not None:
+        state.cards.close()
+    if state.task is not None and not state.task.done():
+        state.task.cancel()
+    closing = asyncio.create_task(FerskCodex.force_close(state.run_id))
+    _observe_detached(closing)
+    confirmed = False
+    try:
+        pending = {closing}
+        if state.task is not None:
+            pending.add(state.task)
+        # 进程关闭与 worker 取消共享同一宽限；不能把尚未获得调度的 worker 误判为残留。
+        done, _ = await asyncio.wait(pending, timeout=settings()["cleanupTimeoutSeconds"])
+        if closing in done and not closing.cancelled():
+            confirmed = bool(closing.result())
+    except Exception:
+        logger.exception("强制关闭失败: run_id=%s", state.run_id)
+    finally:
+        if not closing.done():
+            closing.cancel()
+        state.detached = state.task is not None and not state.task.done()
+        if state.detached:
+            _observe_detached(state.task)
+        # 残留 worker 可能仍持有提交锁，不能允许新运行与它重叠。
+        if not confirmed or state.detached:
+            blocked_chats[state.chat_id] = state
+        _release_run(state)
+    await _notify_terminal(state, "cleanupTimeout")
 
 def _remember_message(journal, chat_id, message_id):
-    entries = journal.setdefault(chat_id, {})
-    entries[message_id] = None
-    while len(entries) > CONFIG["messaging"]["recallCacheMaxEntries"]:
-        entries.pop(next(iter(entries)))
+    cache.remember(journal, chat_id, message_id)
 
 
 async def _register_active_run(batch: MessageBatch, state=None) -> ActiveCodexRun:
@@ -119,19 +173,20 @@ async def _get_codex_lock(chat_id: str) -> asyncio.Lock:
 
 @asynccontextmanager
 async def _submission_lock(chat_id):
-    lock = await _get_codex_lock(chat_id)
-    while True:
-        reset = reset_tasks.get(chat_id)
-        if reset is not None:
-            await asyncio.shield(reset)
-        await lock.acquire()
-        if reset_tasks.get(chat_id) is None:
-            break
-        lock.release()
-    try:
-        yield
-    finally:
-        lock.release()
+    with cache.hold(chat_id):
+        lock = await _get_codex_lock(chat_id)
+        while True:
+            reset = reset_tasks.get(chat_id)
+            if reset is not None:
+                await asyncio.shield(reset)
+            await lock.acquire()
+            if reset_tasks.get(chat_id) is None:
+                break
+            lock.release()
+        try:
+            yield
+        finally:
+            lock.release()
 
 
 async def _notify_terminal(state, key):
@@ -140,7 +195,9 @@ async def _notify_terminal(state, key):
     state.notified = True
     try:
         async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
-            await sending_card(state.target_id or state.chat_id, CONFIG["messages"][key])
+            content = (CONFIG["messages"].get("cleanupTimeout", "任务收尾超时，交付结果未确认；如后续任务被阻止，请使用 /stop 重试停止。")
+                       if key == "cleanupTimeout" else CONFIG["messages"][key])
+            await sending_card(state.target_id or state.chat_id, content)
         if state.probe:
             state.probe.record("notification_sent", messageKey=key)
     except Exception:
@@ -151,12 +208,19 @@ async def _notify_terminal(state, key):
 
 
 async def _watch_run(state):
+    async def stop_and_notify():
+        confirmed = await _interrupt_run(state)
+        await _notify_terminal(state, "taskTimeout" if confirmed else "taskTimeoutUnconfirmed")
+
     while not state.finished.is_set():
         await asyncio.sleep(settings()["checkIntervalSeconds"])
+        if state.finished.is_set():
+            break
         probe = state.probe
-        if probe.terminal or probe.stop_reason:
-            continue
         reason = probe.expired()
+        if reason == "cleanup_timeout":
+            await _cleanup_timeout(state)
+            return
         if reason:
             if state.codex_started:
                 status = await FerskCodex.completed_status(state.run_id)
@@ -168,12 +232,18 @@ async def _watch_run(state):
                     continue
             state.interrupted = True
             probe.stop_reason = reason
-            confirmed = await _interrupt_run(state)
-            await _notify_terminal(state, "taskTimeout" if confirmed else "taskTimeoutUnconfirmed")
-            return
+            probe.begin_cleanup()
+            state.timeout_task = asyncio.create_task(stop_and_notify())
+            _observe_detached(state.timeout_task)
+            # 停止请求发出后仍监督收尾，不能在 worker 释放前退出。
+    if state.timeout_task is not None:
+        await asyncio.wait({state.timeout_task}, timeout=settings()["cardRequestTimeoutSeconds"])
 
 
 async def _handle_message_batch(batch: MessageBatch, generation: int) -> None:
+    if len(all_runs) + len(detached_tasks) >= CONFIG["messaging"].get("maxPendingEvents", 32):
+        await sending_card(batch.union_id, "当前任务繁忙，请稍后重试。")
+        return
     # History may contain a completed/active run; it must not backdate this new run's deadline.
     batch = replace(batch, messages=tuple(
         message for message in batch.messages
@@ -196,28 +266,36 @@ async def _handle_message_batch(batch: MessageBatch, generation: int) -> None:
     state.task = asyncio.create_task(_execute_message_batch(batch, generation, state))
     watcher = asyncio.create_task(_watch_run(state))
     try:
-        await state.task
+        done, _ = await asyncio.wait({state.task, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if state.task in done:
+            await state.task
+        elif not watcher.cancelled():
+            watcher.result()
     except asyncio.CancelledError:
         if not state.interrupted:
             state.interrupted = True
             state.probe.stop_reason = "shutdown"
-            await _interrupt_run(state)
+            stopping = asyncio.create_task(_interrupt_run(state))
+            _observe_detached(stopping)
+            await asyncio.wait({stopping}, timeout=settings()["interruptGraceSeconds"])
             raise
     finally:
         if state.stop_task:
-            await asyncio.shield(state.stop_task)
-        if state.probe.stop_reason and watcher is not asyncio.current_task():
-            # A watchdog owns its notification even if cancelling the worker finishes first.
-            if not watcher.done() and state.probe.stop_reason.endswith("timeout"):
-                await watcher
+            await asyncio.wait({state.stop_task}, timeout=settings()["cleanupTimeoutSeconds"])
+        if state.probe.cleanup_timed_out or (state.probe.stop_reason and state.probe.stop_reason.endswith("timeout")):
+            # worker 先完成时，给 watchdog 已发起的超时通知保留请求预算。
+            await asyncio.wait({watcher}, timeout=settings()["cardRequestTimeoutSeconds"] + settings()["cleanupTimeoutSeconds"])
         watcher.cancel()
-        await asyncio.gather(watcher, return_exceptions=True)
-        state.finished.set()
-        state.probe.finish(state.probe.stop_reason or "completed")
-        state.probe.record("released")
-        all_runs.pop(state.run_id, None)
-        if blocked_chats.get(state.chat_id) is not state:
-            probes.pop(state.run_id, None)
+        await asyncio.wait({watcher}, timeout=settings()["cleanupTimeoutSeconds"])
+        if not watcher.done():
+            _observe_detached(watcher)
+        for pending in (state.stop_task, state.timeout_task):
+            if pending is not None and not pending.done():
+                pending.cancel()
+                _observe_detached(pending)
+        if state.task is not None and not state.task.done() and not state.released:
+            await _cleanup_timeout(state)
+        _release_run(state)
 
 
 async def _execute_message_batch(batch: MessageBatch, generation: int, state) -> None:
@@ -336,7 +414,7 @@ async def _execute_message_batch(batch: MessageBatch, generation: int, state) ->
             except CardDeliveryError as exc:
                 # The sender drains the model stream before reporting delivery failure.
                 # A CardKit outage must not interrupt an otherwise healthy Codex turn.
-                logger.exception("卡片交付失败: run_id=%s", state.run_id)
+                logger.error("卡片交付失败: run_id=%s, error_type=%s", state.run_id, type(exc).__name__)
                 state.probe.record("delivery_failed", errorType=type(exc).__name__)
     except Exception as exc:
         logger.exception("消息批次处理异常: chat_id=%s, error=%s", batch.chat_id, exc)
@@ -358,7 +436,7 @@ async def _execute_message_batch(batch: MessageBatch, generation: int, state) ->
                             await events.aclose()
                 except Exception:
                     logger.exception("事件流清理失败: run_id=%s", state.run_id)
-                    if not await FerskCodex.force_close(state.run_id):
+                    if not await FerskCodex.force_close(state.run_id) and not state.expired:
                         blocked_chats[state.chat_id] = state
                         state.probe.stop_confirmed = False
                         state.probe.record("cleanup_unconfirmed")
@@ -463,10 +541,7 @@ async def _clear_reaction(
                     if not current:
                         reaction_message_ids.pop(chat_id, None)
         except Exception as exc:
-            print(
-                f"清理消息 reaction 异常: chat_id={chat_id}, "
-                f"message_id={message_id}, error={exc}"
-            )
+            logger.exception("清理消息 reaction 异常: chat_id=%s, message_id=%s", chat_id, message_id)
         finally:
             reactions_being_cleared.discard(key)
 
@@ -485,12 +560,7 @@ async def processing_recall(data) -> None:
             state = next((run for run in all_runs.values()
                           if run.chat_id == chat_id and message_id in run.message_ids), None)
         if state is None:
-            recalled_message_ids.add(message_id)
-            # Keep a bounded race buffer for recalls arriving just before
-            # receive processing; completed or unrelated recalls need no
-            # permanent history in this process.
-            while len(recalled_message_ids) > CONFIG["messaging"]["recallCacheMaxEntries"]:
-                recalled_message_ids.pop()
+            cache.recall(message_id)
         else:
             state.interrupted = True
 
@@ -499,6 +569,7 @@ async def processing_recall(data) -> None:
         buffered_message = getattr(getattr(buffered, "event", None), "message", None)
         if getattr(buffered_message, "message_id", None) == message_id:
             buffered_events.pop(chat_id, None)
+            cache._buffer_times.pop(chat_id, None)
             task = buffer_tasks.pop(chat_id, None)
             if task is not None:
                 task.cancel()
@@ -514,6 +585,8 @@ async def processing_recall(data) -> None:
             await _clear_reaction(chat_id, {message_id})
     except Exception:
         logger.exception("撤回消息 reaction 清理失败: message_id=%s", message_id)
+    finally:
+        cache.release_idle(chat_id)
 
 
 async def _interrupt_run(state: ActiveCodexRun) -> bool:
@@ -523,12 +596,15 @@ async def _interrupt_run(state: ActiveCodexRun) -> bool:
     async def stop():
         confirmed = not state.codex_started
         if state.probe:
+            state.probe.begin_cleanup()
             state.probe.stage("stopping")
         try:
             if state.codex_started:
                 confirmed = await FerskCodex.interrupt_and_confirm(state.run_id)
         except Exception:
             logger.exception("停止任务失败: run_id=%s", state.run_id)
+            confirmed = False
+        if state.detached and state.task is not None and not state.task.done():
             confirmed = False
         if state.probe:
             state.probe.stop_confirmed = confirmed
@@ -539,7 +615,7 @@ async def _interrupt_run(state: ActiveCodexRun) -> bool:
                 blocked_chats.pop(state.chat_id, None)
                 if state.finished.is_set():
                     probes.pop(state.run_id, None)
-        else:
+        elif not state.expired:
             blocked_chats[state.chat_id] = state
         if state.task is not None and state.task is not caller and not state.task.done():
             state.task.cancel()
@@ -641,208 +717,89 @@ async def processing_new(data) -> None:
         finally:
             if reset_tasks.get(chat_id) is asyncio.current_task():
                 reset_tasks.pop(chat_id, None)
+                cache.release_idle(chat_id)
 
     task = asyncio.create_task(reset())
     reset_tasks[chat_id] = task
     await asyncio.shield(task)
 
 
-async def processing(data) -> None:
-    """Route direct messages immediately and buffer image/file messages."""
-    try:
-        chat_type = data.event.message.chat_type
-        if chat_type == "group" and not _is_bot_mentioned(data.event.message.mentions):
-            return
-        if chat_type not in {"p2p", "group"}:
-            return
-        message = data.event.message
-        if message.message_id in received_message_ids.get(message.chat_id, {}):
-            return
-        _remember_message(received_message_ids, message.chat_id, message.message_id)
-        received_at[message.message_id] = time.monotonic()
-        while len(received_at) > CONFIG["messaging"]["recallCacheMaxEntries"]:
-            received_at.pop(next(iter(received_at)))
-        if is_stop_command(message.message_type, message.content):
-            await processing_stop(data)
-            return
-        if is_new_command(message.message_type, message.content):
-            await processing_new(data)
-            return
-        chat_id = message.chat_id
-        generation = chat_generations.get(chat_id, 0)
-        while (reset := reset_tasks.get(chat_id)) is not None:
-            await asyncio.shield(reset)
-        if generation != chat_generations.get(chat_id, 0):
-            return
-        pending_chat_requests[chat_id] = pending_chat_requests.get(chat_id, 0) + 1
-        try:
-            try:
-                async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
-                    reaction_id = await adding_reaction_emoji(message_id=message.message_id)
-            except Exception:
-                logger.exception("添加 reaction 失败，继续处理消息: message_id=%s", message.message_id)
-                reaction_id = None
-            if reaction_id is not None:
-                reaction_message_ids.setdefault(chat_id, {})[message.message_id] = reaction_id
-            if generation != chat_generations.get(chat_id, 0):
-                if reaction_id is not None:
-                    await _clear_reaction(chat_id, {message.message_id})
-                return
-            if message.message_id in processed_message_ids.get(chat_id, {}):
-                # History may have included this attachment before its receive
-                # event completed the reaction request.
-                if message.message_id not in active_runs_by_message_id:
-                    await _clear_reaction(chat_id, {message.message_id})
-                return
-            await _route_message(data, generation)
-        finally:
-            pending_chat_requests[chat_id] -= 1
-            if not pending_chat_requests[chat_id]:
-                pending_chat_requests.pop(chat_id)
-    except Exception as exc:
-        print(f"解析消息异常: {exc}")
+router = MessageRouter(
+    cache, submit=lambda *args: _handle_message_batch(*args),
+    stop=lambda data: processing_stop(data), new=lambda data: processing_new(data),
+    notify=lambda *args: _notify_terminal(*args),
+    fetch_history=lambda **kwargs: getting_chat_history(**kwargs),
+    add_reaction=lambda **kwargs: adding_reaction_emoji(**kwargs),
+    clear_reactions=lambda *args: _clear_reaction(*args),
+    send_card=lambda *args: sending_card(*args),
+    buffer_seconds=lambda: message_buffer_seconds,
+)
+processing = router.processing
+_cancel_buffer = router._cancel_buffer
+_buffer_message = router._buffer_message
+_process_chat_history = router._process_chat_history
+_route_message = router._route_message
 
 
-async def _route_message(data, generation: int) -> None:
-    """Apply the configured direct/buffered behavior to one message."""
-    message_type = data.event.message.message_type
-    if message_type in buffered_message_types:
-        await _buffer_message(data, generation)
-        return
-
-    if message_type in direct_message_types:
-        await _cancel_buffer(data.event.message.chat_id)
-        await _process_chat_history(data, generation)
-        return
-    message = data.event.message
-    target_id = message.chat_id if message.chat_type == "group" else data.event.sender.sender_id.union_id
-    try:
-        await sending_card(target_id, CONFIG["messages"]["unsupportedMessageType"])
-    finally:
-        await _clear_reaction(message.chat_id, {message.message_id})
-
-
-async def _buffer_message(data, generation: int) -> None:
-    """Start one fixed window per chat without extending it on new messages."""
-    chat_id = data.event.message.chat_id
-    async with buffer_guard:
-        if generation != chat_generations.get(chat_id, 0):
-            return
-        # Keep the latest event so the history fallback is anchored to the
-        # newest message received during this fixed window.
-        buffered_events[chat_id] = data
-        task = buffer_tasks.get(chat_id)
-        if task is None or task.done():
-            buffer_tasks[chat_id] = asyncio.create_task(
-                _flush_after_fixed_window(chat_id, generation)
-            )
-
-
-async def _cancel_buffer(chat_id: str) -> None:
-    """Cancel a pending attachment window taken over by a direct message."""
-    async with buffer_guard:
-        buffered_events.pop(chat_id, None)
-        task = buffer_tasks.pop(chat_id, None)
+async def _expire_session_cache():
+    for state in cache.prune():
+        state.expired = True
+        state.interrupted = True
+        task = state.task
         if task is not None and not task.done():
             task.cancel()
+        try:
+            await FerskCodex.discard_expired_run(state.run_id)
+        except Exception:
+            logger.exception("过期任务关闭失败，仍按 24 小时期限清理缓存: run_id=%s", state.run_id)
+        finally:
+            try:
+                if task is not None and not task.done():
+                    try:
+                        async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+                            await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        if asyncio.current_task().cancelling():
+                            raise
+                    except Exception:
+                        logger.exception("过期任务收尾未完成: run_id=%s", state.run_id)
+            finally:
+                cache.expire_run(state)
+                probes.pop(state.run_id, None)
+                logger.warning("已清理超过 24 小时的任务缓存: run_id=%s", state.run_id)
 
 
-def _bot_identity(*, required=False):
-    """Resolve optional identity settings; reject an unusable startup config."""
-    credentials = CONFIG["lark"]["credentials"]
-    def value(key):
-        env_name = credentials.get(key)
-        return (os.getenv(env_name, "").strip() if env_name else "")
-    robot_union_id = value("robotUnionIdEnv")
-    robot_name = value("robotNameEnv")
-    if required and not (robot_union_id or robot_name):
-        raise RuntimeError("群聊机器人标识未配置：robotUnionIdEnv 或 robotNameEnv 对应的环境变量至少一个非空")
-    return robot_union_id, robot_name
-
-
-def _is_bot_mentioned(mentions) -> bool:
-    """Match a nonempty Union ID or name; Union ID survives bot renaming."""
-    robot_union_id, robot_name = _bot_identity()
-    for mention in mentions or []:
-        mention_id = getattr(mention, "id", None)
-        mentioned_union_id = getattr(mention_id, "union_id", None)
-        if robot_union_id and mentioned_union_id == robot_union_id:
-            return True
-        if robot_name and getattr(mention, "name", None) == robot_name:
-            return True
-    return False
-
-
-async def _flush_after_fixed_window(chat_id: str, generation: int) -> None:
-    """Fetch and process history exactly once after the original 10 seconds."""
-    try:
-        await asyncio.sleep(message_buffer_seconds)
-        async with buffer_guard:
-            data = buffered_events.pop(chat_id, None)
-            buffer_tasks.pop(chat_id, None)
-
-        if data is None:
-            return
-        await _process_chat_history(data, generation)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        print(f"消息缓冲处理异常: chat_id={chat_id}, error={exc}")
-
-
-async def _process_chat_history(data, generation: int) -> None:
-    """Fetch the latest history and submit the current user turn to Codex."""
-
-    current_message_id = data.event.message.message_id
-    if generation != chat_generations.get(data.event.message.chat_id, 0):
-        return
-    async with active_runs_guard:
-        if current_message_id in recalled_message_ids:
-            recalled_message_ids.discard(current_message_id)
-            was_recalled = True
-        else:
-            was_recalled = False
-    if was_recalled:
-        await _clear_reaction(data.event.message.chat_id, {current_message_id})
-        return
-
-    try:
-        remaining = settings()["maxRunSeconds"] - (time.monotonic() - received_at.get(
-            current_message_id, time.monotonic()))
-        async with asyncio.timeout(max(0, remaining)):
-            history_items = await getting_chat_history(
-                chat_id=data.event.message.chat_id,
-                messages_num=history_messages_num,
-            )
-    except Exception:
-        logger.exception("获取历史消息失败: message_id=%s", current_message_id)
-        state = ActiveCodexRun(uuid4().hex, data.event.message.chat_id,
-                               frozenset({current_message_id}),
-                               target_id=(data.event.message.chat_id if data.event.message.chat_type == "group"
-                                          else data.event.sender.sender_id.union_id))
-        state.probe = RunProbe(state.run_id, state.chat_id, state.message_ids)
-        state.probe.finish("failed")
-        if generation == chat_generations.get(state.chat_id, 0):
-            await _notify_terminal(state, "codexFailure")
-        await _clear_reaction(state.chat_id, state.message_ids)
-        return
-    batch = batch_from_chat_history(data, history_items)
-    if batch.messages:
-        await _handle_message_batch(batch, generation)
+async def _maintain_session_cache():
+    while True:
+        await asyncio.sleep(settings()["checkIntervalSeconds"])
+        try:
+            await _expire_session_cache()
+        except Exception:
+            logger.exception("会话缓存清理失败")
 
 
 async def main() -> None:
 
+    configure_logging(CONFIG["logging"].get("logLevel", "INFO"))
     _bot_identity(required=True)
     loop = asyncio.get_running_loop()
+    dispatcher = EventDispatcher(loop, CONFIG["messaging"].get("maxPendingEvents", 32))
+    notices = EventDispatcher(loop, capacity=1)
+
+    async def busy(data):
+        await sending_card(data.event.message.chat_id, "当前任务繁忙，请稍后重试。")
 
     def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
-        print(f'[ do_p2_im_message_receive_v1 access ], data: {lark.JSON.marshal(data, indent=4)}')
-        asyncio.run_coroutine_threadsafe(processing(data), loop)
+        message = data.event.message
+        logger.debug("收到消息: chat_id=%s, message_id=%s, type=%s",
+                     message.chat_id, message.message_id, message.message_type)
+        control = (is_stop_command(message.message_type, message.content)
+                   or is_new_command(message.message_type, message.content))
+        if not dispatcher.submit(processing, data, control=control):
+            notices.submit(busy, data)
 
     def do_p2_im_message_recalled_v1(data: lark.im.v1.P2ImMessageRecalledV1) -> None:
-        print(f'[ do_p2_im_message_recalled_v1 access ], data: {lark.JSON.marshal(data, indent=4)}')
-        asyncio.run_coroutine_threadsafe(processing_recall(data), loop)
+        dispatcher.submit(processing_recall, data, control=True)
 
     def do_p2_im_message_read_v1(data: lark.im.v1.P2ImMessageMessageReadV1) -> None:
         pass
@@ -853,6 +810,9 @@ async def main() -> None:
     def do_p2_im_message_reaction_deleted_v1(data: lark.im.v1.P2ImMessageReactionDeletedV1) -> None:
         pass
 
+    def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChatAccessEventBotP2pChatEnteredV1) -> None:
+        pass
+
     event_handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(do_p2_im_message_receive_v1)
@@ -860,13 +820,17 @@ async def main() -> None:
             .register_p2_im_message_message_read_v1(do_p2_im_message_read_v1)
             .register_p2_im_message_reaction_created_v1(do_p2_im_message_reaction_created_v1)
             .register_p2_im_message_reaction_deleted_v1(do_p2_im_message_reaction_deleted_v1)
+            .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(do_p2_im_chat_access_event_bot_p2p_chat_entered_v1)
             .build()
         )
     
     websocket_client = create_websocket_client(event_handler)
+    maintenance = asyncio.create_task(_maintain_session_cache())
     try:
         await asyncio.to_thread(websocket_client.start)
     finally:
+        maintenance.cancel()
+        await asyncio.gather(maintenance, return_exceptions=True)
         for state in list(all_runs.values()):
             state.interrupted = True
             state.probe.stop_reason = state.probe.stop_reason or "shutdown"

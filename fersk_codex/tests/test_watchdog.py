@@ -130,6 +130,27 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(FerskCodex, "_closed_runs", set()))
         self.enterContext(patch.dict(settings(), interruptGraceSeconds=0.03, cleanupTimeoutSeconds=0.3))
 
+    async def test_expiry_discards_indexes_after_failed_close_and_handles_late_init(self):
+        release = asyncio.Event()
+        proc = NS(poll=lambda: None, kill=Mock())
+        manager = NS(_client=NS(_sync=NS(_proc=None)))
+        async def initialize():
+            await release.wait()
+            manager._client._sync._proc = proc
+        task = asyncio.create_task(initialize())
+        FerskCodex._clients['expired'] = manager
+        FerskCodex._initializers['expired'] = task
+        FerskCodex._pending_interrupts.add('expired')
+        FerskCodex._closed_runs.add('expired')
+        with patch.object(FerskCodex, 'force_close', AsyncMock(return_value=False)):
+            await FerskCodex.discard_expired_run('expired')
+        for name in ('_clients', '_initializers', '_pending_interrupts', '_closed_runs'):
+            self.assertNotIn('expired', getattr(FerskCodex, name))
+        release.set()
+        await task
+        await asyncio.sleep(0)
+        proc.kill.assert_called_once()
+
     async def test_interrupt_ack_is_not_stop_confirmation(self):
         idle = asyncio.Event()
         order = []
@@ -267,6 +288,100 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
     def batch(self):
         return helpers.batch_from_chat_history(helpers.event("hello", message_id="m1"), [])
 
+    async def test_terminal_stream_hang_releases_without_changing_model_result(self):
+        self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
+        captured = []
+        async def running(**kwargs):
+            state = self.g.all_runs[kwargs["run_id"]]
+            captured.append(state)
+            yield {"type": "started"}
+            state.probe.finish("completed")
+            await asyncio.Event().wait()
+        self.g.FerskCodex.running = running
+        await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+        state = captured[0]
+        self.assertEqual(state.probe.terminal, "completed")
+        self.assertTrue(state.probe.cleanup_timed_out)
+        self.assertTrue(state.finished.is_set())
+        self.assertFalse(self.g.active_runs_by_chat)
+        self.assertFalse(self.g.all_runs)
+        self.g.FerskCodex.force_close.assert_awaited_once()
+        self.assertNotIn(state.chat_id, self.g.blocked_chats)
+        self.assertIn(CONFIG["messages"]["cleanupTimeout"], self.cards)
+        async def healthy(**kwargs):
+            yield {"type": "started"}
+            yield {"type": "done"}
+        self.g.FerskCodex.running = healthy
+        following = helpers.batch_from_chat_history(helpers.event("下一条", message_id="next"), [])
+        await asyncio.wait_for(self.g._handle_message_batch(following, 0), 1)
+        self.assertFalse(self.g.all_runs)
+
+    async def test_cancel_resistant_delivery_is_quarantined_and_waiters_wake(self):
+        self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
+        release = asyncio.Event()
+        captured = []
+        async def card(union_id, content, *, session=None):
+            if isinstance(content, str):
+                return
+            captured.append(next(iter(self.g.all_runs.values())))
+            async for _ in content:
+                pass
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    pass
+        self.g.sending_card.side_effect = card
+        worker = None
+        try:
+            await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+            state = captured[0]
+            worker = state.task
+            self.assertTrue(state.finished.is_set())
+            self.assertTrue(state.detached)
+            self.assertIs(self.g.blocked_chats[state.chat_id], state)
+            self.assertFalse(self.g.active_runs_by_chat)
+            await self.g.processing_stop(helpers.event())
+            self.assertIn(state.chat_id, self.g.blocked_chats)
+        finally:
+            release.set()
+            if worker is not None:
+                await asyncio.wait_for(worker, 1)
+
+    async def test_stop_confirmation_hang_cannot_disable_cleanup_deadline(self):
+        self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
+        async def running(**kwargs):
+            yield {"type": "started"}
+            await asyncio.Event().wait()
+        async def confirm(run_id):
+            await asyncio.Event().wait()
+        self.g.FerskCodex.running = running
+        self.g.FerskCodex.interrupt_and_confirm.side_effect = confirm
+        await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+        self.assertFalse(self.g.active_runs_by_chat)
+        self.assertFalse(self.g.all_runs)
+
+    async def test_force_close_hang_is_bounded_and_release_is_idempotent(self):
+        self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.02, cleanupTimeoutSeconds=0.02))
+        captured = []
+        async def running(**kwargs):
+            state = self.g.all_runs[kwargs["run_id"]]
+            captured.append(state)
+            yield {"type": "started"}
+            state.probe.finish("completed")
+            await asyncio.Event().wait()
+        async def close(run_id):
+            await asyncio.Event().wait()
+        self.g.FerskCodex.running = running
+        self.g.FerskCodex.force_close.side_effect = close
+        with patch("fersk_codex.core.thread_watchdog.journal.record") as record:
+            await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+            state = captured[0]
+            self.g._release_run(state)
+        self.assertTrue(state.finished.is_set())
+        self.assertIs(self.g.blocked_chats[state.chat_id], state)
+        self.assertEqual(sum(call.args[0]["event"] == "released" for call in record.call_args_list), 1)
+
     async def test_silent_start_and_silent_stream_are_stopped_and_released(self):
         for started in (False, True):
             self.g.processed_message_ids.clear()
@@ -281,6 +396,8 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.g.active_runs_by_chat)
             self.assertFalse(self.g.active_runs_by_message_id)
             self.assertFalse(self.g.all_runs)
+            self.assertFalse(self.g.codex_locks)
+            self.assertFalse(self.g.received_at)
 
     async def test_card_wait_does_not_disable_watchdog(self):
         entered = asyncio.Event()

@@ -76,7 +76,7 @@ def ensure_keys(log: Dict[str, Any]) -> Dict[str, Any]:
     for key in REQUIRED_KEYS:
         if key not in fixed_log:
             fixed_log[key] = DEFAULT_VALUES[key]
-            print(f"缺少字段 '{key}'，已填充默认值 {DEFAULT_VALUES[key]}")
+            logger.debug("缺少字段 %s，已填充默认值 %s", key, DEFAULT_VALUES[key])
 
     return fixed_log
 
@@ -121,7 +121,7 @@ async def SavingLog(log: Dict[str, Any]) -> None:
             await db.commit()
             logger.info("Usage : detail=%s", log)
     except aiosqlite.Error as exc:
-        print(f"数据库操作失败：{exc}")
+        logger.exception("数据库操作失败")
         raise
 
 

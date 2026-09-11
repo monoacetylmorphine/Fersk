@@ -11,6 +11,7 @@
     "databasePath": "~/.fersk/state.sqlite"
   },
   "messaging": {
+    "maxPendingEvents": 32,
     "bufferWindowSeconds": 10.0,
     "historyPageSize": 10,
     "recallCacheMaxEntries": 1024,
@@ -42,6 +43,7 @@
       "checkIntervalSeconds": 1,
       "interruptGraceSeconds": 10,
       "cleanupTimeoutSeconds": 5,
+      "finalizationTimeoutSeconds": 30,
       "cardRequestTimeoutSeconds": 10
     },
     "models": {
@@ -68,6 +70,7 @@
     "gitInitTimeoutSeconds": 10
   },
   "lark": {
+    "requestConcurrency": 8,
     "credentials": {
       "appIdEnv": "LARK_APP_ID",
       "appSecretEnv": "LARK_APP_SECRET",
@@ -169,6 +172,7 @@
     }
   },
   "logging": {
+    "logLevel": "INFO",
     "tokenUsageTable": "token_usage",
     "timestampFormat": "%Y-%m-%d-%H-%M-%S-%f"
   },
@@ -202,6 +206,7 @@
     "recallStopped": "消息已撤回，对应任务已停止。",
     "taskTimeout": "当前任务执行失败：超过执行时间限制，任务已停止。请缩小任务范围后重新发送。",
     "taskTimeoutUnconfirmed": "当前任务执行失败：执行超时，已请求停止，但尚未确认进程退出。请稍后重试 /stop。",
+    "cleanupTimeout": "任务收尾超时，交付结果未确认；如后续任务被阻止，请使用 /stop 重试停止。",
     "taskInterrupted": "当前任务已中断。",
     "newThreadCreated": "会话已重置，下一条消息将开始新会话。",
     "codexBusy": "Codex 服务暂时繁忙，自动重试后仍未恢复，请稍后再试。",

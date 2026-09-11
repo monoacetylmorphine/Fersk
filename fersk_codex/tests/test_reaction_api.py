@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock
 
 from lark_oapi.api.im.v1 import DeleteMessageReactionRequest
+from fersk_codex.services.lark.lark_requests import call_lark
 
 
 class ReactionApiTests(unittest.IsolatedAsyncioTestCase):
@@ -24,7 +25,7 @@ class ReactionApiTests(unittest.IsolatedAsyncioTestCase):
                               raw=NS(content=b"{}"))
                 delete = Mock(return_value=response)
                 namespace = dict(
-                    asyncio=asyncio, json=json, PAYLOAD_INDENT=4,
+                    asyncio=asyncio, call_lark=call_lark, json=json, PAYLOAD_INDENT=4,
                     DeleteMessageReactionRequest=DeleteMessageReactionRequest,
                     lark=NS(logger=Mock(), JSON=NS(marshal=Mock(return_value="{}"))),
                     client=NS(im=NS(v1=NS(message_reaction=NS(delete=delete)))),

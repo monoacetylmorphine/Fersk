@@ -10,6 +10,10 @@ from lark_oapi.api.im.v1 import *
 from fersk_codex.utils.config_loader import CONFIG
 
 from fersk_codex.services.lark.lark_client import client
+from fersk_codex.services.lark.lark_requests import call_lark
+from fersk_codex.utils.logger import get_logger
+
+logger = get_logger("LarkTools")
 from fersk_codex.middleware.resource_validator import (
     ResourceValidationError,
     read_resource_bytes,
@@ -29,7 +33,7 @@ async def adding_reaction_emoji(message_id:str):
             .build()
 
     # 发起请求
-    response: CreateMessageReactionResponse = await asyncio.to_thread(client.im.v1.message_reaction.create,request)
+    response: CreateMessageReactionResponse = await call_lark(client.im.v1.message_reaction.create, request)
 
     # 处理失败返回
     if not response.success():
@@ -50,7 +54,7 @@ async def delete_reaction_emoji(message_id:str, reaction_id:str) -> bool:
         .build()
 
     # 发起请求
-    response: DeleteMessageReactionResponse = await asyncio.to_thread(client.im.v1.message_reaction.delete,request)
+    response: DeleteMessageReactionResponse = await call_lark(client.im.v1.message_reaction.delete, request)
 
     # 处理失败返回
     if not response.success():
@@ -65,7 +69,7 @@ async def delete_reaction_emoji(message_id:str, reaction_id:str) -> bool:
 
 async def download_msg_resource(union_id:str, message_id:str, resource_key:str, resource_type:str):
 
-    print(f"获取消息资源: {union_id}-{message_id}-{resource_type}-{resource_key}")
+    logger.debug("获取消息资源: message_id=%s, type=%s", message_id, resource_type)
 
     request: GetMessageResourceRequest = GetMessageResourceRequest.builder() \
         .message_id(message_id) \
@@ -74,7 +78,7 @@ async def download_msg_resource(union_id:str, message_id:str, resource_key:str, 
         .build()
 
     # 发起请求
-    response: GetMessageResourceResponse = await asyncio.to_thread(client.im.v1.message_resource.get,request)
+    response: GetMessageResourceResponse = await call_lark(client.im.v1.message_resource.get, request)
 
     # 处理失败返回
     if not response.success():
@@ -119,7 +123,7 @@ def _save_resource(response, union_id, message_id, resource_key, resource_type):
     with open(file_path, "wb") as file:
         file.write(resource.data)
 
-    print(file_path)
+    logger.debug("资源已保存: path=%s", file_path)
     return str(file_path)
 
 async def getting_chat_history(chat_id:str, messages_num:int):
@@ -132,7 +136,7 @@ async def getting_chat_history(chat_id:str, messages_num:int):
             .build()
 
     # 发起请求
-    response: ListMessageResponse = await asyncio.to_thread(client.im.v1.message.list,request)
+    response: ListMessageResponse = await call_lark(client.im.v1.message.list, request)
     
     # 处理失败返回
     if not response.success():

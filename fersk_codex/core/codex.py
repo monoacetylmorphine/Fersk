@@ -371,6 +371,34 @@ class FerskCodex:
             if run_id not in cls._clients and run_id not in cls._processes:
                 cls._closed_runs.discard(run_id)
 
+    @classmethod
+    async def discard_expired_run(cls, run_id: str) -> None:
+        """24 小时后有界关闭并移除引用，失败不能使缓存永久保留。"""
+        manager = cls._clients.get(run_id)
+        initializing = cls._initializers.get(run_id)
+        if initializing is not None and not initializing.done():
+            def stop_late_process(task):
+                # 初始化在线程内延迟返回时仍尝试终止进程，不重新写入运行索引。
+                if not task.cancelled():
+                    task.exception()
+                proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
+                if proc is not None and proc.poll() is None:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+            initializing.add_done_callback(stop_late_process)
+        try:
+            async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+                if not await cls.force_close(run_id):
+                    logger.error("过期任务进程退出未确认: run_id=%s", run_id)
+        finally:
+            for mapping in (cls._active_turns, cls._live_turns, cls._clients,
+                            cls._processes, cls._initializers):
+                mapping.pop(run_id, None)
+            cls._pending_interrupts.discard(run_id)
+            cls._closed_runs.discard(run_id)
+
     @staticmethod
     async def reset_thread(user_id: str) -> None:
         """Explicit control operation; prompt text never resets a thread."""

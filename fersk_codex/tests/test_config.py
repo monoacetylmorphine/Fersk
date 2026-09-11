@@ -135,6 +135,27 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         self.load(config)
 
+    def test_reliability_settings_are_optional_and_validated(self):
+        config = copy.deepcopy(CONFIG)
+        for parent, key in ((config['messaging'], 'maxPendingEvents'),
+                            (config['lark'], 'requestConcurrency'),
+                            (config['logging'], 'logLevel'),
+                            (config['codex']['watchdog'], 'finalizationTimeoutSeconds'),
+                            (config['messages'], 'cleanupTimeout')):
+            parent.pop(key, None)
+        self.load(config)
+        for keys, value in ((('messaging', 'maxPendingEvents'), 0),
+                            (('lark', 'requestConcurrency'), 0),
+                            (('logging', 'logLevel'), 'INVALID'),
+                            (('codex', 'watchdog', 'finalizationTimeoutSeconds'), 0)):
+            invalid = copy.deepcopy(CONFIG)
+            parent = invalid
+            for key in keys[:-1]:
+                parent = parent[key]
+            parent[keys[-1]] = value
+            with self.assertRaises(RuntimeError):
+                self.load(invalid)
+
     def test_extension_env_name_url_and_sql_identifier_constraints(self):
         cases = [(('resources', 'acceptedExtensions', 'image'), ['PNG']),
                  (('resources', 'acceptedExtensions', 'image'), ['.png', '.png']),

@@ -2,6 +2,9 @@ import os
 
 import lark_oapi as lark
 from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.utils.logger import protect_sdk_logs
+
+protect_sdk_logs(lark.logger)
 
 
 def _required_setting(name: str) -> str:

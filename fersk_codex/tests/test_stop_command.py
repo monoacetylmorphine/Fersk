@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from fersk_codex.core.codex import FerskCodex
 from fersk_codex.core import codex
 from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.middleware import message_router
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_stop_command
 
 
@@ -187,7 +188,7 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
     async def test_buffer_cancel_and_next_message_works(self):
         data = event("image")
         data.event.message.message_type = "image"
-        await self.g._buffer_message(data, 0)
+        await self.g.router._buffer_message(data, 0)
         task = self.g.buffer_tasks["chat-1"]
         await self.g.processing(event())
         await asyncio.gather(task, return_exceptions=True)
@@ -196,7 +197,8 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
         self.g._handle_message_batch = AsyncMock()
         await self.g.processing(event("hello", message_id="next"))
         self.g._handle_message_batch.assert_awaited_once()
-        self.assertEqual(self.g._handle_message_batch.call_args.args[1], 1)
+        self.assertEqual(self.g._handle_message_batch.call_args.args[1], 0)
+        self.assertNotIn("chat-1", self.g.chat_generations)
 
     async def test_stop_during_history_fetch_discards_old_request(self):
         fetching, resume = asyncio.Event(), asyncio.Event()
@@ -224,10 +226,10 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_requires_mention_and_replies_to_chat(self):
         data = event(chat_type="group")
-        with patch.object(self.g, "_is_bot_mentioned", return_value=False):
+        with patch("fersk_codex.middleware.message_router._is_bot_mentioned", return_value=False):
             await self.g.processing(data)
         self.g.sending_card.assert_not_awaited()
-        with patch.object(self.g, "_is_bot_mentioned", return_value=True):
+        with patch("fersk_codex.middleware.message_router._is_bot_mentioned", return_value=True):
             await self.g.processing(data)
         self.assertEqual(self.g.sending_card.call_args.kwargs["union_id"], "chat-1")
 

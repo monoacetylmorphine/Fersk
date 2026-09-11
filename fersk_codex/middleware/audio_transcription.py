@@ -16,6 +16,9 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.utils.logger import get_logger
+
+logger = get_logger("Audio")
 
 
 AUDIO_CONFIG = CONFIG["audio"]
@@ -232,13 +235,13 @@ class ASR:
                 api_key=api_key,
                 base_url=AUDIO_CONFIG["asr"]["baseUrl"],
             ) as client:
-                print("ASR Working!")
+                logger.debug("音频转写开始")
                 texts = []
                 for segment in segments:
                     text = await self._transcribe_segment(client, segment)
                     if text:
                         texts.append(text)
-            print("ASR Ending!")
+            logger.debug("音频转写结束")
             return "\n".join(texts)
         finally:
             shutil.rmtree(temporary_directory, ignore_errors=True)
