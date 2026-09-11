@@ -1,7 +1,6 @@
 """逐条持久化增量用量，异常退出不重复写入。"""
 
 import asyncio
-import csv
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -23,14 +22,12 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
             self.enterContext(patch.object(codex.FerskCodex, name, set()))
         directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.db = directory / "usage.sqlite"
-        self.csv = directory / "usage.csv"
         self.enterContext(patch.object(usage_log, "DB_PATH", self.db))
-        self.enterContext(patch.object(usage_log, "CSV_PATH", self.csv))
         self.enterContext(patch.object(codex, "get_user_thread", AsyncMock(return_value=None)))
         self.enterContext(patch.object(codex, "set_user_thread", AsyncMock()))
-        self.enterContext(patch.object(codex.Path, "mkdir"))
+        self.enterContext(patch.object(codex, "prepare_workspace", AsyncMock()))
         self.save = self.enterContext(patch.object(codex, "SavingLog", AsyncMock(wraps=usage_log.SavingLog)))
-        self.export = self.enterContext(patch.object(usage_log, "export_to_csv", AsyncMock(wraps=usage_log.export_to_csv)))
+        self.finalize = self.enterContext(patch.object(codex, "finalize_usage", AsyncMock(wraps=usage_log.finalize_usage)))
         self.factory = self.enterContext(patch.object(codex, "AsyncCodex"))
 
     def events(self, ending, totals=(10, 25), run_id="run-1"):
@@ -60,15 +57,11 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         return codex.FerskCodex.running("user", "hello", run_id)
 
     def assert_saved_all(self):
-        self.export.assert_awaited_once()
+        self.finalize.assert_awaited_once()
         self.assertEqual(self.save.await_count, 2)
         with sqlite3.connect(self.db) as db:
             rows = db.execute("SELECT userId, threadId, total_tokens, runId FROM token_usage ORDER BY id").fetchall()
         self.assertEqual(rows, [("user", "thread", 10, "run-1"), ("user", "thread", 25, "run-1")])
-        with self.csv.open(newline="") as file:
-            rows = list(csv.DictReader(file))
-        self.assertEqual(len(rows), 2)
-        self.assertEqual([r["total_tokens"] for r in rows], ["10", "25"])
 
     async def test_completed(self):
         events = [e async for e in self.events(TurnStatus.completed)]
@@ -82,17 +75,16 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         await anext(events)
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT total_tokens, runId FROM token_usage").fetchall(), [(10, "run-1")])
-        self.assertFalse(self.csv.exists())
-        self.export.assert_not_awaited()
+        self.finalize.assert_not_awaited()
         await events.aclose()
         self.save.assert_awaited_once()
-        self.export.assert_awaited_once()
+        self.finalize.assert_awaited_once()
 
     async def test_no_usage_does_not_insert_zero_row(self):
         await self.drain(self.events(TurnStatus.completed, totals=()))
         self.save.assert_not_awaited()
         self.assertFalse(self.db.exists())
-        self.export.assert_not_awaited()
+        self.finalize.assert_not_awaited()
 
     async def test_generated_run_id_is_shared_and_unique_per_run(self):
         for _ in range(2):
@@ -167,7 +159,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(closing, 1)
         self.save.assert_awaited_once()
-        self.export.assert_awaited_once()
+        self.finalize.assert_awaited_once()
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT total_tokens FROM token_usage").fetchall(), [(10,)])
 

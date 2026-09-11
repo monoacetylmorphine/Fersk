@@ -18,12 +18,14 @@ class ConfigTests(unittest.TestCase):
     def test_current_config(self):
         self.assertEqual(self.load(CONFIG), CONFIG)
 
-    def test_extension_configuration_is_optional_and_owned_by_extension(self):
+    def test_shared_mcp_section_is_required_and_validated(self):
         config = copy.deepcopy(CONFIG)
-        config.pop('mcp', None)
-        self.load(config)
-        config['mcp'] = {'port': '由扩展项目校验', 'custom': True}
-        self.load(config)
+        config.pop('mcp')
+        with self.assertRaises(RuntimeError):
+            self.load(config)
+        config['mcp'] = {'port': 'invalid', 'custom': True}
+        with self.assertRaises(RuntimeError):
+            self.load(config)
 
     def test_bot_identity_requires_at_least_one_environment_field(self):
         for fields in (("robotUnionIdEnv",), ("robotNameEnv",),
@@ -173,9 +175,11 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.load(config)
 
-    def test_upload_is_owned_by_mcp(self):
+    def test_shared_upload_is_validated_without_initializing_mcp(self):
         config = copy.deepcopy(CONFIG)
-        config['lark'].pop('upload', None)
-        self.load(config)
+        config['lark'].pop('upload')
+        with self.assertRaises(RuntimeError):
+            self.load(config)
         config['lark']['upload'] = {'fallbackFileType': None}
-        self.load(config)
+        with self.assertRaises(RuntimeError):
+            self.load(config)

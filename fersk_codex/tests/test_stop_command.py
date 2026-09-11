@@ -359,7 +359,7 @@ class BackendInterruptTests(unittest.IsolatedAsyncioTestCase):
             patch.object(FerskCodex, "_turns_guard", asyncio.Lock()),
             patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
             patch.object(codex, "set_user_thread", AsyncMock()),
-            patch.object(codex.Path, "mkdir"),
+            patch.object(codex, "prepare_workspace", AsyncMock()),
             patch.object(codex, "AsyncCodex") as client_class,
         ):
             client = client_class.return_value.__aenter__.return_value

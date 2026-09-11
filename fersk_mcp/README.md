@@ -20,19 +20,19 @@ fersk-mcp
 
 ## Docker
 
-构建镜像：
+从仓库根目录构建镜像：
 
 ```bash
-docker build -t fersk-mcp .
+docker build -f fersk_mcp/Dockerfile -t fersk-mcp .
 ```
 
-运行时需要提供已校验的配置文件。镜像支持 Compose 中的 `APP_USER`、`LOCAL_UID`、`LOCAL_GID` 和 `PYTHON_PACKAGE_INDEX` 构建参数；容器的 `HOME` 与 `CODEX_HOME` 会与相应的 `.fersk`、`.codex` 挂载目录对齐。以下命令将主机的 `~/.fersk` 挂载到默认容器用户的配置目录，并将默认 MCP HTTP 端口映射到主机：
+首次启动会从镜像中的共享默认配置原子初始化挂载的 `~/.fersk/config.json`，已有文件不覆盖。两个服务均完整校验共享配置；指定自定义配置路径时，文件必须已存在。镜像支持 Compose 中的 `APP_USER`、`LOCAL_UID`、`LOCAL_GID` 和 `PYTHON_PACKAGE_INDEX` 构建参数；容器的 `HOME` 与 `CODEX_HOME` 会与相应的 `.fersk`、`.codex` 挂载目录对齐。以下命令将主机的 `~/.fersk` 挂载到默认容器用户的配置目录，并将默认 MCP HTTP 端口映射到主机：
 
 ```bash
 docker run --rm \
   -p 8000:8000 \
   -e MCP_HOST=0.0.0.0 \
-  -v "$HOME/.fersk:/home/app/.fersk:ro" \
+  -v "$HOME/.fersk:/home/app/.fersk" \
   -v "$HOME/.codex:/home/app/.codex" \
   fersk-mcp
 ```
@@ -51,4 +51,6 @@ docker run --rm \
 
 离线验证：从仓库根目录运行 `fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py`，测试使用临时配置和模拟客户端，不发送真实请求。
 
-独立配置示例位于本项目 `configs/config_default.json`，测试不再读取主项目文件。已有挂载的配置保持不变。
+默认配置、Schema、校验逻辑和初始化脚本的唯一实体位于 `fersk_codex/configs/`；本项目内同名路径是指向它们的符号链接。两个服务执行相同的完整校验后各自使用所需字段，详情见根目录 README。已有挂载配置不自动覆盖。
+
+文件发送的接收方目录必须同时满足正则 `(?:on_|oc_)[A-Za-z0-9]+` 与总长度 35，并且只识别到一个接收方。长度取自用户提供的参考 ID（3 字符前缀加 32 字符主体）；不新增调用授权或工作区归属检查。

@@ -13,12 +13,17 @@ from lark_oapi.api.im.v1 import (
 from fersk_mcp.utils.config_loader import CONFIG
 from fersk_mcp.configs.lark_client import get_client
 
+# 来源：用户提供的 ID 样例，共 35 字符（前缀 3 + ID 32）；同样应用于 oc_。
+RECIPIENT_ID_LENGTH = 35
+
 
 def _recipient(path: Path) -> str:
     # 接收方由调用方提供的路径目录指定；只接受完整且唯一的 ID 目录。
-    recipients = {part for part in path.parent.parts if re.fullmatch(r"(?:on_|oc_)[A-Za-z0-9]+", part)}
+    recipients = {part for part in path.parent.parts
+                  if re.fullmatch(r"(?:on_|oc_)[A-Za-z0-9]+", part)
+                  and len(part) == RECIPIENT_ID_LENGTH}
     if len(recipients) != 1:
-        raise ValueError("文件路径必须包含唯一的 on_ 或 oc_ 接收方目录")
+        raise ValueError("文件路径必须包含唯一的 on_ 或 oc_ 接收方目录，ID 总长度必须为 35 字符")
     return recipients.pop()
 
 

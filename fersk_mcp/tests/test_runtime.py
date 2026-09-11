@@ -62,7 +62,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         manager.__aexit__.assert_awaited_once()
 
     async def test_lark_call_validates_its_own_credentials(self):
-        directory = Path(self.temp.name) / "on_test"
+        directory = Path(self.temp.name) / "on_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         directory.mkdir(exist_ok=True)
         path = directory / "file.txt"
         path.write_text("测试")
@@ -86,9 +86,28 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                     await module.sending_file(path)
             factory.assert_not_called()
 
+    async def test_recipient_requires_regex_and_exact_length(self):
+        module = importlib.import_module('fersk_mcp.tools.lark_tools.sending_file')
+        for prefix in ('on_', 'oc_'):
+            for length in (31, 33):
+                path = Path(self.temp.name) / (prefix + 'a' * length) / 'file.txt'
+                path.parent.mkdir(exist_ok=True)
+                path.write_text('测试')
+                with patch.object(module, 'get_client') as factory:
+                    with self.assertRaises(ValueError):
+                        await module.sending_file(str(path))
+                    factory.assert_not_called()
+            valid = prefix + 'a' * 32
+            self.assertEqual(module._recipient(Path('/tmp') / valid / 'file.txt'), valid)
+        for invalid in ('xx_' + 'a' * 32, 'on_' + '-' * 32):
+            with self.assertRaises(ValueError):
+                module._recipient(Path('/tmp') / invalid / 'file.txt')
+        with self.assertRaises(ValueError):
+            module._recipient(Path('/tmp') / ('on_' + 'a' * 32) / ('oc_' + 'b' * 32) / 'file.txt')
+
     async def test_configured_types_recipient_and_success_receipt(self):
         module = importlib.import_module("fersk_mcp.tools.lark_tools.sending_file")
-        for recipient, kind in (("on_user1", "union_id"), ("oc_chat1", "chat_id")):
+        for recipient, kind in (("on_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "union_id"), ("oc_cccccccccccccccccccccccccccccccc", "chat_id")):
             for suffix, expected in ((".PDF", "pdf"), (".txt", "custom_stream")):
                 path = Path(self.temp.name) / recipient / ("file" + suffix)
                 path.parent.mkdir(exist_ok=True)
@@ -117,7 +136,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upload_and_send_failures_raise_without_retry(self):
         module = importlib.import_module("fersk_mcp.tools.lark_tools.sending_file")
-        path = Path(self.temp.name) / "on_failure" / "file.txt"
+        path = Path(self.temp.name) / "on_dddddddddddddddddddddddddddddddd" / "file.txt"
         path.parent.mkdir(exist_ok=True)
         path.write_text("测试")
         for stage in ("upload", "send", "missing_file_key", "missing_message_id"):
@@ -143,7 +162,7 @@ class ConfigScopeTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.config = json.loads((root / "configs/config_default.json").read_text())
         # 独立加载当前项目的校验器，不读取真实运行配置或其他项目。
-        spec = importlib.util.spec_from_file_location("mcp_config_under_test", root / "configs/config_loader.py")
+        spec = importlib.util.spec_from_file_location("mcp_config_under_test", root / "utils/config_loader.py")
         module = importlib.util.module_from_spec(spec)
         with patch.dict(os.environ, FERSK_CONFIG_FILE=str(root / "configs/config_default.json")), patch("dotenv.load_dotenv"):
             spec.loader.exec_module(module)
@@ -155,14 +174,15 @@ class ConfigScopeTests(unittest.TestCase):
             path.write_text(json.dumps(config))
             return self.load_config(path)
 
-    def test_only_mcp_consumed_sections_are_required(self):
-        minimal = {key: self.config[key] for key in ("schemaVersion", "mcp", "lark", "codex")}
-        minimal["codex"] = {"watchdog": {"cardRequestTimeoutSeconds": 10}}
-        minimal["lark"] = {key: minimal["lark"][key] for key in ("credentials", "upload")}
-        minimal["lark"]["credentials"] = {"appIdEnv": "TEST_APP_ID", "appSecretEnv": "TEST_APP_SECRET"}
-        self.load(minimal)
-        minimal.update(audio={"invalid": True}, messaging={"directTypes": []})
-        self.load(minimal)
+    def test_shared_codex_sections_are_required_and_validated(self):
+        minimal = {key: self.config[key] for key in ('schemaVersion', 'mcp', 'lark', 'codex')}
+        with self.assertRaises(RuntimeError):
+            self.load(minimal)
+        for value in (-1, 0, 1.5, True, '10'):
+            config = copy.deepcopy(self.config)
+            config['codex']['watchdog']['maxRunSeconds'] = value
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                self.load(config)
 
     def test_own_timeout_upload_and_server_fields_are_validated(self):
         for keys, value in [(("codex", "watchdog", "cardRequestTimeoutSeconds"), float("nan")),

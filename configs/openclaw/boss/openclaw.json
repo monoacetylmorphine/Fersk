@@ -269,10 +269,10 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-       "model": {
+        "model": {
           "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
           "fallbacks": [
-            "deepseek/deepseek-v4-pro",
+            "deepseek/deepseek-v4-flash",
             "zai/glm-5.2",
             "moonshot/kimi-k3"
           ]
@@ -356,7 +356,7 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-        "model": "zai/glm-5.2"
+        "model": "deepseek/deepseek-v4-flash"
       },
       {
         "id": "product",
@@ -434,7 +434,7 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-        "model": "zai/glm-5.2"
+        "model": "deepseek/deepseek-v4-flash"
       },
       {
         "id": "super",
@@ -512,7 +512,7 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-        "model": "zai/glm-5.2"
+        "model": "deepseek/deepseek-v4-flash"
       },
       {
         "id": "legal",
@@ -590,7 +590,7 @@
           "pdf",
           "pptx"
         ],
-        "model": "zai/glm-5.2"
+        "model": "deepseek/deepseek-v4-flash"
       }
     ]
   },
@@ -679,8 +679,8 @@
     "sessions": {
       "visibility": "all"
     },
-    "loopDetection":{
-      "enabled":true
+    "loopDetection": {
+      "enabled": true
     },
     "exec": {
       "timeoutSec": 1800,
@@ -704,7 +704,7 @@
   },
   "meta": {
     "lastTouchedVersion": "2026.7.1",
-    "lastTouchedAt": "2026-08-20T03:40:23.206Z"
+    "lastTouchedAt": "2026-08-31T02:55:32.712Z"
   },
   "plugins": {
     "entries": {

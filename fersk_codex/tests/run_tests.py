@@ -1,7 +1,7 @@
 """Run offline unittest discovery using a temporary, non-production config.
 
 Usage: python -B tests/run_tests.py [--pattern test_resource_validator.py] [--reverse]
-Requires the project's Python >= 3.13 environment and requirements.txt packages.
+Requires the project's Python >= 3.13 environment and pyproject.toml/uv.lock packages.
 """
 
 import argparse
@@ -37,7 +37,6 @@ def main():
         config['storage'].update(
             databasePath=str(temporary / 'state.sqlite'),
             runLogPath=str(temporary / 'logs'),
-            tokenUsagePath=str(temporary / 'usage.csv'),
             workspaceRoot=str(temporary / 'workspace'),
         )
         config_path = temporary / 'config.json'

@@ -1,10 +1,12 @@
 """Real SDK request models and resource validation against an offline client."""
 
 import importlib.util
+import asyncio
 import io
 from pathlib import Path
 import sys
 import tempfile
+import threading
 from types import ModuleType, SimpleNamespace as NS
 import unittest
 from unittest.mock import Mock, patch
@@ -50,6 +52,25 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
         self.client.im.v1.message_resource.get.return_value = self.response(file=io.BytesIO(b'not png'), file_name='fake.png')
         self.assertIsNone(await self.tools.download_msg_resource('user', 'message', 'key', 'image'))
         self.assertEqual([p for p in self.directory.rglob('*') if p.is_file()], [])
+
+    async def test_slow_large_write_does_not_block_event_loop(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow_write(*args):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError('测试写入未释放')
+            return 'written'
+        self.client.im.v1.message_resource.get.return_value = self.response()
+        with patch.object(self.tools, '_save_resource', side_effect=slow_write):
+            task = asyncio.create_task(self.tools.download_msg_resource('user', 'message', 'key', 'file'))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                await asyncio.wait_for(asyncio.sleep(0.01), 0.2)
+                self.assertFalse(task.done())
+            finally:
+                release.set()
+                result = await task
+        self.assertEqual(result, 'written')
 
     async def test_failed_resource_api_does_not_create_destination(self):
         self.client.im.v1.message_resource.get.return_value = self.response(False)

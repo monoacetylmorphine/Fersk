@@ -8,8 +8,7 @@
     "runLogPath": "~/.fersk/logs",
     "workspaceRoot": "~/.codex/workspace",
     "inboundSubdirectory": "resources/inbound",
-    "databasePath": "~/.fersk/state.sqlite",
-    "tokenUsagePath": "~/.fersk/usage/token_usage.csv"
+    "databasePath": "~/.fersk/state.sqlite"
   },
   "messaging": {
     "bufferWindowSeconds": 10.0,
@@ -65,7 +64,8 @@
       "maxDelaySeconds": 2.0,
       "jitterRatio": 0.2,
       "backoffMultiplier": 2.0
-    }
+    },
+    "gitInitTimeoutSeconds": 10
   },
   "lark": {
     "credentials": {

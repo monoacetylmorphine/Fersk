@@ -42,7 +42,7 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
                         patch.dict(CONFIG["codex"]["models"], routes),
                         patch.object(codex, "get_user_thread", AsyncMock(return_value=existing)),
                         patch.object(codex, "set_user_thread", AsyncMock()),
-                        patch.object(codex.Path, "mkdir"),
+                        patch.object(codex, "prepare_workspace", AsyncMock()),
                         patch.object(codex, "SavingLog", AsyncMock()),
                         patch.object(codex, "AsyncCodex") as factory,
                     ):

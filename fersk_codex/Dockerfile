@@ -33,14 +33,14 @@ ENV HOME=/home/${APP_USER}
 ENV CODEX_HOME=${HOME}/.codex
 
 WORKDIR /opt/fersk_codex
-COPY pyproject.toml uv.lock ./
+COPY fersk_codex/pyproject.toml fersk_codex/uv.lock ./
 ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
 RUN uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python \
         --default-index "${PYTHON_PACKAGE_INDEX}" \
     && ln -s "$(python -c 'from codex_cli_bin import bundled_codex_path; print(bundled_codex_path())')" \
         /usr/local/bin/codex \
     && codex --version
-COPY . .
+COPY fersk_codex/ .
 # Dependencies are cached above; run the copied source via PYTHONPATH.
 RUN install -m 0755 docker/entrypoint.sh /usr/local/bin/fersk-entrypoint \
     && mkdir -p "${HOME}/.fersk" "${CODEX_HOME}/workspace" \

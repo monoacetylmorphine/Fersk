@@ -114,7 +114,7 @@ class ProbeTests(unittest.TestCase):
         jsonschema.validate(CONFIG, json.loads((Path(__file__).resolve().parents[1] / "configs/config_schema.json").read_text()))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
-            for value in (0, -1, True, "10", float("inf")):
+            for value in (0, -1, 1.5, True, "10", float("inf")):
                 config = json.loads(json.dumps(CONFIG))
                 config["codex"]["watchdog"]["maxRunSeconds"] = value
                 path.write_text(json.dumps(config))
@@ -238,7 +238,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
             with (patch.object(codex, "AsyncCodex") as factory,
                   patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
                   patch.object(codex, "set_user_thread", AsyncMock()),
-                  patch.object(codex.Path, "mkdir"),
+                  patch.object(codex, "prepare_workspace", AsyncMock()),
                   patch.object(codex, "SavingLog", AsyncMock())):
                 factory.return_value.__aenter__.return_value.thread_start.return_value = thread
                 result = [event async for event in FerskCodex.running("user", "hello", "result")]

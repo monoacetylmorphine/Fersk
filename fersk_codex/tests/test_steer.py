@@ -120,7 +120,7 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
         with (patch.object(codex, "AsyncCodex") as client_class,
               patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
               patch.object(codex, "set_user_thread", AsyncMock()),
-              patch.object(codex.Path, "mkdir"),
+              patch.object(codex, "prepare_workspace", AsyncMock()),
               patch.object(codex, "SavingLog", AsyncMock()) as saving):
             client_class.return_value.__aenter__.return_value.thread_start.return_value = self.thread
             events = FerskCodex.running("user", "hello", "actual", notify_started=True)
@@ -157,7 +157,7 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
         with (patch.object(codex, "AsyncCodex") as client_class,
               patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
               patch.object(codex, "set_user_thread", AsyncMock()),
-              patch.object(codex.Path, "mkdir"),
+              patch.object(codex, "prepare_workspace", AsyncMock()),
               patch.object(codex, "SavingLog", AsyncMock())):
             client_class.return_value.__aenter__.return_value.thread_start.return_value = self.thread
             events = [event async for event in FerskCodex.running("user", "hello", "phases")]
@@ -504,7 +504,7 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         with (patch.object(codex, "AsyncCodex") as client_class,
               patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
               patch.object(codex, "set_user_thread", AsyncMock()),
-              patch.object(codex.Path, "mkdir"),
+              patch.object(codex, "prepare_workspace", AsyncMock()),
               patch.object(codex, "SavingLog", AsyncMock()) as saving,
               patch.object(FerskCodex, "_live_turns", {}),
               patch.object(FerskCodex, "_active_turns", {}),

@@ -34,7 +34,7 @@ Users have no access to the server filesystem. Any file that the user is expecte
 
 Send a file whenever ANY of the following is true:
 
-- You created or wrote a new file of any kind (images, charts, PDFs, reports, spreadsheets, archives, code artifacts, logs).
+- You created or wrote a new file (exclude coding file).
 - You modified an existing user file and the result needs to be seen.
 - The task produced any visual output (plots, diagrams, screenshots, rendered pages).
 - The user will need the file to perform the next step.
@@ -43,7 +43,6 @@ Do NOT skip sending because the file is "intermediate", "just a preview", "alrea
 
 If a send fails, retry once; if it still fails, state the failure and the reason in the final reply. Never silently skip.
 
-In the final reply, list every file you sent. If there was genuinely no file produced in this round, state "本轮无文件产出" explicitly.
 
 ### Image Generation Output
 

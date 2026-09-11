@@ -25,7 +25,15 @@ MCP 在容器内监听 `0.0.0.0`，Compose 默认发布到宿主机 `127.0.0.1:8
 
 `MCP_PORT` 是 Compose 的宿主机端口及容器监听端口，默认 8000；用 shell 或 `--env-file` 设置，并同步注入 MCP 容器，避免映射不匹配。`MCP_BIND_ADDRESS` 默认 `127.0.0.1`；需要远程访问时可显式设置可访问的宿主机地址。服务当前无鉴权，保持默认本机绑定可避免直接开放到局域网。`mcp.path` 继续来自共享 `config.json`，也可由共享 `.env` 中的 `MCP_PATH` 覆盖。
 
-主项目配置不再要求或校验 `mcp` 段，保留该字段只是兼容同一份挂载文件；扩展自行校验自己的配置。主项目默认配置不再包含 MCP 模型及服务设置。首次准备包含两个项目配置的文件时，可参考 `fersk_mcp/configs/config_default.json`；不要覆盖已有持久化配置。
+四个共享文件的唯一实体均在 `fersk_codex/configs/`：`config_default.json`、`config_schema.json`、`config_validation.py`、`initialize_config.py`。MCP 的 `configs/` 下同名文件通过符号链接引用；请在完整仓库中开发和构建，保留符号链接，不要单独拷贝项目目录。
+
+两个服务启动均完整校验同一份 `~/.fersk/config.json`，任何配置段格式错误都会阻止启动。校验通过后各自使用所需字段：Codex 不初始化 MCP 服务或消费其模型设置；MCP 使用 `mcp`、飞书凭据/上传设置和共享请求超时，不启动 Codex。校验不读取模型密钥值，缺少图像凭据仅在调用图像工具时报告。
+
+Docker 构建上下文为仓库根目录，镜像内置同一份默认配置。挂载发生在容器启动时，因此两个入口脚本在启动阶段将默认文件原子复制并命名为 `/home/${APP_USER:-app}/.fersk/config.json`。并发首次启动只发布一个完整文件（权限 0600）；已有文件不覆盖。指定 `FERSK_CONFIG_FILE` 时对应文件必须已存在。
+
+`codex.watchdog.maxRunSeconds` 必须为正整数。新增 `codex.gitInitTimeoutSeconds` 默认 10 秒，旧配置缺省时仍使用 10 秒；此值为项目策略。旧 `storage.tokenUsagePath` 仅为挂载兼容保留，不再消费或生成 CSV，历史 CSV 不删除。其他不再符合完整 Schema 的旧配置会明确报错，需要按字段调整；不会自动覆盖或迁移挂载文件。
+
+群聊继续按 `oc_` 群 ID 共享聊天历史、Codex 线程和工作空间。MCP 文件发送要求完整目录名同时满足 `(?:on_|oc_)[A-Za-z0-9]+` 和长度等于 35（含前缀），且接收方唯一；长度来自用户提供的参考 ID。授权与归属校验暂未增加。
 
 ## Langfuse
 

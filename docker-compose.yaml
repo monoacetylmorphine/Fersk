@@ -1,7 +1,8 @@
 services:
   fersk-codex:
     build:
-      context: ./fersk_codex
+      context: .
+      dockerfile: fersk_codex/Dockerfile
       args:
         APP_USER: ${APP_USER:-app}
         APP_UID: ${LOCAL_UID:-1000}
@@ -29,7 +30,8 @@ services:
 
   fersk-mcp:
     build:
-      context: ./fersk_mcp
+      context: .
+      dockerfile: fersk_mcp/Dockerfile
       args:
         APP_USER: ${APP_USER:-app}
         APP_UID: ${LOCAL_UID:-1000}

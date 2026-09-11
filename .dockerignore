@@ -1,0 +1,15 @@
+# 根目录构建上下文仅发送两个服务源码及共享配置。
+**
+!fersk_codex/
+!fersk_mcp/
+!fersk_codex/**
+!fersk_mcp/**
+**/.venv
+**/__pycache__
+**/*.egg-info
+**/build
+**/dist
+**/.env
+**/.git
+**/tests
+**/.DS_Store

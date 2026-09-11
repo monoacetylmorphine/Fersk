@@ -78,7 +78,7 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_prompt_new_is_not_a_control_command(self):
         self.enterContext(patch.object(codex, "get_user_thread", AsyncMock(return_value=None)))
-        with patch.object(codex, "AsyncCodex") as client_class, patch.object(codex.Path, "mkdir"), patch.object(
+        with patch.object(codex, "AsyncCodex") as client_class, patch.object(codex, "prepare_workspace", AsyncMock()), patch.object(
             codex, "set_user_thread", AsyncMock(side_effect=sqlite3.OperationalError("locked"))
         ):
             client = client_class.return_value.__aenter__.return_value
@@ -92,7 +92,7 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
         await thread_management.set_user_thread("user-1", "thread-1")
         with (
             patch.object(codex, "AsyncCodex") as client_class,
-            patch.object(codex.Path, "mkdir"),
+            patch.object(codex, "prepare_workspace", AsyncMock()),
             patch.object(codex, "set_user_thread", new=AsyncMock(
                 side_effect=sqlite3.OperationalError("database is locked"),
             )),

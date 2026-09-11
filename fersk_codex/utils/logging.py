@@ -1,4 +1,3 @@
-import csv
 import aiosqlite
 from typing import Dict, Any
 from pathlib import Path
@@ -10,7 +9,6 @@ logger = get_logger("Usage")
 
 
 DB_PATH = CONFIG["storage"]["databasePath"]
-CSV_PATH = CONFIG["storage"]["tokenUsagePath"]
 TABLE_NAME = CONFIG["logging"]["tokenUsageTable"]
 
 
@@ -83,40 +81,6 @@ def ensure_keys(log: Dict[str, Any]) -> Dict[str, Any]:
     return fixed_log
 
 
-async def export_to_csv() -> None:
-    """异步从数据库导出所有记录到 storage.tokenUsagePath。"""
-    csv_path = Path(CSV_PATH)
-
-    try:
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-
-        async with aiosqlite.connect(DB_PATH) as db:
-            # 查询所有数据（按插入顺序或按时间戳排序）
-            async with db.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY timeStamp") as cursor:
-                # 获取列名（来自 cursor.description）
-                columns = [desc[0] for desc in cursor.description]
-
-                # 一次性获取所有行（如果数据量巨大，可改为流式写入）
-                rows = await cursor.fetchall()
-
-        # 写入 CSV
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            # 写入表头
-            writer.writerow(columns)
-            # 写入数据行
-            writer.writerows(rows)
-
-        print(f"✅ 导出成功：{csv_path} (共 {len(rows)} 条记录)")
-
-    except aiosqlite.Error as exc:
-        print(f"❌ 数据库读取失败：{exc}")
-        raise
-    except OSError as exc:
-        print(f"❌ 文件写入失败：{exc}")
-        raise
-
-
 async def SavingLog(log: Dict[str, Any]) -> None:
     """异步写入日志。"""
     fixed_log = ensure_keys(log)
@@ -162,7 +126,7 @@ async def SavingLog(log: Dict[str, Any]) -> None:
 
 
 async def finalize_usage(run_id: str, duration_ms: int | None) -> None:
-    """任务退出时回填已知耗时并导出一次，不新增用量记录。"""
+    """任务退出时仅回填已知耗时，不新增用量记录或导出文件。"""
     if duration_ms is not None:
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
@@ -170,4 +134,3 @@ async def finalize_usage(run_id: str, duration_ms: int | None) -> None:
                 (duration_ms, run_id),
             )
             await db.commit()
-    await export_to_csv()

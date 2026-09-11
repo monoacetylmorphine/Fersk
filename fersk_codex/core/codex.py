@@ -2,7 +2,6 @@ __all__ = ["FerskCodex", "LiveTurn"]
 
 import asyncio
 import random
-import subprocess
 from dataclasses import dataclass, field
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
@@ -12,6 +11,7 @@ from uuid import uuid4
 
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.workspace import prepare_workspace
 
 from openai_codex import (
     AsyncCodex,
@@ -420,24 +420,12 @@ class FerskCodex:
             )
 
         workspace = Path(CONFIG["storage"]["workspaceRoot"]).expanduser() / user_id
-        workspace.mkdir(parents=True, exist_ok=True)
-
-        # 1. 执行 git init：如果还没有 .git 就初始化
         try:
-            subprocess.run(
-                ["git", "init", "-q", "-b", "main"],
-                cwd=workspace,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            logger.warning("git init failed in %s: %s", workspace, e.stderr)
-
-        # 2. 检查 AGENTS.md，不存在就创建空文件
-        agents_md = workspace / "AGENTS.md"
-        if not agents_md.exists():
-            agents_md.touch()
+            # 10 秒是项目默认策略，兼容尚未填写新字段的挂载配置。
+            await prepare_workspace(workspace, CONFIG["codex"].get("gitInitTimeoutSeconds", 10))
+        except Exception as error:
+            yield _error_event(error, operation="workspace_init")
+            return
 
         thread_config = {
             "cwd":str(workspace),
@@ -626,7 +614,7 @@ class FerskCodex:
                                 FerskCodex._active_turns.pop(run_id, None)
                                 FerskCodex._pending_interrupts.discard(run_id)
                 finally:
-                    # 所有退出路径仅导出一次；已知耗时时回填，不重复插入用量。
+                    # 所有退出路径仅收尾一次；已知耗时时回填，不重复插入用量。
                     if usage_received:
                         await _save_turn_usage({
                             "userId": user_id,

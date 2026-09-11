@@ -1,0 +1,1 @@
+../../fersk_codex/configs/config_validation.py

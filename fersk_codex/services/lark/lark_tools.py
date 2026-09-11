@@ -82,6 +82,11 @@ async def download_msg_resource(union_id:str, message_id:str, resource_key:str, 
             f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
         return
     
+    # 响应读取、校验和磁盘写入整体移出事件循环。
+    return await asyncio.to_thread(_save_resource, response, union_id, message_id, resource_key, resource_type)
+
+
+def _save_resource(response, union_id, message_id, resource_key, resource_type):
     saving_path = (
         Path(CONFIG["storage"]["workspaceRoot"])
         / union_id
