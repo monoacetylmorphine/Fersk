@@ -164,7 +164,7 @@ def _card(content: str, streaming: bool) -> dict:
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "width_mode": "default",
+            "width_mode": "fill",
             "streaming_mode": streaming,
             "summary": {"content": "小脑袋已经开始转动啦，稍等哦~" if streaming else content[:100]},
             "style": {"text_size": {
@@ -176,16 +176,173 @@ def _card(content: str, streaming: bool) -> dict:
             "template": "blue",
             "icon": {"tag": "standard_icon", "token": "lark-logo_colorful"},
         },
+        # "body": {
+        #     "direction": "vertical",
+        #     "padding": "12px 12px 20px 12px",
+        #     "elements": [{
+        #         "tag": "markdown", "element_id": ELEMENT_ID,
+        #         "content": _replace_markdown_images(content), "text_size": "body",
+        #     }],
+        # },
         "body": {
-            "direction": "vertical",
-            "padding": "12px 12px 20px 12px",
-            "elements": [{
-                "tag": "markdown", "element_id": ELEMENT_ID,
-                "content": _replace_markdown_images(content), "text_size": "body",
-            }],
-        },
+                "direction": "vertical",
+                "padding": "12px 12px 12px 12px",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": _replace_markdown_images(content),
+                        "text_align": "left",
+                        "text_size": "normal",
+                        "margin": "0px 0px 0px 0px",
+                        "element_id": ELEMENT_ID,
+                    },
+                    {
+                        "tag": "hr",
+                        "margin": "0px 0px 0px 0px"
+                    },
+                    {
+                        "tag": "column_set",
+                        "horizontal_spacing": "12px",
+                        "horizontal_align": "right",
+                        "columns": [
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "<font color=\"grey-600\">内容由 AI 生成, 请仔细甄别</font>",
+                                        "text_align": "center",
+                                        "text_size": "notation",
+                                        "margin": "4px 0px 0px 0px",
+                                        "element_id": "footnote_text"
+                                    }
+                                ],
+                                "padding": "0px 0px 0px 0px",
+                                "direction": "vertical",
+                                "horizontal_spacing": "8px",
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "margin": "0px 0px 0px 0px",
+                                "weight": 1
+                            },
+                            {
+                                "tag": "column",
+                                "width": "auto",
+                                "elements": [],
+                                "padding": "0px 0px 0px 0px",
+                                "direction": "vertical",
+                                "horizontal_spacing": "8px",
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "margin": "0px 0px 0px 0px"
+                            },
+                            {
+                                "tag": "column",
+                                "width": "auto",
+                                "elements": [],
+                                "padding": "0px 0px 0px 0px",
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "margin": "0px 0px 4px 0px"
+                    }
+                ]
+            }
     }
 
+
+# {
+#     "schema": "2.0",
+#     "config": {
+#         "update_multi": true,
+#         "streaming_mode": true,
+#         "streaming_config": {
+#             "print_step": {
+#                 "default": 1
+#             },
+#             "print_frequency_ms": {
+#                 "default": 70
+#             },
+#             "print_strategy": "delay"
+#         }
+#     },
+#     "body": {
+#         "direction": "vertical",
+#         "padding": "12px 12px 12px 12px",
+#         "elements": [
+#             {
+#                 "tag": "markdown",
+#                 "content": "",
+#                 "text_align": "left",
+#                 "text_size": "normal",
+#                 "margin": "0px 0px 0px 0px",
+#                 "element_id": "streaming_txt"
+#             },
+#             {
+#                 "tag": "hr",
+#                 "margin": "0px 0px 0px 0px"
+#             },
+#             {
+#                 "tag": "column_set",
+#                 "horizontal_spacing": "12px",
+#                 "horizontal_align": "right",
+#                 "columns": [
+#                     {
+#                         "tag": "column",
+#                         "width": "weighted",
+#                         "elements": [
+#                             {
+#                                 "tag": "markdown",
+#                                 "content": "<font color=\"grey-600\">内容由 AI 生成, 请仔细甄别</font>",
+#                                 "text_align": "center",
+#                                 "text_size": "notation",
+#                                 "margin": "4px 0px 0px 0px",
+#                                 "element_id": "footnote_text"
+#                             }
+#                         ],
+#                         "padding": "0px 0px 0px 0px",
+#                         "direction": "vertical",
+#                         "horizontal_spacing": "8px",
+#                         "vertical_spacing": "8px",
+#                         "horizontal_align": "left",
+#                         "vertical_align": "top",
+#                         "margin": "0px 0px 0px 0px",
+#                         "weight": 1
+#                     },
+#                     {
+#                         "tag": "column",
+#                         "width": "auto",
+#                         "elements": [],
+#                         "padding": "0px 0px 0px 0px",
+#                         "direction": "vertical",
+#                         "horizontal_spacing": "8px",
+#                         "vertical_spacing": "8px",
+#                         "horizontal_align": "left",
+#                         "vertical_align": "top",
+#                         "margin": "0px 0px 0px 0px"
+#                     },
+#                     {
+#                         "tag": "column",
+#                         "width": "auto",
+#                         "elements": [],
+#                         "padding": "0px 0px 0px 0px",
+#                         "vertical_spacing": "8px",
+#                         "horizontal_align": "left",
+#                         "vertical_align": "top",
+#                         "margin": "0px 0px 0px 0px"
+#                     }
+#                 ],
+#                 "margin": "0px 0px 4px 0px"
+#             }
+#         ]
+#     }
+# }
 
 async def _call(operation, request):
     try:
