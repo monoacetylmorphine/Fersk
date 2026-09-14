@@ -6,6 +6,8 @@ service_tier = "default"
 [desktop]
 followUpQueueMode = "steer"
 conversationDetailMode = "STEPS_COMMANDS"
+preventSleepWhileRunning = true
+show-context-window-usage = true
 
 [marketplaces.openai-bundled]
 source_type = "local"
@@ -74,8 +76,8 @@ NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = ""
 NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = ""
 NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE = ""
 BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
-BROWSER_USE_CODEX_APP_VERSION = "26.901.51231"
-NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/fersk/.codex/plugins/cache/openai-bundled/browser/26.901.51231/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
+BROWSER_USE_CODEX_APP_VERSION = "26.908.40834"
+NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/fersk/.codex/plugins/cache/openai-bundled/browser/26.908.40834/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
 SKY_CUA_SERVICE_PATH = "/Users/fersk/.codex/computer-use/Codex Computer Use.app"
 CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
 
@@ -119,4 +121,25 @@ trust_level = "trusted"
 trust_level = "trusted"
 
 [projects."/home/app/.codex/workspace/on_d6ce39b714886434cb949513c17aa8aa"]
+trust_level = "trusted"
+
+[projects."/home/app/.codex/workspace/on_7233a0e7fd8734b669f6876f4692ae62"]
+trust_level = "trusted"
+
+[projects."/home/app/.codex/workspace/on_eaa3f831c38b4fbdbc844d63ee1da3bb"]
+trust_level = "trusted"
+
+[projects."/home/app/.codex/workspace/on_d74059a70abe96815f35be169920b8e7"]
+trust_level = "trusted"
+
+[projects."/home/app/.codex/workspace/on_7dbd9f4206f49e1857bbe91d1c2a355b"]
+trust_level = "trusted"
+
+[projects."/home/app/.codex/workspace/on_b8e9267f0c33f33e27c26811451a4d6c"]
+trust_level = "trusted"
+
+[projects."/home/app/.codex/workspace/oc_7a10ffbc4e5d181406e0f24b34ae89c9"]
+trust_level = "trusted"
+
+[projects."/home/app/test"]
 trust_level = "trusted"

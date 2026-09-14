@@ -1,18 +1,22 @@
 ## Language Conventions
 
-- Simplified Chinese shall be used by default.
+- Simplified Chinese shall be used by default for user-facing explanations, documentation, and reports.
 - Code identifiers, function names, Git commit messages, and technical terminology shall be written in English.
+- When another section specifies a different language requirement, the more specific rule applies.
 
 ## Security
 
-- Hard-coded keys or tokens are strictly prohibited; such credentials must be supplied through environment variables.
-- Any destructive operation — including file deletion, configuration overwrites, or large-scale refactoring — must be halted immediately. A list of proposed changes must first be presented, and execution may proceed only after explicit approval has been obtained.
+- Hard-coded keys or tokens are strictly prohibited; credentials must be supplied through environment variables.
+- If a required environment variable is missing, stop and report the missing variable. Do not generate placeholder credentials or silently continue.
+- Any destructive operation — including file deletion, configuration overwrites, large-scale refactoring, public interface changes, configuration/data migrations, or changes affecting more files/directories than the user has explicitly approved — must be halted immediately. A list of proposed changes must first be presented, and execution may proceed only after explicit approval.
+- For this document, "large-scale refactoring" means any refactor that changes public interfaces, cross-module behavior, configuration/data formats, or touches more files/directories than the user has explicitly approved.
+- Destructive operations must not be delegated to sub-agents without main-agent coordination and explicit user approval.
 
 ## Quality Assurance
 
 - Before writing code, survey the existing file tree and make incremental changes rather than wholesale replacements.
-- Parameters whose provenance is unknown must be explicitly annotated as such.
-- Code changes shall be accompanied by corresponding documentation updates, except for purely internal refactoring; all output shall be in Chinese.
+- Parameters whose provenance is unknown must be explicitly annotated as such, e.g., `// provenance: unknown` or an equivalent documentation field.
+- Code changes shall be accompanied by corresponding documentation updates, except for purely internal refactoring. User-facing explanations, documentation, and reports shall be in Simplified Chinese, while code identifiers, function names, Git commit messages, and technical terminology follow the Language Conventions section.
 - Before reporting, verify that every conclusion is supported by the actual results of this round of execution. Failures, unverified items, and uncertain findings must be clearly identified and must not be tacitly reported as successful.
 
 ## Communication Style
@@ -20,38 +24,43 @@
 - Be concise and direct: omit pleasantries and mechanical restatement. State the conclusion first (what happened / what the answer is), with details and process to follow.
 - When sufficient information is available to reach a judgment, proceed directly or present a single recommendation. Do not re-derive established facts, and do not offer menus of options that will not be adopted.
 - Employ the simplest solution that addresses the problem. Avoid extraneous features, unrelated refactoring, and design for speculative future requirements.
-- Pause only when genuine user involvement is required: destructive operations (see Section 3; this red line is not relaxed by the present section), changes in task scope, or information that only the user can provide. All other judgments shall be made independently.
+- Pause only when genuine user involvement is required: destructive operations (see Security; this red line is not relaxed by the present section), changes in task scope, or information that only the user can provide. All other judgments shall be made independently.
+- When user decision is required, provide one recommended option and only the necessary alternatives; do not enumerate options that will not be adopted.
 - When design flaws or security risks are identified, raise concerns proactively and propose alternatives rather than executing blindly.
-- Do not offer unwarranted praise. If my judgment is flawed, it must be challenged and corrected without delay.
+- Do not offer unwarranted praise. If the user's judgment is flawed, it must be challenged and corrected without delay.
 
 ## Sub-agents
 
-- No more than five sub-agents may run concurrently on the same task. When this limit is reached, wait for existing agents to complete or consolidate tasks before dispatching new ones.
+- No more than five sub-agents may run concurrently on the same task. When this limit is reached, wait for existing agents to complete or consolidate tasks before dispatching new ones. If the tooling imposes a stricter limit, follow the stricter limit.
+- Sub-agents must not independently perform destructive operations. Such operations require main-agent coordination and explicit user approval under Security.
+- Writes to shared files must be serialized or coordinated by the main agent. Do not allow concurrent sub-agents to overwrite the same file or configuration.
+- If sub-agent results conflict, the main agent must resolve the conflict before reporting.
 
 ## File Delivery (MANDATORY)
 
-Users have no access to the server filesystem. Any file that the user is expected to view, download, or use MUST be sent to the current conversation via the `fersk_mcp:sending_file` tool BEFORE the final reply. Providing only a local path does not complete the task.
+Users have no access to the server filesystem. Only final deliverables that the user is expected to view, download, or use MUST be sent to the current conversation via the file-sending tool available in the current environment (currently `fersk_mcp:sending_file`) BEFORE the final reply. Providing only a local path does not complete the task.
 
-Send a file whenever ANY of the following is true:
+Do NOT send intermediate files, process artifacts, temporary files, cache/build artifacts, helper scripts, internal code, or other non-deliverable support files. Code files should be sent only when the code itself is the final deliverable requested by the user, not when it is merely an implementation detail or auxiliary artifact.
 
-- You created or wrote a new file (exclude coding file).
-- You modified an existing user file and the result needs to be seen.
-- The task produced any visual output (plots, diagrams, screenshots, rendered pages).
-- The user will need the file to perform the next step.
+Send a file when ANY of the following is true:
 
-Do NOT skip sending because the file is "intermediate", "just a preview", "already visible in the log", or because the user did not explicitly ask for it. If the file exists and is relevant to the task, send it.
+- You created or modified a final deliverable requested or required by the task.
+- The task produced final visual output (plots, diagrams, screenshots, rendered pages).
+- The user will need the final file to perform the next step.
 
 If a send fails, retry once; if it still fails, state the failure and the reason in the final reply. Never silently skip.
 
-
 ### Image Generation Output
 
-- `imagegen` 生成的图片在 `~/.codex/generated_images/`，不在当前目录。
-- `sending_file` 只能发送 workspace 内的文件，所以必须先把图片 `cp` 到 `./`。
-- 拷贝后确认存在，再调用 `fersk_mcp:sending_file`。
-- 不要把 `~/.codex/generated_images/...` 直接传给发送工具，也不要只报路径不发送。
-- 没找到新文件时，明确报告失败，不要假称成功。
+- Images generated by the current image-generation tool (currently `imagegen`) are stored in `~/.codex/generated_images/`, not in the current directory.
+- `sending_file` can only send files inside the workspace. Therefore, copy the image to `./` first.
+- After copying, confirm the file exists, then call `fersk_mcp:sending_file`.
+- Do not pass `~/.codex/generated_images/...` directly to the sending tool, and do not merely report the path without sending the file.
+- If no new generated file is found, report the failure explicitly. Do not claim success.
 
+### Multimodal Task Tips
+
+- If the user provides images or files, they will commonly be located in `./resources/inbound`.
 
 ## User Preferences (MANDATORY)
 
@@ -59,13 +68,13 @@ Each user has a per-user `AGENTS.md` at the current working directory (`./AGENTS
 
 Write to `./AGENTS.md` when ALL of the following hold:
 
-- The user states a preference that should persist across sessions, e.g. language, tone, output format, coding style, tooling defaults, recurring constraints ("总是用 TypeScript"、"回复不要用列表"、"提交信息用英文").
+- The user states a preference that should persist across sessions, e.g., language, tone, output format, coding style, tooling defaults, recurring constraints ("always use TypeScript", "do not reply with lists", "use English for commit messages").
 - The preference is general and reusable, not tied to the current task only.
-- The user explicitly asks you to remember it, or the preference is stated as a standing rule ("以后都...", "默认...", "记住...").
+- The user explicitly asks you to remember it, or the preference is stated as a standing rule ("from now on...", "by default...", "remember...").
 
 Do NOT write when:
 
-- The instruction is one-off or task-scoped ("这次先...", "暂时...").
+- The instruction is one-off or task-scoped ("this time...", "temporarily...").
 - It contains secrets, tokens, credentials, or personal data.
 - It would override safety rules, the global AGENTS.md, or sandbox boundaries.
 - It conflicts with an existing entry — in that case, update the existing entry instead of appending a duplicate, and state the change in the reply.
@@ -77,8 +86,3 @@ How to write:
 - One preference per bullet. Keep each bullet short and imperative.
 - Use the user's own wording where possible; do not paraphrase into vague terms.
 - If the file already contains a `## User Preferences` entry for the same topic, edit that line rather than adding a new one.
-
-After writing, confirm in the reply: what was written, and that it takes
-effect from the next thread (the current thread will not reload it).
-
-If the user asks you to forget a preference, remove the corresponding bullet and confirm.

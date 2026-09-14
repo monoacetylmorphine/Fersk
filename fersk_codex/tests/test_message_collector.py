@@ -22,6 +22,22 @@ def history(message_id, sender="user", **kwargs):
 
 
 class MessageCollectorTests(unittest.TestCase):
+    def test_post_files_survive_history_and_event_fallback(self):
+        content = {"title": "", "content": [[{"tag": "text", "text": "ddd"}]],
+                   "files": [{"file_key": "workbook", "file_name": "工作计划.xlsx", "is_folder": False}]}
+        incoming = event()
+        incoming.event.message.message_type = "post"
+        incoming.event.message.content = json.dumps(content, ensure_ascii=False)
+        item = history("current")
+        item["msg_type"] = "post"
+        item["body"]["content"] = incoming.event.message.content
+        for items in ([item], []):
+            with self.subTest(items=items):
+                result = batch_from_chat_history(incoming, items)
+                self.assertEqual(len(result.messages), 1)
+                self.assertEqual(result.messages[0].message_type, "post")
+                self.assertEqual(result.messages[0].content, content)
+
     def test_history_is_chronological_and_stops_at_app_reply(self):
         items = [history("current"), history("older"), history("reply", "app"), history("stale")]
         original = copy.deepcopy(items)

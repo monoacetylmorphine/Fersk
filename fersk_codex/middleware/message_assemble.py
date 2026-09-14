@@ -198,8 +198,41 @@ def _normalize_messages(
                             resource_key=node.get("image_key"),
                             display_name=f"富文本图片 {message.message_id}",
                         )
+            _append_post_files(parts, rejected, message.message_id, content.get("files"))
 
     return parts, rejected
+
+
+def _append_post_files(
+    parts: list[_InputPart], rejected: list[str], message_id: str, files: object,
+) -> None:
+
+    if files is None:
+        return
+    if not isinstance(files, list):
+        rejected.append(f"富文本附件 {message_id}：files 格式错误")
+        return
+    for index, item in enumerate(files, start=1):
+        fallback_name = f"富文本附件 {message_id} 第 {index} 项"
+        if not isinstance(item, dict):
+            rejected.append(f"{fallback_name}：附件格式错误")
+            continue
+        name = item.get("file_name")
+        display_name = name.strip() if isinstance(name, str) and name.strip() else fallback_name
+        is_folder = item.get("is_folder", False)
+        if is_folder is True:
+            rejected.append(f"{display_name}：暂不支持文件夹，请单独发送文件")
+            continue
+        if is_folder is not False:
+            rejected.append(f"{display_name}：is_folder 格式错误")
+            continue
+        _append_resource(
+            parts, rejected,
+            kind="file",
+            message_id=message_id,
+            resource_key=item.get("file_key"),
+            display_name=display_name,
+        )
 
 
 def _append_text(parts: list[_InputPart], value: object) -> None:

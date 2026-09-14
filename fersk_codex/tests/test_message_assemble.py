@@ -211,3 +211,104 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
                 await self.assemble(message('image', {'image_key': 'i'}),
                                     message('file', {'file_key': 'f'}, 2))
         self.download.assert_not_awaited()
+
+    async def test_post_file_reference_downloads_once_with_parent_message_id(self):
+        name = "本周工作总结&下周工作计划.xlsx"
+        rows = [[{"tag": "text", "text": "ddd", "style": []}]]
+        self.download.return_value = f"/tmp/{name}"
+        with patch.dict(CONFIG['messaging'], historyPageSize=1):
+            result = await self.assemble(message("post", {
+                "title": "", "content": rows, "content_v2": rows,
+                "files": [{"file_key": "workbook", "file_name": name, "is_folder": False}],
+            }))
+        text, attachment = result.codex_input
+        self.assertEqual(text.text, "ddd")
+        self.assertIsInstance(attachment, MentionInput)
+        self.assertEqual(attachment.name, name)
+        self.assertEqual(attachment.path, str(Path(f"/tmp/{name}").resolve()))
+        self.assertEqual(result.notices, ())
+        self.download.assert_awaited_once_with(
+            union_id="user", message_id="m1", resource_key="workbook", resource_type="file")
+
+    async def test_post_mixed_resources_keep_body_then_file_order(self):
+        self.download.side_effect = ["/tmp/image.png", "/tmp/first.pdf", "/tmp/second.xlsx"]
+        result = await self.assemble(message("post", {
+            "title": "title", "content": [[{"tag": "img", "image_key": "image"},
+                {"tag": "text", "text": "body"}]],
+            "files": [{"file_key": "first"}, {"file_key": "second"}],
+        }))
+        self.assertEqual([type(item) for item in result.codex_input],
+                         [TextInput, LocalImageInput, TextInput, MentionInput, MentionInput])
+        self.assertEqual([item.name for item in result.codex_input if isinstance(item, MentionInput)],
+                         ["first.pdf", "second.xlsx"])
+
+    async def test_post_files_without_body(self):
+        self.download.return_value = "/tmp/only.pdf"
+        result = await self.assemble(message("post", {"files": [{"file_key": "only"}]}))
+        self.assertEqual(len(result.codex_input), 1)
+        self.assertIsInstance(result.codex_input[0], MentionInput)
+
+    async def test_no_file_message_uses_text_type(self):
+        for extra in ({}, {"files": []}):
+            with self.subTest(extra=extra):
+                result = await self.assemble(message("text", {"text": "ddd", **extra}))
+                self.assertEqual(result.codex_input, "ddd")
+                self.assertEqual(result.notices, ())
+        self.download.assert_not_awaited()
+
+    async def test_post_empty_files_preserves_existing_images(self):
+        self.download.return_value = "/tmp/image.png"
+        result = await self.assemble(message("post", {
+            "content": [[{"tag": "img", "image_key": "image"}]], "files": [],
+        }))
+        self.assertIsInstance(result.codex_input[0], LocalImageInput)
+
+    async def test_invalid_post_files_do_not_submit_text_alone(self):
+        for files, reason in (
+            ({}, "files 格式错误"), ("invalid", "files 格式错误"),
+            ([None], "附件格式错误"),
+            ([{"file_name": "missing.pdf"}], CONFIG['messages']['missingResourceKeySuffix']),
+            ([{"file_key": 123}], CONFIG['messages']['missingResourceKeySuffix']),
+            ([{"file_key": "folder", "is_folder": True}], "暂不支持文件夹"),
+            ([{"file_key": "folder", "is_folder": "true"}], "is_folder 格式错误"),
+        ):
+            with self.subTest(files=files):
+                result = await self.assemble(message("post", {
+                    "content": [[{"tag": "text", "text": "inspect"}]], "files": files,
+                }))
+                self.assertIsNone(result.codex_input)
+                self.assertIn(reason, result.notices[0])
+        self.download.assert_not_awaited()
+
+    async def test_post_folder_rejection_keeps_valid_file_and_text(self):
+        self.download.return_value = "/tmp/ok.pdf"
+        result = await self.assemble(message("post", {
+            "content": [[{"tag": "text", "text": "inspect"}]],
+            "files": [{"file_key": "folder", "file_name": "folder", "is_folder": True},
+                      {"file_key": "ok", "file_name": 123}],
+        }))
+        self.assertEqual([type(item) for item in result.codex_input], [TextInput, MentionInput])
+        self.assertIn("暂不支持文件夹", result.notices[0])
+        self.download.assert_awaited_once_with(
+            union_id="user", message_id="m1", resource_key="ok", resource_type="file")
+
+    async def test_post_file_failures_discard_text_when_none_usable(self):
+        for response in (None, RuntimeError("offline"), "/tmp/program.exe"):
+            with self.subTest(response=response):
+                self.download.side_effect = [response]
+                result = await self.assemble(message("post", {
+                    "content": [[{"tag": "text", "text": "inspect"}]],
+                    "files": [{"file_key": "file", "file_name": "attachment"}],
+                }))
+                self.assertIsNone(result.codex_input)
+                self.assertIn("本次附件和文本任务均未提交", result.notices[0])
+
+    async def test_post_files_and_images_share_limit_including_rejections(self):
+        for files in ([{"file_key": "a"}, {"file_key": "b"}],
+                      [{"file_key": "a"}, {"is_folder": True}]):
+            with self.subTest(files=files), patch.dict(CONFIG['messaging'], historyPageSize=2):
+                with self.assertRaisesRegex(self.assembly.InputAssemblyError, "最多接收 2 个附件"):
+                    await self.assemble(message("post", {
+                        "content": [[{"tag": "img", "image_key": "image"}]], "files": files,
+                    }))
+        self.download.assert_not_awaited()
