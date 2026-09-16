@@ -44,6 +44,10 @@ services:
     volumes:
       - ~/.hermes-niece:/opt/data
 
+# volumes:
+#   hermes-renxiaoyao:
+#   hermes-niece:
+
 networks:
   ai-infra:
     external: true
