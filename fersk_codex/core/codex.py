@@ -576,7 +576,9 @@ class FerskCodex:
                                     else:
                                         message_phases.pop(item.id, None)
 
-                            elif event.method == "item/reasoning/textDelta":
+                            elif event.method in {
+                                "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
+                            }:
                                 yield {"type": "reasoning", "content": event.payload.delta,
                                        "item_id": event.payload.item_id}
 

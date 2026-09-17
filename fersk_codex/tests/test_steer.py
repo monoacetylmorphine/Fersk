@@ -1,6 +1,8 @@
 """Offline steer routing tests using SDK status types and controlled concurrency."""
 import asyncio
-from contextlib import ExitStack
+import ast
+from contextlib import ExitStack, aclosing
+from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -167,6 +169,52 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
             {"type": "answer", "content": "text", "item_id": "final", "phase": "final_answer"},
             {"type": "done"},
         ])
+
+    async def test_reasoning_delta_variants_reach_gateway_before_answer(self):
+        # 事件格式来自根目录两份流式样本；短文本仅用于验证传递与替换。
+        source = ast.parse((Path(__file__).resolve().parents[1] / "gateway.py").read_text())
+        reply = next(n for n in source.body
+                     if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
+        class CardReplace:
+            def __init__(self, content):
+                self.content = content
+        namespace = dict(aclosing=aclosing, CardReplace=CardReplace,
+                         _run_was_interrupted=AsyncMock(return_value=False))
+        exec(compile(ast.Module(body=[reply], type_ignores=[]), "gateway.py", "exec"), namespace)
+
+        for method, phase in [("item/reasoning/textDelta", "final_answer"),
+                              ("item/reasoning/summaryTextDelta", None)]:
+            with self.subTest(method=method):
+                async def stream():
+                    item = NS(type="reasoning", id="r", content=[], summary=[])
+                    yield NS(method="item/started", payload=NS(item=NS(root=item)))
+                    for text in ("推理一", "推理二"):
+                        yield NS(method=method, payload=NS(item_id="r", delta=text,
+                                                          summary_index=0, content_index=0))
+                    item.summary = ["推理一推理二"] if phase is None else []
+                    item.content = [] if phase is None else ["推理一推理二"]
+                    yield NS(method="item/completed", payload=NS(item=NS(root=item)))
+                    answer = AgentMessageThreadItem(id="a", phase=phase, text="", type="agentMessage")
+                    yield NS(method="item/started", payload=NS(item=NS(root=answer)))
+                    yield NS(method="item/agentMessage/delta", payload=NS(item_id="a", delta="答案"))
+                    yield NS(method="item/completed", payload=NS(item=NS(root=answer)))
+                    yield NS(method="turn/completed", payload=NS(turn=NS(
+                        duration_ms=10, status=TurnStatus.completed)))
+                self.handle.stream = stream
+                self.thread.turn = AsyncMock(return_value=self.handle)
+                with (patch.object(codex, "AsyncCodex") as client_class,
+                      patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
+                      patch.object(codex, "set_user_thread", AsyncMock()),
+                      patch.object(codex, "prepare_workspace", AsyncMock()),
+                      patch.object(codex, "SavingLog", AsyncMock())):
+                    client_class.return_value.__aenter__.return_value.thread_start.return_value = self.thread
+                    events = FerskCodex.running("user", "hello", "reasoning-variants")
+                    rendered = [chunk async for chunk in namespace["_reply_content"](
+                        None, None, NS(), events=events)]
+                self.assertEqual(rendered[:2], ["推理一", "推理二"])
+                self.assertEqual(len(rendered), 3)
+                self.assertIsInstance(rendered[2], CardReplace)
+                self.assertEqual(rendered[2].content, "答案")
 
 
 class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):

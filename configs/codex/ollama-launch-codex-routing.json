@@ -1,0 +1,88 @@
+{
+  "models": [
+    {
+      "slug": "kimi-k3:cloud",
+      "thinking": {
+        "supported": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "values": {
+          "high": "high",
+          "low": "low",
+          "max": "max",
+          "none": false
+        }
+      }
+    },
+    {
+      "slug": "glm-5.3:cloud",
+      "thinking": {
+        "supported": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "values": {
+          "high": "high",
+          "low": "low",
+          "max": "max"
+        }
+      }
+    },
+    {
+      "slug": "glm-5.3-flash:cloud",
+      "thinking": {
+        "supported": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "values": {
+          "high": "high",
+          "low": "low",
+          "max": "max"
+        }
+      }
+    },
+    {
+      "slug": "gemma4:31b:cloud",
+      "thinking": {
+        "supported": true,
+        "levels": [
+          "none",
+          "medium"
+        ],
+        "values": {
+          "medium": true,
+          "none": false
+        }
+      }
+    },
+    {
+      "slug": "deepseek-v4.1-flash:cloud",
+      "thinking": {
+        "supported": true,
+        "levels": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "values": {
+          "high": "high",
+          "low": "low",
+          "max": "max",
+          "none": false
+        }
+      }
+    }
+  ],
+  "auto_review_model": "selected",
+  "auto_review_fallback_model": "gemma4:31b:cloud"
+}

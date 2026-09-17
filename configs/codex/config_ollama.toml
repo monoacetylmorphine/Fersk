@@ -1,23 +1,31 @@
 # Model
 model = "gemma4:26b-mlx"
-model_provider = "local_ollama"
+model_provider = "local-ollama"
 model_reasoning_effort = "low"
-model_catalog_json = "/home/fersk/.codex/models.json"
+
+forced_login_method = "api"
+model_context_window = 32768
+model_auto_compact_token_limit = 25600
+model_auto_compact_token_limit_scope = "total"
+tool_output_token_limit = 5120
 
 sandbox_mode = "workspace-write"
 approval_policy = "never"
 allow_login_shell = true
-project_root_markers = [".git", ".hg", ".sl"]
 
-[model_providers.local_ollama]
-name = "Ollama"
+
+notify = ["/Users/fersk/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient", "turn-ended"]
+
+[model_providers.local-ollama]
+name = "LocalOllama"
 base_url = "http://host.docker.internal:11434/v1"
-
-[model_providers.deepseek]
-name = "DeepSeek"
-base_url = "https://api.deepseek.com"
 wire_api = "responses"
-env_key = "DEEPSEEK_API_KEY"
+
+
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
 
 
 [sandbox_workspace_write]
@@ -25,21 +33,48 @@ network_access = true
 
 
 # MCP
-[mcp_servers.fersk-mcp-server]
-url = "http://127.0.0.1:8000/mcp"
-enabled = false
+[mcp_servers.fersk-mcp]
+url = "http://fersk-mcp:8000/mcp"
+enabled = true
 required = true
 startup_timeout_ms = 10000
 tool_timeout_sec = 120
 supports_parallel_tool_calls = true
+
+[mcp_servers.node_repl]
+args = []
+command = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS = "1000"
+NODE_REPL_NODE_MODULE_DIRS = "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules"
+NODE_REPL_NODE_PATH = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+NODE_REPL_TRUSTED_CODE_PATHS = "/Users/fersk/.codex:/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules"
+CODEX_HOME = "/Users/fersk/.codex"
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+BROWSER_USE_TINYSKY_ENABLED = "1"
+NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = ""
+NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = ""
+NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE = ""
+BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
+BROWSER_USE_CODEX_APP_VERSION = "26.911.61220"
+NODE_REPL_TRUSTED_SERVICES = '{"browser":"/Users/fersk/.codex/plugins/cache/openai-bundled/browser/26.911.61220/scripts/browser-service.mjs","sky":"@oai/sky/service"}'
+SKY_CUA_SERVICE_PATH = "/Users/fersk/.codex/computer-use/Codex Computer Use.app"
+CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
+
+[mcp_servers.computer-use]
+command = "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+args = ["mcp"]
+cwd = "."
+enabled = false
 
 
 # Memory
 [memories]
 generate_memories = true
 use_memories = true
-extract_model = "deepseek-v4-flash"
-consolidation_model = "deepseek-v4-flash"
+
 min_rollout_idle_hours = 24
 max_rollout_age_days = 30
 max_unused_days = 90
@@ -53,28 +88,33 @@ disable_on_external_context = true
 persistence = "save-all"
 max_bytes = 104857600
 
-[projects."/home/fersk/fersk_codex"]
+[projects."/home/fersk"]
 trust_level = "trusted"
 
-[projects."/home/fersk/.codex/workspace/on_72a05ca4bff2716266215ad002cf276c"]
+[projects."/home/fersk/fersk"]
 trust_level = "trusted"
 
-[projects."/home/fersk/.codex/workspace/on_18cf7a2a88c26bb853d54270e18c1d9d"]
+[projects."/Users/fersk/Documents/Codex/2026-09-17/he"]
 trust_level = "trusted"
 
-[marketplaces.codex-observability-plugin]
-last_updated = "2026-09-08T02:35:18Z"
-last_revision = "1db5c0f5ddce569afc112c6476e21d00cf9a482e"
-source_type = "git"
-source = "https://github.com/langfuse/codex-observability-plugin.git"
+[projects."/home/app/.codex/workspace/on_d6ce39b714886434cb949513c17aa8aa"]
+trust_level = "trusted"
 
-[plugins."tracing@codex-observability-plugin"]
+[desktop]
+followUpQueueMode = "steer"
+
+[marketplaces.openai-bundled]
+source_type = "local"
+source = "/Users/fersk/.codex/.tmp/bundled-marketplaces/openai-bundled"
+
+[plugins."browser@openai-bundled"]
 enabled = true
 
-[features]
-plugin_hooks = true
+[plugins."unified-computer-use@openai-bundled"]
+enabled = true
 
-[hooks.state]
+[plugins."computer-use@openai-bundled"]
+enabled = true
 
-[hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
-trusted_hash = "sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74"
+[plugins."visualize@openai-bundled"]
+enabled = true

@@ -2,7 +2,7 @@
 model = "deepseek-v4-flash"
 model_provider = "deepseek"
 model_reasoning_effort = "low"
-model_catalog_json = "/home/fersk/.codex/models.json"
+
 forced_login_method = "api"
 model_context_window = 1048576
 model_auto_compact_token_limit = 850000
