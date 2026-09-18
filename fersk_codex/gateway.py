@@ -21,7 +21,7 @@ from fersk_codex.utils.event_dispatcher import EventDispatcher
 from fersk_codex.core.thread_watchdog import RunProbe, probes, settings, journal
 from fersk_codex.services.lark.lark_client import create_websocket_client
 from fersk_codex.services.lark.lark_tools import getting_chat_history, adding_reaction_emoji, delete_reaction_emoji
-from fersk_codex.services.lark.lark_card import CardDeliveryError, CardReplace, CardStreamSession, CardStreamStopped, sending_card
+from fersk_codex.services.lark.lark_message_card import CardDeliveryError, CardReplace, CardStreamSession, CardStreamStopped, sending_card
 from fersk_codex.services.lark import lark_interactive_card as interactive
 from fersk_codex.middleware.message_collector import MessageBatch
 from fersk_codex.middleware.message_collector import is_stop_command, is_new_command, is_history_command

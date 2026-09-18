@@ -8,14 +8,14 @@
 未确认停止时发送明确的未确认提示，不报告“已停止”。最终通知按 run 去重；
 请求结果不确定时记录日志，不盲目重发，避免用户收到重复卡片。
 
-`lark_card.py` 提供 `await sending_card(union_id, content)`，成功时返回最后一张卡片的消息 ID，空内容返回 `None`。
+`lark_message_card.py` 提供 `await sending_card(union_id, content)`，成功时返回最后一张卡片的消息 ID，空内容返回 `None`。
 
 - `union_id`：来自消息批次的用户 union_id；以 `oc_` 开头时按群 chat_id 发送。
 - `content`：字符串直接发送 Card 2.0 通知；异步迭代器中的字符串视为新增文本，`CardReplace(content)` 则替换当前卡正文及缓冲内容。网关内部的 `CardSteer` 控制项暂停写入，等待 steer 结果后决定换卡。
 - `session`：可选的 `CardStreamSession`，保存同一个任务的卡片状态、控制通道和停止检查。普通通知与普通文本流无需提供。
 
 ```python
-from fersk_codex.services.lark.lark_card import sending_card
+from fersk_codex.services.lark.lark_message_card import sending_card
 
 await sending_card(union_id, "**处理完成**")
 
@@ -39,7 +39,7 @@ await sending_card(union_id, content_stream())
 离线行为测试（使用真实 SDK 请求模型、模拟网络响应）：
 
 ```sh
-python -m unittest discover -s tests -p 'test_lark_card.py' -v
+python -m unittest discover -s tests -p 'test_lark_message_card.py' -v
 ```
 
 ## 会话命令

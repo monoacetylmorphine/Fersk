@@ -56,7 +56,7 @@ SQLite 与 SDK 无共同事务，不保证故障时网络调用严格只发生�
 ## 前端历史选择与恢复接口
 
 私聊 `/history` 已接入历史选择卡片和 `card.action.trigger` 回调，交互卡片单独位于
-`services/lark/lark_interactive_card.py`，普通通知及流式卡片继续由 `lark_card.py` 负责。
+`services/lark/lark_interactive_card.py`，普通通知及流式卡片继续由 `lark_message_card.py` 负责。
 以下是网关复用的异步 Python 入口，不是 HTTP 路由：
 
 ```python

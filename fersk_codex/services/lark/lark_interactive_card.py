@@ -100,7 +100,7 @@ def _plain(content):
 def _shell(elements):
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"update_multi": True, "width_mode": "fill"},
         "header": {"title": _plain("历史会话"), "template": "blue"},
         "body": {"elements": elements},
     }

@@ -34,7 +34,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         stub = ModuleType("fersk_codex.services.lark.lark_client")
         stub.client = self.client
         with patch.dict(sys.modules, {"fersk_codex.services.lark.lark_client": stub}):
-            self.card = importlib.import_module("fersk_codex.services.lark.lark_card")
+            self.card = importlib.import_module("fersk_codex.services.lark.lark_message_card")
         self.client_patch = patch.object(self.card, "client", self.client)
         self.client_patch.start()
         self.addCleanup(self.client_patch.stop)

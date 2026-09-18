@@ -73,8 +73,8 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
             result.__dict__.update(values)
             return result
         with patch.dict(sys.modules, {"fersk_codex.services.lark.lark_client": module("fersk_codex.services.lark.lark_client", client=NS())}):
-            from fersk_codex.services.lark.lark_card import CardDeliveryError, CardReplace, CardSteer, CardStreamSession, CardStreamStopped
-            self.card_module = sys.modules["fersk_codex.services.lark.lark_card"]
+            from fersk_codex.services.lark.lark_message_card import CardDeliveryError, CardReplace, CardSteer, CardStreamSession, CardStreamStopped
+            self.card_module = sys.modules["fersk_codex.services.lark.lark_message_card"]
             self.card_control_type = CardSteer
         # 网关全部外部 I/O 替换，单独运行也不会读取凭据。
         stubs = {
@@ -83,7 +83,7 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
                 getting_chat_history=AsyncMock(return_value=[]),
                 adding_reaction_emoji=AsyncMock(return_value="reaction-1"),
                 delete_reaction_emoji=AsyncMock(return_value=True)),
-            "fersk_codex.services.lark.lark_card": module("fersk_codex.services.lark.lark_card", CardReplace=CardReplace,
+            "fersk_codex.services.lark.lark_message_card": module("fersk_codex.services.lark.lark_message_card", CardReplace=CardReplace,
                 CardStreamSession=CardStreamSession, CardSteer=CardSteer,
                 CardDeliveryError=CardDeliveryError, CardStreamStopped=CardStreamStopped,
                 sending_card=AsyncMock()),
