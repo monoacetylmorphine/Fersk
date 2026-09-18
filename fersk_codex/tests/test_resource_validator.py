@@ -1,14 +1,32 @@
 """Validate resource bytes and untrusted metadata without network or disk I/O."""
 
 import io
+import zipfile
 from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
 from fersk_codex.middleware.resource_validator import (
-    ResourceValidationError, read_resource_bytes, validate_downloaded_resource,
+    ResourceValidationError, read_resource_bytes, validate_downloaded_resource, OFFICE_TYPES, MAX_OFFICE_METADATA_BYTES,
 )
 from fersk_codex.utils.config_loader import CONFIG
+
+
+def office_bytes(extension, *, main_type=None, target="custom/main.xml", overrides=None):
+    output = io.BytesIO()
+    parts = {
+        "[Content_Types].xml": ('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            f'<Override PartName="/{target}" ContentType="{main_type or OFFICE_TYPES[extension]}"/></Types>'),
+        "_rels/.rels": ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            f'Target="{target}"/></Relationships>'),
+        target: '<document/>',
+    }
+    parts.update(overrides or {})
+    with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in parts.items():
+            archive.writestr(name, content)
+    return output.getvalue()
 
 
 class ResourceValidatorTests(unittest.TestCase):
@@ -42,7 +60,7 @@ class ResourceValidatorTests(unittest.TestCase):
         self.assertEqual(self.validate(file_name="photo.exe").file_name, "photo.png")
 
     def test_matching_office_and_jpeg_extensions_are_preserved(self):
-        for suffix, data in [(s, b"PK\x03\x04") for s in (".docx", ".xlsx", ".pptx")] + [
+        for suffix, data in [(s, office_bytes(s)) for s in (".docx", ".xlsx", ".pptx")] + [
             (".doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"), (".jpeg", b"\xff\xd8\xff")
         ]:
             with self.subTest(suffix=suffix):
@@ -124,3 +142,54 @@ class ResourceValidatorTests(unittest.TestCase):
         stream.read.assert_called_once_with()
         with self.assertRaises(ResourceValidationError):
             read_resource_bytes(io.StringIO("not binary"))
+
+    def test_text_extensions_survive_generic_mime_and_reject_binary_content(self):
+        for suffix in ('.md', '.csv', '.jsonl', '.py', '.js', '.ts', '.html', '.xml', '.yml', '.yaml', '.toml', '.sh'):
+            for mime in ('text/plain', 'application/octet-stream'):
+                with self.subTest(suffix=suffix, mime=mime):
+                    result = self.validate('示例\n'.encode(), file_name='sample' + suffix,
+                                           headers={'content-type': mime})
+                    self.assertEqual(result.file_name, 'sample' + suffix)
+                    for payload in (b'\x00binary', b'\xffbinary', b'\x89PNG\r\n\x1a\n'):
+                        with self.assertRaises(ResourceValidationError):
+                            self.validate(payload, file_name='sample' + suffix, headers={'content-type': mime})
+
+    def test_json_plain_mime_cannot_bypass_validation_and_jsonl_is_text(self):
+        result = self.validate(b'{"a":1}', file_name='data.json', headers={'content-type': 'text/plain'})
+        self.assertEqual(result.file_name, 'data.json')
+        with self.assertRaises(ResourceValidationError):
+            self.validate(b'{bad', file_name='data.json', headers={'content-type': 'text/plain'})
+        result = self.validate(b'{"a":1}\n{"b":2}\n', file_name='data.jsonl',
+                               headers={'content-type': 'application/x-ndjson'})
+        self.assertEqual(result.extension, '.jsonl')
+
+    def test_office_rejects_fake_zip_missing_parts_wrong_type_and_external_target(self):
+        samples = [b'PK\x03\x04fake', office_bytes('.xlsx'),
+                   office_bytes('.docx', overrides={'[Content_Types].xml': '<Types/>'}),
+                   office_bytes('.docx', target='../outside.xml'),
+                   office_bytes('.docx', overrides={'_rels/.rels': '<Relationships/>'}),
+                   office_bytes('.docx', overrides={'custom/main.xml': ''})]
+        for payload in samples:
+            with self.subTest(payload=payload[:8]), self.assertRaises(ResourceValidationError):
+                self.validate(payload, file_name='report.docx')
+        empty = io.BytesIO()
+        with zipfile.ZipFile(empty, 'w') as archive:
+            archive.writestr('ordinary.txt', 'not office')
+        with self.assertRaises(ResourceValidationError):
+            self.validate(empty.getvalue(), file_name='report.docx')
+
+    def test_office_metadata_limits_and_entities_are_rejected(self):
+        for metadata in (' ' * (MAX_OFFICE_METADATA_BYTES + 1),
+                         '<!DOCTYPE x [<!ENTITY e "expanded">]><x>&e;</x>'):
+            with self.assertRaises(ResourceValidationError):
+                self.validate(office_bytes('.docx', overrides={'[Content_Types].xml': metadata}),
+                              file_name='report.docx')
+
+    def test_office_mime_supplies_extension_without_filename(self):
+        payload = office_bytes('.docx')
+        result = self.validate(payload, headers={'content-type':
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})
+        self.assertEqual(result.extension, '.docx')
+        with self.assertRaises(ResourceValidationError):
+            self.validate(payload, file_name='report.xlsx', headers={'content-type':
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})

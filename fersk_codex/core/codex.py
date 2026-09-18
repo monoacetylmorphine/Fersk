@@ -2,6 +2,7 @@ __all__ = ["FerskCodex", "LiveTurn"]
 
 import asyncio
 import random
+import time
 from dataclasses import dataclass, field
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
@@ -183,6 +184,8 @@ class FerskCodex:
     _processes: dict[str, object] = {}
     _closed_runs: set[str] = set()
     _initializers: dict[str, asyncio.Task] = {}
+    # 仅保存控制会话的失败清理，不重放归档/恢复等业务操作。
+    _control_cleanup: dict[str, tuple[float, float]] = {}
 
     @classmethod
     async def completed_status(cls, run_id):
@@ -204,44 +207,94 @@ class FerskCodex:
     @classmethod
     @asynccontextmanager
     async def _session(cls, run_id):
+        control = run_id is None
+        run_id = run_id or f"control-{uuid4().hex}"
         manager = AsyncCodex()
         initializing = asyncio.create_task(manager.__aenter__())
         initializing.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
-        if run_id is not None:
-            cls._clients[run_id] = manager
-            cls._initializers[run_id] = initializing
+        cls._clients[run_id] = manager
+        cls._initializers[run_id] = initializing
+
+        async def close():
+            # close() 可能清空 SDK 中的进程引用，必须先保存。
+            proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
+            if proc is not None:
+                cls._processes[run_id] = proc
+            try:
+                async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+                    await manager.__aexit__(None, None, None)
+                    if not initializing.done():
+                        raise RuntimeError("SDK 初始化尚未结束，关闭未确认")
+                    late_proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
+                    if proc is None and late_proc is not None:
+                        proc = late_proc
+                        cls._processes[run_id] = proc
+                    if proc is not None:
+                        await asyncio.to_thread(proc.wait, timeout=1)
+                        if proc.poll() is None:
+                            raise RuntimeError("SDK 进程退出未确认")
+            except (Exception, asyncio.CancelledError):
+                logger.exception("关闭 Codex 客户端异常: run_id=%s", run_id)
+                if not await cls.force_close(run_id):
+                    raise RuntimeError("Codex 客户端关闭后仍未确认进程退出")
+            cls._clients.pop(run_id, None)
+            cls._processes.pop(run_id, None)
+            cls._initializers.pop(run_id, None)
+
         try:
             # Cancellation must not lose a subprocess that start() creates late in a worker thread.
             client = await asyncio.shield(initializing)
             proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
-            if run_id is not None and proc is not None:
+            if proc is not None:
                 cls._processes[run_id] = proc
             yield client
         finally:
+            # 外层重复取消不能打断进程回收；取消完成后仍必须向调用方传播。
+            cancelled = bool(asyncio.current_task().cancelling())
+            closing = asyncio.create_task(close())
             try:
-                async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
-                    await manager.__aexit__(None, None, None)
-            except (Exception, asyncio.CancelledError):
-                logger.exception("关闭 Codex 客户端异常: run_id=%s", run_id)
-                # Keep the reference for a later /stop retry.
-                if run_id is not None:
-                    if not await cls.force_close(run_id):
-                        raise RuntimeError("Codex 客户端关闭后仍未确认进程退出")
-            else:
-                if initializing.done() and cls._clients.get(run_id) is manager:
-                    cls._clients.pop(run_id, None)
-                proc = cls._processes.get(run_id)
-                if proc is not None:
+                while not closing.done():
                     try:
-                        async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
-                            await asyncio.to_thread(proc.wait, timeout=1)
-                        cls._processes.pop(run_id, None)
+                        await asyncio.shield(closing)
+                    except asyncio.CancelledError:
+                        cancelled = True
                     except Exception:
-                        logger.exception("关闭后进程退出未确认: run_id=%s", run_id)
-                        if not await cls.force_close(run_id):
-                            raise RuntimeError("Codex 进程退出未确认")
-                if initializing.done():
-                    cls._initializers.pop(run_id, None)
+                        break
+                closing.result()
+            finally:
+                if control:
+                    if run_id in cls._clients or run_id in cls._initializers:
+                        now = time.monotonic()
+                        cls._control_cleanup[run_id] = (now, now)
+                    else:
+                        cls._closed_runs.discard(run_id)
+                if cancelled:
+                    raise asyncio.CancelledError
+
+    @classmethod
+    async def cleanup_control_sessions(cls):
+        """后台每轮清理一个控制会话，失败保留，24 小时后按现有策略释放。"""
+        from fersk_codex.middleware.session_cache import RETENTION_SECONDS
+        now = time.monotonic()
+        for run_id, (created, due) in list(cls._control_cleanup.items()):
+            if now < due:
+                continue
+            try:
+                if now - created >= RETENTION_SECONDS:
+                    await cls.discard_expired_run(run_id)
+                elif not await cls.force_close(run_id):
+                    # 来源：控制会话失败清理初始重试策略，非 SDK 限制。
+                    cls._control_cleanup[run_id] = (created, time.monotonic() + 30)
+                    return
+                cls._control_cleanup.pop(run_id, None)
+                cls._closed_runs.discard(run_id)
+            except Exception:
+                logger.exception("控制会话后台清理失败: run_id=%s", run_id)
+                if now - created >= RETENTION_SECONDS:
+                    cls._control_cleanup.pop(run_id, None)
+                else:
+                    cls._control_cleanup[run_id] = (created, time.monotonic() + 30)
+            return
 
     @classmethod
     async def force_close(cls, run_id: str) -> bool:

@@ -103,3 +103,145 @@ class GatewayCacheTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(self.g.CONFIG['messaging'], historyPageSize=3):
             await self.g.processing(helpers.event('hello'))
         self.g.getting_chat_history.assert_awaited_once_with(chat_id='chat-1', messages_num=3)
+
+
+class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        helpers.StopTests.setUp(self)
+
+    async def test_all_reactions_wait_for_card_completion_even_on_failure(self):
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                self.g.cache.received_message_ids.clear()
+                self.g.cache.processed_message_ids.clear()
+                self.g.delete_reaction_emoji.reset_mock()
+                entered, finish = asyncio.Event(), asyncio.Event()
+                async def send(*args, **kwargs):
+                    content = kwargs.get('content', args[1] if len(args) > 1 else None)
+                    if not isinstance(content, str):
+                        async for _ in content:
+                            pass
+                        entered.set()
+                        await finish.wait()
+                        if failure:
+                            raise self.g.CardDeliveryError('delivery failed')
+                self.g.sending_card = send
+                self.g.reaction_message_ids['chat-1'] = {'m1': 'r1', 'm2': 'r2'}
+                batch = helpers.batch_from_chat_history(helpers.event('hello', message_id='m2'),
+                    [helpers.history('hello', 'm2'), helpers.history('hello', 'm1')])
+                task = asyncio.create_task(self.g._handle_message_batch(batch, 0))
+                await asyncio.wait_for(entered.wait(), 1)
+                self.g.delete_reaction_emoji.assert_not_awaited()
+                finish.set()
+                await asyncio.wait_for(task, 1)
+                self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
+                self.assertFalse(self.g.reaction_message_ids)
+                self.assertFalse(self.g.cache.pending_reactions)
+
+    async def test_failed_delete_survives_release_and_background_retries_without_input(self):
+        self.g.delete_reaction_emoji.return_value = False
+        await self.g.processing(helpers.event('hello', message_id='m1'))
+        self.assertFalse(self.g.all_runs)
+        self.assertFalse(self.g.codex_locks)
+        key = ('chat-1', 'm1', 'reaction-1')
+        pending = self.g.cache.pending_reactions[key]
+        self.assertIn('m1', self.g.reaction_message_ids['chat-1'])
+        attempts = self.g.delete_reaction_emoji.await_count
+        await self.g._retry_reactions()
+        self.assertEqual(self.g.delete_reaction_emoji.await_count, attempts)
+        pending.due = 0
+        self.g.delete_reaction_emoji.return_value = True
+        await self.g._retry_reactions()
+        self.assertFalse(self.g.cache.pending_reactions)
+        self.assertFalse(self.g.reaction_message_ids)
+
+    async def test_cancel_during_delete_keeps_all_snapshot_records(self):
+        entered = asyncio.Event()
+        async def stuck(**kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+        self.g.delete_reaction_emoji.side_effect = stuck
+        self.g.reaction_message_ids['chat-1'] = {'m1': 'r1', 'm2': 'r2'}
+        task = asyncio.create_task(self.g._clear_reaction('chat-1'))
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(len(self.g.cache.pending_reactions), 2)
+        self.assertFalse(self.g.reactions_being_cleared)
+
+    async def test_retry_old_id_cannot_remove_new_reaction(self):
+        self.g.cache.queue_reaction('chat-1', 'm1', 'old')
+        self.g.reaction_message_ids['chat-1'] = {'m1': 'new'}
+        await self.g._retry_reactions()
+        self.assertEqual(self.g.reaction_message_ids['chat-1']['m1'], 'new')
+        self.assertFalse(self.g.cache.pending_reactions)
+
+    async def test_running_owner_is_not_cleared_by_stop_snapshot(self):
+        worker = asyncio.create_task(asyncio.Event().wait())
+        state = ActiveCodexRun('run', 'chat-1', frozenset({'m1'}), task=worker)
+        self.g.active_runs_by_message_id['m1'] = state
+        self.g.reaction_message_ids['chat-1'] = {'m1': 'r1'}
+        try:
+            await self.g._clear_reaction('chat-1')
+            self.g.delete_reaction_emoji.assert_not_awaited()
+            self.assertFalse(self.g.cache.pending_reactions)
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+    def test_pending_deletion_expiry_and_capacity_are_bounded(self):
+        from fersk_codex.utils.config_loader import CONFIG
+        cache = self.g.cache
+        with patch.dict(CONFIG['messaging'], recallCacheMaxEntries=1):
+            cache.reaction_message_ids['chat'] = {'m1': 'r1', 'm2': 'r2'}
+            cache.queue_reaction('chat', 'm1', 'r1')
+            with self.assertLogs('fersk.codex', level='ERROR'):
+                cache.queue_reaction('chat', 'm2', 'r2')
+            self.assertEqual(len(cache.pending_reactions), 1)
+            key, pending = next(iter(cache.pending_reactions.items()))
+            with self.assertLogs('fersk.codex', level='ERROR'):
+                cache.prune(pending.created_at + RETENTION_SECONDS + 1)
+            self.assertFalse(cache.pending_reactions)
+            self.assertFalse(cache.reaction_message_ids)
+
+    async def test_stop_and_recall_wait_for_output_card_cleanup(self):
+        from types import SimpleNamespace as NS
+        for action in ('stop', 'recall'):
+            with self.subTest(action=action):
+                self.g.received_message_ids.clear()
+                self.g.processed_message_ids.clear()
+                self.g.delete_reaction_emoji.reset_mock()
+                entered, closing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+                async def send(*args, **kwargs):
+                    content = kwargs.get('content', args[1] if len(args) > 1 else None)
+                    if isinstance(content, str):
+                        return
+                    entered.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        closing.set()
+                        await release.wait()
+                self.g.sending_card = send
+                self.g.reaction_message_ids['chat-1'] = {'m1': 'r1'}
+                data = helpers.event('hello', message_id='m1')
+                batch = helpers.batch_from_chat_history(data, [])
+                task = asyncio.create_task(self.g._handle_message_batch(batch, 0))
+                try:
+                    await asyncio.wait_for(entered.wait(), 1)
+                    if action == 'stop':
+                        await self.g._stop_chat(helpers.event())
+                    else:
+                        await self.g.processing_recall(NS(event=NS(
+                            recall_type='message_owner', message_id='m1', chat_id='chat-1')))
+                    await asyncio.wait_for(closing.wait(), 1)
+                    self.g.delete_reaction_emoji.assert_not_awaited()
+                    release.set()
+                    await asyncio.wait_for(task, 1)
+                    self.g.delete_reaction_emoji.assert_awaited_once_with(message_id='m1', reaction_id='r1')
+                finally:
+                    release.set()
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)

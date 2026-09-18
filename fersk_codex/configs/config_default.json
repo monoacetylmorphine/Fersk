@@ -14,6 +14,7 @@
     "maxPendingEvents": 32,
     "bufferWindowSeconds": 10.0,
     "historyPageSize": 10,
+    "sessionHistoryLimit": 30,
     "recallCacheMaxEntries": 1024,
     "directTypes": [
       "text",

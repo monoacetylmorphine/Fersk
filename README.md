@@ -37,9 +37,21 @@ Docker 构建上下文为仓库根目录，镜像内置同一份默认配置。�
 
 ## Langfuse
 
-Langfuse 相关服务仅发布 Web `3000`，地址保持 `http://langfuse-web.observability.orb.local:3000`，`NEXTAUTH_URL` 与其一致。Worker、MinIO 控制台、S3、数据库及 Redis 均不发布宿主机端口。
+Langfuse 相关服务仅发布 Web `127.0.0.1:3000`，`NEXTAUTH_URL` 默认 `http://localhost:3000`。若继续通过 `http://langfuse-web.observability.orb.local:3000` 访问，请显式设置同值的 `NEXTAUTH_URL`。Worker、MinIO 控制台、S3、数据库及 Redis 均不发布宿主机端口。
 
 仅 Web 模式不配置可选的 S3 媒体上传，因此不提供浏览器直传／读取 MinIO 媒体附件；事件存储仍走 `http://minio:9000`。文本追踪和 Web 界面保留。媒体预签名链接要求浏览器可达的存储入口，不能用 Web 地址直接替换 S3 Endpoint，参见 [Langfuse 存储文档](https://langfuse.com/self-hosting/deployment/infrastructure/blobstorage)。现有持久化数据不会被删除。
+
+Web 与 Worker 通过 YAML anchor 共用数据库、ClickHouse、Redis 和事件 S3 配置，服务专属配置单独保留。Compose 必须通过 shell 或 `--env-file` 提供以下非空变量，否则配置解析直接失败：`NEXTAUTH_SECRET`、`SALT`、`ENCRYPTION_KEY`、`POSTGRES_PASSWORD`、`CLICKHOUSE_PASSWORD`、`MINIO_ROOT_PASSWORD`、`REDIS_AUTH`。`ENCRYPTION_KEY` 应为 64 位十六进制字符串；已有部署应继续使用原来的有效密钥，不要因本次配置整理随意轮换。
+
+默认 `DATABASE_URL` 根据 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB` 构造；健康检查使用容器内相同的用户和数据库变量。自动构造连接串时，用户名和密码应仅含 URI unreserved 字符（字母、数字、`-._~`）；若已有凭据包含其他字符，保留 PostgreSQL 原始凭据，并通过 `DATABASE_URL` 提供用户名、密码经过 percent-encoding 的完整连接串。已有数据卷中的数据库账户不会随环境变量自动修改；本次不执行账户迁移。
+
+事件 S3 的访问凭据统一使用 `MINIO_ROOT_USER`（默认 `minio`）和必填的 `MINIO_ROOT_PASSWORD`。原 `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID`、`LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` 部署变量不再单独生效。当前配置面向内置 MinIO；若使用外部 S3 或独立账户，需要另行调整凭据映射。事件桶默认 `langfuse`；自定义桶必须预先存在。未启用媒体上传，因此不配置 `LANGFUSE_S3_MEDIA_UPLOAD_*`。
+
+推荐使用仓库根目录的 `./compose.sh` 代替 `docker compose`。首次调用时，若根目录 `.env` 不存在，脚本用 OpenSSL 生成上述七项凭据，每项单独一行，以权限 `600` 原子创建文件；并发调用不覆盖已生成文件。随机字节长度沿用用户提供的初始化命令：数据库、ClickHouse、MinIO、Redis 密码及 SALT 各 16 字节，NEXTAUTH_SECRET 与 ENCRYPTION_KEY 各 32 字节，分别输出为 Base64 和十六进制。
+
+已有 `.env` 不会覆盖或补写；缺少必填变量时校验失败，需修正原文件。脚本显式指定仓库根目录的 `.env` 和 Compose 文件，支持从其他目录调用。它不执行 dotenv 中的 Shell 命令，因此不要在 `.env` 中直接写 `$(openssl ...)`。Shell 环境变量仍优先于 `.env`，已导出的空变量也会覆盖文件值；遇到缺失值错误时，应检查并 `unset` 对应空变量。脚本只自动生成部署凭据，不创建飞书/模型 API 密钥，也不创建外部网络或挂载目录。
+
+直接执行 `docker compose` 不会触发自动初始化。已有部署若丢失 `.env`，应恢复原凭据，不能使用新随机密钥替代已有数据库密码、SALT 或加密密钥。即使只选择两个应用服务，Compose 解析整份文件时仍要求这些变量；仅独立构建应用镜像可使用子项目 README 中的 `docker build` 命令。
 
 ## 构建与验证
 
@@ -48,8 +60,10 @@ Langfuse 相关服务仅发布 Web `3000`，地址保持 `http://langfuse-web.ob
 两个项目均使用各自 `uv.lock` 安装依赖。按部署要求，Langfuse、Worker、PostgreSQL、ClickHouse、MinIO 和 Redis 均使用 `latest`；Python 使用 `3.13.15-slim-bookworm`，主项目 Node 使用最新 `lts-bookworm-slim`，两个项目 uv 使用 `latest`。基础设施镜像、Node、uv 与系统包仍随构建或拉取更新，未宣称逐字节可复现构建。
 
 ```sh
-docker compose config --quiet
-docker compose build fersk-codex fersk-mcp
+./compose.sh config --quiet
+./compose.sh build --no-cache
+# 需要启动服务时执行：
+./compose.sh up -d
 fersk_codex/.venv/bin/python -B fersk_codex/tests/run_tests.py
 fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
 ```

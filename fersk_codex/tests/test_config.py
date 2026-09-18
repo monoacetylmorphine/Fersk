@@ -18,6 +18,20 @@ class ConfigTests(unittest.TestCase):
     def test_current_config(self):
         self.assertEqual(self.load(CONFIG), CONFIG)
 
+    def test_session_history_limit_default_and_validation(self):
+        self.assertEqual(CONFIG['messaging']['sessionHistoryLimit'], 30)
+        config = copy.deepcopy(CONFIG)
+        for value in (1, 30, 60):
+            config['messaging']['sessionHistoryLimit'] = value
+            self.assertEqual(self.load(config)['messaging']['sessionHistoryLimit'], value)
+        for value in (0, -1, True, '30', 1.5, None):
+            with self.subTest(value=value):
+                config['messaging']['sessionHistoryLimit'] = value
+                with self.assertRaisesRegex(RuntimeError, 'messaging.sessionHistoryLimit'):
+                    self.load(config)
+        config['messaging'].pop('sessionHistoryLimit')
+        self.load(config)  # 兼容旧运行配置；消费处应用默认值。
+
     def test_shared_mcp_section_is_required_and_validated(self):
         config = copy.deepcopy(CONFIG)
         config.pop('mcp')

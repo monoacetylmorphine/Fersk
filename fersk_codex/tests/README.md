@@ -27,3 +27,11 @@ python -B tests/run_tests.py --reverse
 5 个同步请求并发、入站控制事件预留容量、业务日志等级和 SDK DEBUG 凭据脱敏。
 `test_request_limits.py` 同时验证 Codex 与 MCP 的执行器；MCP 自身的 `test_runtime.py` 另验证
 上传超时后的文件句柄生命周期。全部使用模拟请求，不调用真实飞书服务或模型。
+
+
+控制会话、reaction 和附件校验修复的回归分别位于 `test_sdk_session.py`、
+`test_session_cache.py`、`test_resource_validator.py`，并复用原有停止、steer、附件组装与下载测试。
+控制会话测试验证关闭未确认时不写绑定、取消不被吞掉及后台只重试清理；reaction 测试验证
+卡片结束前不删除、交付失败后也删除、失败记录跨任务释放保留及无新输入时后台重试。
+Office 样例在内存中构造真实 ZIP 包及必要元数据，覆盖伪 ZIP、缺失部件、类型不匹配、
+元数据大小和实体声明；文本覆盖保留扩展名、二进制伪装和 JSON/JSONL 区分。

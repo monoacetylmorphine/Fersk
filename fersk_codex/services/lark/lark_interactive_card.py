@@ -15,9 +15,11 @@ from lark_oapi.api.im.v1 import (
 from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
 
 from fersk_codex.services.lark.lark_requests import call_lark
+from fersk_codex.utils.config_loader import CONFIG
 
+# 来源：用户要求，默认展示最近 30 条；与网关的选项总数上限一致。
+PAGE_SIZE = CONFIG["messaging"].get("sessionHistoryLimit", 30)
 # 来源：本功能的初始交互/内存策略，非飞书平台上限。卡片失效后重新 /history。
-PAGE_SIZE = 20
 CARD_TTL_SECONDS = 24 * 60 * 60
 MAX_CARDS = 1024
 SELECT_NAME = "history_thread"

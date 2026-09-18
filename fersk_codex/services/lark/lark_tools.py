@@ -112,7 +112,7 @@ def _save_resource(response, union_id, message_id, resource_key, resource_type):
             f"消息资源校验失败, message_id={message_id}, "
             f"resource_key={resource_key}, error={error}"
         )
-        return
+        raise
 
     file_stem = Path(resource.file_name).stem
     file_ext = Path(resource.file_name).suffix

@@ -246,7 +246,10 @@ async def _watch_run(state):
 
 async def _handle_message_batch(batch: MessageBatch, generation: int) -> None:
     if len(all_runs) + len(detached_tasks) >= CONFIG["messaging"].get("maxPendingEvents", 32):
-        await sending_card(batch.union_id, "当前任务繁忙，请稍后重试。")
+        try:
+            await sending_card(batch.union_id, "当前任务繁忙，请稍后重试。")
+        finally:
+            await _clear_reaction(batch.chat_id, {m.message_id for m in batch.messages})
         return
     # History may contain a completed/active run; it must not backdate this new run's deadline.
     batch = replace(batch, messages=tuple(
@@ -259,7 +262,10 @@ async def _handle_message_batch(batch: MessageBatch, generation: int) -> None:
     state = ActiveCodexRun(uuid4().hex, batch.chat_id,
                            frozenset(m.message_id for m in batch.messages), target_id=batch.union_id)
     if batch.chat_id in blocked_chats:
-        await _notify_terminal(state, "stopFailed")
+        try:
+            await _notify_terminal(state, "stopFailed")
+        finally:
+            await _clear_reaction(batch.chat_id, state.message_ids)
         return
     state.probe = RunProbe(state.run_id, state.chat_id, state.message_ids,
                           received_at=min((received_at.get(mid, time.monotonic())
@@ -300,6 +306,16 @@ async def _handle_message_batch(batch: MessageBatch, generation: int) -> None:
         if state.task is not None and not state.task.done() and not state.released:
             await _cleanup_timeout(state)
         _release_run(state)
+        # 输出 worker 退出、卡片收尾后清除；steer 消息继续由接收任务负责。
+        if state.task is None or state.task.done():
+            try:
+                async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+                    await _clear_reaction(batch.chat_id, {
+                        mid for mid in state.message_ids
+                        if active_runs_by_message_id.get(mid) in (None, state)
+                    })
+            except Exception:
+                logger.exception("任务 reaction 清理未完成，交由后台重试: run_id=%s", state.run_id)
 
 
 async def _execute_message_batch(batch: MessageBatch, generation: int, state) -> None:
@@ -455,11 +471,6 @@ async def _execute_message_batch(batch: MessageBatch, generation: int, state) ->
                                 if active_runs_by_chat.get(batch.chat_id) is state:
                                     active_runs_by_chat.pop(batch.chat_id, None)
                                 await FerskCodex.forget_run(state.run_id)
-                            if not transferred:
-                                await _clear_reaction(batch.chat_id, {
-                                    mid for mid in state.message_ids
-                                    if active_runs_by_message_id.get(mid) in (None, state)
-                                })
                     except Exception:
                         logger.exception("任务收尾失败: run_id=%s", state.run_id)
                         if not transferred:
@@ -524,30 +535,65 @@ async def _clear_reaction(
     message_ids: frozenset[str] | set[str] | None = None,
 ) -> None:
     # 固定本次清理范围；网络请求期间新到达的消息留给所属批次处理。
-    reactions = list(reaction_message_ids.get(chat_id, {}).items())
-    for message_id, reaction_id in reactions:
+    keys = []
+    for message_id, reaction_id in list(reaction_message_ids.get(chat_id, {}).items()):
         if message_ids is not None and message_id not in message_ids:
             continue
+        owner = active_runs_by_message_id.get(message_id)
+        if owner is not None and owner.task is not None and not owner.task.done():
+            continue
         key = (chat_id, message_id, reaction_id)
-        if key in reactions_being_cleared:
-            continue
-        if reaction_message_ids.get(chat_id, {}).get(message_id) != reaction_id:
-            continue
-        reactions_being_cleared.add(key)
+        cache.queue_reaction(*key)
+        keys.append(key)
+    # 首次 await 前登记全部记录，取消也不会丢失未尝试的删除。
+    for key in keys:
+        await _delete_pending_reaction(key)
+
+
+async def _delete_pending_reaction(key):
+    pending = cache.pending_reactions.get(key)
+    if pending is None or key in reactions_being_cleared:
+        return
+    chat_id, message_id, reaction_id = key
+    reactions_being_cleared.add(key)
+    try:
+        async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
+            succeeded = await delete_reaction_emoji(message_id=message_id, reaction_id=reaction_id)
+        if succeeded:
+            cache.pending_reactions.pop(key, None)
+            current = reaction_message_ids.get(chat_id, {})
+            if current.get(message_id) == reaction_id:
+                current.pop(message_id)
+                cache._reaction_times.pop((chat_id, message_id), None)
+                if not current:
+                    reaction_message_ids.pop(chat_id, None)
+            return
+    except Exception:
+        logger.exception("清理消息 reaction 异常: chat_id=%s", chat_id)
+    finally:
+        reactions_being_cleared.discard(key)
+        if cache.pending_reactions.get(key) is pending:
+            # 来源：本次修复约定的退避策略，非飞书平台限制。
+            delays = (5, 30, 120, 600)
+            pending.due = time.monotonic() + delays[min(pending.attempts, len(delays) - 1)]
+            pending.attempts += 1
+
+
+async def _retry_reactions():
+    # 每轮最多处理一个，避免失败重试挤占正常消息请求。
+    for key, pending in list(cache.pending_reactions.items()):
+        if pending.due <= time.monotonic():
+            await _delete_pending_reaction(key)
+            return
+
+
+async def _maintain_cleanup(operation):
+    while True:
+        await asyncio.sleep(settings()["checkIntervalSeconds"])
         try:
-            succeeded = await delete_reaction_emoji(
-                message_id=message_id, reaction_id=reaction_id,
-            )
-            if succeeded:
-                current = reaction_message_ids.get(chat_id, {})
-                if current.get(message_id) == reaction_id:
-                    current.pop(message_id)
-                    if not current:
-                        reaction_message_ids.pop(chat_id, None)
-        except Exception as exc:
-            logger.exception("清理消息 reaction 异常: chat_id=%s, message_id=%s", chat_id, message_id)
-        finally:
-            reactions_being_cleared.discard(key)
+            await operation()
+        except Exception:
+            logger.exception("后台清理失败")
 
 
 async def processing_recall(data) -> None:
@@ -706,7 +752,8 @@ async def processing_history(data):
         return
     card = None
     try:
-        options = await history_options(data)
+        # list_sessions 已按 updated_at DESC、thread_id DESC 排序，先排序再限制总数。
+        options = (await history_options(data))[:CONFIG["messaging"].get("sessionHistoryLimit", 30)]
         card = history_cards.create(user_id, data.event.message.chat_id, options)
         card.message_id = await interactive.send_interactive_card(user_id, interactive.build_history_card(card))
     except Exception:
@@ -972,11 +1019,16 @@ async def main() -> None:
     
     websocket_client = create_websocket_client(event_handler)
     maintenance = asyncio.create_task(_maintain_session_cache())
+    cleanup_tasks = [asyncio.create_task(_maintain_cleanup(operation)) for operation in
+                     (_retry_reactions, FerskCodex.cleanup_control_sessions)]
     try:
         await asyncio.to_thread(websocket_client.start)
     finally:
         maintenance.cancel()
         await asyncio.gather(maintenance, return_exceptions=True)
+        for task in cleanup_tasks:
+            task.cancel()
+        await asyncio.gather(*cleanup_tasks, return_exceptions=True)
         for state in list(all_runs.values()):
             state.interrupted = True
             state.probe.stop_reason = state.probe.stop_reason or "shutdown"

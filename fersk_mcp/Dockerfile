@@ -10,7 +10,7 @@ ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
+    UV_NO_CACHE=1 \
     UV_PYTHON_DOWNLOADS=never \
     PATH="/opt/fersk_mcp/.venv/bin:${PATH}" \
     HOME=/home/${APP_USER} \

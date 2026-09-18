@@ -17,6 +17,7 @@ logger = get_logger("Assembly")
 from fersk_codex.middleware.audio_transcription import ASR, AudioConversionTimeout
 from fersk_codex.services.lark.lark_tools import download_msg_resource
 from fersk_codex.middleware.message_collector import MessageBatch
+from fersk_codex.middleware.resource_validator import ResourceValidationError
 
 
 CodexInputItem = Union[TextInput, LocalImageInput, MentionInput]
@@ -278,7 +279,9 @@ async def _download_resources(
     downloaded: dict[_ResourcePart, Path] = {}
     rejected: list[str] = []
     for part, result in zip(resources, results):
-        if isinstance(result, BaseException):
+        if isinstance(result, ResourceValidationError):
+            rejected.append(f"{part.display_name}（{result}）")
+        elif isinstance(result, BaseException):
             logger.error("下载资源异常: name=%s", part.display_name, exc_info=result)
             rejected.append(f"{part.display_name}{CONFIG['messages']['downloadFailedSuffix']}")
         elif not result:

@@ -6,9 +6,19 @@ from dataclasses import dataclass, field
 import time
 
 from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.utils.logger import get_logger
+
+logger = get_logger("Reaction")
 
 # 来源：用户指定内存状态和待写日志最长保留 24 小时。
 RETENTION_SECONDS = 24 * 60 * 60
+
+
+@dataclass
+class ReactionCleanup:
+    created_at: float = field(default_factory=time.monotonic)
+    due: float = 0
+    attempts: int = 0
 
 @dataclass
 class ActiveCodexRun:
@@ -46,6 +56,7 @@ class SessionCache:
         self.buffer_guard = asyncio.Lock()
         self.active_runs_guard = asyncio.Lock()
         self.reactions_being_cleared = set()
+        self.pending_reactions = {}
         self.recalled_message_ids = set()
         self._recall_times = {}
         self._reaction_times = {}
@@ -86,6 +97,22 @@ class SessionCache:
     def track_reaction(self, chat_id, message_id):
         self._reaction_times.setdefault((chat_id, message_id), time.monotonic())
 
+    def queue_reaction(self, chat_id, message_id, reaction_id):
+        key = (chat_id, message_id, reaction_id)
+        if key not in self.pending_reactions:
+            # 来源：复用现有短期消息缓存容量，失败删除记录独立于任务生命周期。
+            if len(self.pending_reactions) >= CONFIG["messaging"]["recallCacheMaxEntries"]:
+                oldest = next(iter(self.pending_reactions))
+                self.pending_reactions.pop(oldest)
+                chat, mid, rid = oldest
+                if self.reaction_message_ids.get(chat, {}).get(mid) == rid:
+                    self.reaction_message_ids[chat].pop(mid)
+                    if not self.reaction_message_ids[chat]:
+                        self.reaction_message_ids.pop(chat)
+                    self._reaction_times.pop((chat, mid), None)
+                logger.error("reaction 清理队列已满，丢弃未确认记录: %s", oldest)
+            self.pending_reactions[key] = ReactionCleanup()
+
     def release_messages(self, chat_id, message_ids, owner=None):
         """只清理本任务的瞬态数据；已转交的消息由接收方任务清理。"""
         for mid in message_ids:
@@ -95,12 +122,15 @@ class SessionCache:
             self.received_at.pop(mid, None)
             self.recalled_message_ids.discard(mid)
             self._recall_times.pop(mid, None)
-            self.reaction_message_ids.get(chat_id, {}).pop(mid, None)
-            self._reaction_times.pop((chat_id, mid), None)
-        if not self.reaction_message_ids.get(chat_id):
-            self.reaction_message_ids.pop(chat_id, None)
+            # reaction 由卡片收尾后的删除流程处理，不能随任务缓存丢弃。
 
     def finish_run(self, state):
+        for mid in state.message_ids:
+            if self.active_runs_by_message_id.get(mid) not in (None, state):
+                continue
+            rid = self.reaction_message_ids.get(state.chat_id, {}).get(mid)
+            if rid is not None:
+                self.queue_reaction(state.chat_id, mid, rid)
         self.release_messages(state.chat_id, state.message_ids, state)
         # 任务/流引用释放，阻塞状态只保留停止重试所需的元数据。
         state.task = None
@@ -124,10 +154,22 @@ class SessionCache:
         self.chat_generations.pop(chat_id, None)
         self.release_messages(chat_id, set(self.received_message_ids.get(chat_id, {}))
                               | set(self.reaction_message_ids.get(chat_id, {})))
+        for mid, reaction_id in list(self.reaction_message_ids.get(chat_id, {}).items()):
+            self.queue_reaction(chat_id, mid, reaction_id)
 
     def prune(self, now=None):
         """定期清理无后续消息的会话；返回需要关闭的过期任务。"""
         now = time.monotonic() if now is None else now
+        for key, pending in list(self.pending_reactions.items()):
+            if now - pending.created_at >= RETENTION_SECONDS:
+                self.pending_reactions.pop(key, None)
+                chat, mid, rid = key
+                if self.reaction_message_ids.get(chat, {}).get(mid) == rid:
+                    self.reaction_message_ids[chat].pop(mid)
+                    if not self.reaction_message_ids[chat]:
+                        self.reaction_message_ids.pop(chat)
+                    self._reaction_times.pop((chat, mid), None)
+                logger.error("reaction 超过 24 小时仍未确认删除，已丢弃: %s", key)
         for chat, timestamp in list(self._buffer_times.items()):
             if chat not in self.buffered_events or now - timestamp >= RETENTION_SECONDS:
                 self._buffer_times.pop(chat, None)

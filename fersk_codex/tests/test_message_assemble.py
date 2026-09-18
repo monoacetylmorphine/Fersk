@@ -312,3 +312,11 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
                         "content": [[{"tag": "img", "image_key": "image"}]], "files": files,
                     }))
         self.download.assert_not_awaited()
+
+    async def test_validation_errors_retain_cause_instead_of_network_failure(self):
+        from fersk_codex.middleware.resource_validator import ResourceValidationError
+        self.download.side_effect = ResourceValidationError('Office 容器损坏或缺少必要元数据')
+        result = await self.assemble(message('file', {'file_key': 'key', 'file_name': 'report.docx'}))
+        self.assertIsNone(result.codex_input)
+        self.assertIn('Office 容器损坏', result.notices[0])
+        self.assertNotIn(CONFIG['messages']['downloadFailedSuffix'], result.notices[0])

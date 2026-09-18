@@ -100,6 +100,12 @@
           "minimum": 1,
           "maximum": 50
         },
+        "sessionHistoryLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "私聊历史会话下拉选项总数上限，按 session_history.updated_at 降序取最近记录；来源：用户要求，默认 30。"
+        },
         "recallCacheMaxEntries": {
           "type": "integer",
           "minimum": 1

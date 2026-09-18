@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.middleware.resource_validator import ResourceValidationError
 
 
 class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
@@ -50,7 +51,8 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_resource_is_never_written(self):
         self.client.im.v1.message_resource.get.return_value = self.response(file=io.BytesIO(b'not png'), file_name='fake.png')
-        self.assertIsNone(await self.tools.download_msg_resource('user', 'message', 'key', 'image'))
+        with self.assertRaises(ResourceValidationError):
+            await self.tools.download_msg_resource('user', 'message', 'key', 'image')
         self.assertEqual([p for p in self.directory.rglob('*') if p.is_file()], [])
 
     async def test_slow_large_write_does_not_block_event_loop(self):

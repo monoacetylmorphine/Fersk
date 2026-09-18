@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import json
+import io
 import re
+import posixpath
+from urllib.parse import unquote
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal, Mapping
@@ -15,6 +20,23 @@ ResourceType = Literal["image", "file"]
 
 GENERIC_MIME_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 IMAGE_FORMATS = {"jpeg", "png", "gif", "webp", "bmp"}
+
+TEXT_EXTENSIONS = {
+    ".txt", ".md", ".csv", ".jsonl", ".py", ".js", ".ts", ".html",
+    ".xml", ".yml", ".yaml", ".toml", ".sh", ".rtf",
+}
+OFFICE_TYPES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+}
+OFFICE_MIMES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+}
+# 来源：本项目元数据校验的初始资源预算，不是 Office 格式或平台上限。
+MAX_OFFICE_METADATA_BYTES = 1024 * 1024
 
 FORMAT_EXTENSIONS = {
     "jpeg": ".jpg",
@@ -59,6 +81,7 @@ EXTENSION_FORMATS = {
     ".wav": "wav",
     ".mp3": "mp3",
 }
+EXTENSION_FORMATS.update(dict.fromkeys(TEXT_EXTENSIONS, "text"))
 
 MIME_FORMATS = {
     "image/jpeg": "jpeg",
@@ -85,6 +108,10 @@ MIME_FORMATS = {
     "audio/x-wav": "wav",
     "audio/mpeg": "mp3",
 }
+MIME_FORMATS.update(dict.fromkeys(OFFICE_MIMES, "zip"))
+MIME_FORMATS.update(dict.fromkeys(("text/csv", "text/markdown", "text/html", "text/xml",
+                                 "application/xml", "application/javascript",
+                                 "application/x-ndjson", "application/jsonl"), "text"))
 
 STRICT_FORMATS = {
     "jpeg", "png", "gif", "webp", "bmp", "pdf", "mp4", "m4a", "zip", "ole",
@@ -141,6 +168,12 @@ def validate_downloaded_resource(
     signature_format = _detect_signature(data)
     mime_format = MIME_FORMATS.get(mime_type)
     extension_format = EXTENSION_FORMATS.get(original_extension)
+    office_extension = (original_extension if original_extension in OFFICE_TYPES
+                        else OFFICE_MIMES.get(mime_type))
+    if office_extension:
+        if mime_type in OFFICE_MIMES and OFFICE_MIMES[mime_type] != office_extension:
+            raise ResourceValidationError("Office 扩展名与 MIME 类型不匹配")
+        _validate_office(data, office_extension)
 
     detected_format = _resolve_format(
         data=data,
@@ -163,6 +196,8 @@ def validate_downloaded_resource(
         mime_type,
         original_extension,
     )
+    if office_extension:
+        extension = office_extension
     base_name = Path(safe_original_name).stem if safe_original_name else ""
     if not base_name:
         base_name = _safe_stem(resource_key)
@@ -187,6 +222,17 @@ def _resolve_format(
     mime_type: str,
     original_extension: str,
 ) -> str:
+    if original_extension in TEXT_EXTENSIONS or original_extension == ".json":
+        if signature_format:
+            raise ResourceValidationError("文本扩展名与二进制文件签名不匹配")
+        text = _validate_plain_text(data)
+        if original_extension == ".json":
+            try:
+                json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ResourceValidationError("JSON 内容格式无效") from exc
+            return "json"
+        return "text"
     # Binary signatures are the strongest source of truth.
     if signature_format:
         if signature_format == "ogg" and mime_format == "opus":
@@ -265,6 +311,7 @@ def _validate_mime_consistency(
         return
     compatible = (
         mime_format == detected_format
+        or mime_format == "text" and detected_format == "json"
         or {mime_format, detected_format} <= {"ogg", "opus"}
         or {mime_format, detected_format} <= {"mp4", "m4a"}
     )
@@ -292,13 +339,68 @@ def _choose_extension(
     )
 
 
-def _validate_plain_text(data: bytes) -> None:
-    if b"\x00" in data:
-        raise ResourceValidationError("文本文件包含二进制空字节")
+def _validate_plain_text(data: bytes) -> str:
+    # 保留既有 UTF-8 策略；不猜测编码，也不修改原始字节。
+    if any(value < 32 and value not in (9, 10, 12, 13) for value in data):
+        raise ResourceValidationError("文本文件包含二进制控制字符")
     try:
-        data.decode("utf-8-sig")
+        return data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ResourceValidationError("文本文件不是有效的 UTF-8") from exc
+
+
+def _validate_office(data: bytes, extension: str) -> None:
+    """只读 ZIP 目录及有界元数据；验证主部件，不解压或执行文档内容。"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ResourceValidationError("Office 容器存在重复部件")
+
+            def metadata(name):
+                info = archive.getinfo(name)
+                if info.file_size > MAX_OFFICE_METADATA_BYTES:
+                    raise ResourceValidationError("Office 元数据超过校验大小限制")
+                with archive.open(info) as stream:
+                    raw = stream.read(MAX_OFFICE_METADATA_BYTES + 1)
+                if len(raw) > MAX_OFFICE_METADATA_BYTES:
+                    raise ResourceValidationError("Office 元数据超过校验大小限制")
+                # 显式 BOM 支持 UTF-16；不猜测编码，拒绝实体声明与空字节。
+                encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+                text = raw.decode(encoding)
+                if "\x00" in text:
+                    raise ResourceValidationError("Office 元数据编码无效")
+                if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
+                    raise ResourceValidationError("Office 元数据不允许实体声明")
+                return ET.fromstring(text)
+
+            types = metadata("[Content_Types].xml")
+            relationships = metadata("_rels/.rels")
+            targets = [node for node in relationships
+                       if node.tag == "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+                       and node.get("Type") in {
+                           "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+                           "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument"}]
+            if len(targets) != 1 or targets[0].get("TargetMode", "Internal") != "Internal":
+                raise ResourceValidationError("Office 容器缺少唯一的内部主文档关系")
+            target = unquote(targets[0].get("Target", "")).lstrip("/")
+            if (not target or "\\" in target or ":" in target
+                    or ".." in target.split("/")):
+                raise ResourceValidationError("Office 主文档路径无效")
+            target = posixpath.normpath(target)
+            info = archive.getinfo(target)
+            if info.is_dir() or info.file_size == 0 or info.flag_bits & 1:
+                raise ResourceValidationError("Office 主文档部件为空或不可读取")
+            overrides = [node.get("ContentType") for node in types
+                         if node.tag == "{http://schemas.openxmlformats.org/package/2006/content-types}Override"
+                         and unquote(node.get("PartName", "")).lstrip("/") == target]
+            if overrides != [OFFICE_TYPES[extension]]:
+                raise ResourceValidationError("Office 主文档类型与扩展名不匹配")
+    except ResourceValidationError:
+        raise
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, UnicodeError, RuntimeError,
+            NotImplementedError, ValueError, OSError) as exc:
+        raise ResourceValidationError("Office 容器损坏或缺少必要元数据") from exc
 
 
 def _validate_content_length(data: bytes, value: str | None) -> None:

@@ -38,7 +38,7 @@ def options(count=1):
 class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = cards.HistoryCardStore()
-        self.card = self.store.create("user-1", "chat-1", options(23))
+        self.card = self.store.create("user-1", "chat-1", options(cards.PAGE_SIZE + 3))
         self.card.message_id = "message-1"
 
     def test_form_requires_selection_and_confirmation(self):
@@ -80,7 +80,7 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
 
     def test_only_confirmed_visible_form_option_is_accepted(self):
         self.assertEqual(cards.confirmed_thread_id(callback(self.card), self.card), "thread-1")
-        for selected in (None, [], "foreign", "thread-23"):
+        for selected in (None, [], "foreign", f"thread-{cards.PAGE_SIZE + 1}"):
             with self.assertRaises(ValueError):
                 cards.confirmed_thread_id(callback(self.card, selected=selected), self.card)
         data = callback(self.card)
@@ -190,7 +190,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.restore.assert_awaited_once()
 
     async def test_pagination_rejects_old_revision_and_does_not_restore(self):
-        self.card.options = tuple(options(21))
+        self.card.options = tuple(options(cards.PAGE_SIZE + 1))
         data = callback(self.card, action="history_page")
         data.event.action.value["page"] = 1
         await self.g.processing_history_action(data)
@@ -207,6 +207,36 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         text = json.dumps(self.send.call_args.args[1], ensure_ascii=False)
         self.assertIn("失败", text)
         self.assertNotIn("暂无", text)
+
+    async def test_history_card_limits_sorted_database_records_without_deleting_history(self):
+        directory = self.enterContext(TemporaryDirectory())
+        self.enterContext(patch.object(session_history, "DB_PATH", Path(directory) / "state.sqlite"))
+        self.enterContext(patch.object(self.g, "list_sessions", session_history.list_sessions))
+        expected = []
+        # 故意乱序插入、制造同秒和空时间，验证按数据库更新时间排序后再截取。
+        for index in range(36):
+            thread_id = f"history-{index:02d}"
+            updated_at = (index * 7) % 10 if index else None
+            await session_history.register_session("user-1", thread_id, "同名会话")
+            if updated_at is not None:
+                await session_history.update_session_time("user-1", thread_id, updated_at)
+            expected.append((updated_at if updated_at is not None else -1, thread_id))
+        await session_history.register_session("other", "foreign", "其他用户")
+        await session_history.update_session_time("other", "foreign", 999)
+        expected_ids = [item[1] for item in sorted(expected, reverse=True)]
+        for limit in (30, 5, 40):
+            with self.subTest(limit=limit), patch.dict(self.g.CONFIG["messaging"], sessionHistoryLimit=limit), patch.object(cards, "PAGE_SIZE", limit):
+                await self.g.processing_history(helpers.event("/history"))
+                body = self.send.call_args.args[1]
+                values = body["body"]["elements"][1]["elements"][0]["options"]
+                self.assertEqual([item["value"] for item in values], expected_ids[:limit])
+                self.assertNotIn("下一页", json.dumps(body, ensure_ascii=False))
+        legacy = dict(self.g.CONFIG["messaging"])
+        legacy.pop("sessionHistoryLimit")
+        with patch.dict(self.g.CONFIG["messaging"], legacy, clear=True):
+            await self.g.processing_history(helpers.event("/history"))
+        self.assertEqual(len(self.send.call_args.args[1]["body"]["elements"][1]["elements"][0]["options"]), 30)
+        self.assertEqual(len(await session_history.list_sessions("user-1")), 36)
 
     async def test_confirm_to_real_database_and_unarchive_failure_preserves_binding(self):
         directory = self.enterContext(TemporaryDirectory())
