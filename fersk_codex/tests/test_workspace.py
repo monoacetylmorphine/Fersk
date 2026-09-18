@@ -16,6 +16,9 @@ from fersk_codex.utils import workspace as module
 
 class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.children = []
         self.started = asyncio.Event()

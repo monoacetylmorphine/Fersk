@@ -257,6 +257,9 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
             handle = NS(id="turn", stream=events)
             thread = NS(id="thread", turn=AsyncMock(return_value=handle))
             with (patch.object(codex, "AsyncCodex") as factory,
+                  patch.object(codex.session_history, "register_session", AsyncMock()),
+                  patch.object(codex, "_initialize_session_name", AsyncMock()),
+                  patch.object(codex, "_sync_session_time", AsyncMock()),
                   patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
                   patch.object(codex, "set_user_thread", AsyncMock()),
                   patch.object(codex, "prepare_workspace", AsyncMock()),

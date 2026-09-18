@@ -27,6 +27,7 @@ from openai_codex.types import TurnStatus
 
 from fersk_codex.utils.logging import SavingLog, finalize_usage
 from fersk_codex.core.thread_manager import get_user_thread, set_user_thread
+from fersk_codex.core import session_history
 from fersk_codex.core.thread_watchdog import probes, settings, should_log_event, summarize_event
 
 logger = get_logger("Codex")
@@ -42,6 +43,7 @@ class LiveTurn:
     provider: str
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     closed: bool = False
+    user_id: str | None = None
 
 
 def _sandbox_from_config() -> Sandbox:
@@ -136,6 +138,40 @@ async def _save_turn_usage(log: dict, *, duration_ms: int | None = None, finaliz
     saving.result()
     if cancelled:
         raise asyncio.CancelledError
+
+
+async def _initialize_session_name(user_id: str, thread, prompt: str | list) -> None:
+    """仅初始化已登记的新线程；旧版本线程不拿当前输入补造首次名称。"""
+    record = await session_history.get_session(user_id, thread.id)
+    if record is None:
+        return
+    if record.thread_name is None:
+        record = await session_history.claim_session_name(user_id, thread.id, prompt)
+    if record.updated_at is not None:
+        return
+    metadata = (await thread.read(include_turns=False)).thread
+    if record.thread_name is not None and metadata.name != record.thread_name:
+        await thread.set_name(record.thread_name)
+        metadata = (await thread.read(include_turns=False)).thread
+        if metadata.name != record.thread_name:
+            raise RuntimeError("线程名称未成功保存")
+    await session_history.update_session_time(user_id, thread.id, metadata.updated_at)
+
+
+async def _sync_session_time(user_id: str, thread) -> None:
+    """元数据同步失败单独记录，不把已完成的模型任务改判为执行失败。"""
+    try:
+        async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+            record = await session_history.get_session(user_id, thread.id)
+            if record is not None:
+                # steer 命名失败后，不能用时间同步误标为命名已完成。
+                if record.thread_name is not None and record.updated_at is None:
+                    logger.warning("历史会话命名尚未完成: user_id=%s, thread_id=%s", user_id, thread.id)
+                    return
+                metadata = (await thread.read(include_turns=False)).thread
+                await session_history.update_session_time(user_id, thread.id, metadata.updated_at)
+    except Exception:
+        logger.exception("历史会话时间同步失败: user_id=%s, thread_id=%s", user_id, thread.id)
 
 
 class FerskCodex:
@@ -330,6 +366,8 @@ class FerskCodex:
                         and (live.model, live.provider) !=
                         (image_route["model"], image_route["provider"])):
                     return {"type": "error", "content": CONFIG["messages"]["steerImageUnsupported"]}
+                if live.user_id is not None:
+                    await _initialize_session_name(live.user_id, live.thread, prompt)
                 try:
                     result = await live.handle.steer(prompt)
                 except InvalidRequestError as exc:
@@ -398,6 +436,21 @@ class FerskCodex:
                 mapping.pop(run_id, None)
             cls._pending_interrupts.discard(run_id)
             cls._closed_runs.discard(run_id)
+
+    @staticmethod
+    async def restore_session(user_id: str, thread_id: str) -> None:
+        """恢复历史并替换活跃绑定；调用方必须先停止任务并持有提交锁。"""
+        if await session_history.get_session(user_id, thread_id) is None:
+            raise ValueError("历史会话不存在或不属于当前用户")
+        if await get_user_thread(user_id) == thread_id:
+            return
+        async with FerskCodex._session(None) as codex:
+            thread = await codex.thread_unarchive(thread_id)
+            await _initialize_session_name(user_id, thread, "")
+            metadata = (await thread.read(include_turns=False)).thread
+        # SDK 操作与关闭成功后才写数据库；不归档原线程，不创建替代线程。
+        await session_history.update_session_time(user_id, thread_id, metadata.updated_at)
+        await set_user_thread(user_id, thread_id)
 
     @staticmethod
     async def reset_thread(user_id: str) -> None:
@@ -512,12 +565,22 @@ class FerskCodex:
                 except Exception as error:
                     yield _error_event(error, operation="thread_start")
                     return
+                try:
+                    await session_history.register_session(user_id, thread.id, prompt)
+                except Exception as error:
+                    yield _error_event(error, operation="session_history_register")
+                    return
             logger.info("Codex : user_id=%s, thread_id=%s, prompt=%s", user_id, thread.id, prompt)
             # 启动 turn 前先保存绑定，避免数据库失败后留下已执行的请求。
             try:
                 await set_user_thread(user_id, thread.id)
             except Exception as error:
                 yield _error_event(error, operation="thread_binding_write")
+                return
+            try:
+                await _initialize_session_name(user_id, thread, prompt)
+            except Exception as error:
+                yield _error_event(error, operation="session_history_name")
                 return
             try:
                 if run_id in FerskCodex._pending_interrupts:
@@ -534,7 +597,7 @@ class FerskCodex:
             if run_id in FerskCodex._closed_runs:
                 yield {"type": "interrupted"}
                 return
-            live = LiveTurn(thread, handle, model, model_provider)
+            live = LiveTurn(thread, handle, model, model_provider, user_id=user_id)
             probe = probes.get(run_id)
             if probe:
                 probe.thread_id = thread.id
@@ -643,6 +706,8 @@ class FerskCodex:
                                 FerskCodex._live_turns.pop(run_id, None)
                                 FerskCodex._active_turns.pop(run_id, None)
                                 FerskCodex._pending_interrupts.discard(run_id)
+                    if completed:
+                        await _sync_session_time(user_id, thread)
                 finally:
                     # 所有退出路径仅收尾一次；已知耗时时回填，不重复插入用量。
                     if usage_received:

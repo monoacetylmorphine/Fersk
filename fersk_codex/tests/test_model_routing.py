@@ -12,6 +12,11 @@ from fersk_codex.utils.config_loader import CONFIG
 
 
 class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+
     async def test_text_and_attachment_routes_for_new_and_resumed_threads(self):
         routes = {
             key: {"model": key + "-model", "provider": key + "-provider"}

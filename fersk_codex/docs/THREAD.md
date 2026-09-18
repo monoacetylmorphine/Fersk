@@ -21,6 +21,113 @@
 归档或数据库写入失败时返回错误，不报告重置成功。下一条普通消息才创建新 thread。
 重启后保留已落库的绑定；旧版本内存字典中的绑定不会自动迁移。
 
+## 历史会话与首次命名
+
+`core/session_history.py` 在同一个 `storage.databasePath` 中自动创建 `session_history` 表，
+不修改 `user_thread` 表结构。首次访问只创建新表及索引，不迁移或删除已有绑定。
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `user_id` | TEXT NOT NULL | 沿用活跃绑定的身份范围：私聊用户 union_id，群聊 chat_id |
+| `thread_id` | TEXT NOT NULL | Codex 线程 ID，与 user_id 组成主键 |
+| `thread_name` | TEXT NULL | 首次文本生成的名称；无文本时为空 |
+| `updated_at` | INTEGER NULL | 最近同步的 SDK Unix 秒级时间；初始化未完成时可为空 |
+
+名称取首次提交文本，合并换行和连续空白，保留前 15 个 Unicode 字素簇，超长追加 `…`。
+使用 `regex` 的 `\X`，不按语言分支，不拆开组合重音、组合文字与 emoji。
+输入列表按顺序提取 TextInput（包括语音转写），忽略附件路径；原始模型输入不截断。
+纯附件线程在首次收到文本时命名，包括运行中的 steer 输入。已有名称不会被后续提示词替换。
+
+新线程在提交 turn 前登记历史、保存活跃绑定并完成 SDK 命名。名称候选先落库，
+命名或元数据写入失败则报错并保留候选；恢复时读取远端名称，若已一致则不重复 set_name。
+`thread_name` 非空且 `updated_at` 为空表示命名同步待完成，时间同步不会越过这个状态。
+SQLite 与 SDK 无共同事务，不保证故障时网络调用严格只发生一次。
+已有旧版本绑定不自动回填历史，避免将当前消息当作旧线程的首次提示词。
+
+每次收到 turn/completed（成功、失败或中断）后，以及历史恢复时，读取 SDK 的 updated_at
+更新原记录；名称不改、记录不重复。时间更新不回退，不用本地时钟伪造 SDK 时间。
+列表按 updated_at 降序，同秒按 thread_id 降序稳定排序，空时间排在末尾。
+排序反映 SDK 最后更新时间；若 SDK 解除归档未推进时间，恢复操作也不会人为置顶。
+断流、进程强制退出等未观察到终态的情况不保证同步最新时间；同步失败记错误日志，
+保留旧时间，不重发已执行输入、不改变已确定的模型执行结果。
+
+`/new` 仍归档并清空活跃绑定，历史记录保留；下一条普通消息创建新的历史记录。
+
+## 前端历史选择与恢复接口
+
+私聊 `/history` 已接入历史选择卡片和 `card.action.trigger` 回调，交互卡片单独位于
+`services/lark/lark_interactive_card.py`，普通通知及流式卡片继续由 `lark_card.py` 负责。
+以下是网关复用的异步 Python 入口，不是 HTTP 路由：
+
+```python
+from fersk_codex.gateway import history_options, processing_history_restore
+
+options = await history_options(data)
+# [{"label": "きさらぎ駅是什么", "value": "thread-id", "updated_at": 1789637171}]
+result = await processing_history_restore(data, selected_thread_id)
+# 成功：{"ok": True, "thread_id": "thread-id", "content": "已恢复历史会话"}
+# 失败：{"ok": False, "content": "恢复历史会话失败"}
+```
+
+`data` 使用现有已验证消息事件的身份结构，前端回调适配层必须从认证信息构建，
+不能接受客户端任意传入的 user_id 或群聊 chat_id。选项显示 label（可附带时间），
+提交 value，不能用名称或时间反查线程。同名和同秒记录均允许存在。
+列表查询错误向调用方传播，适配层应展示加载失败，不能伪装成空列表。
+
+### 私聊 `/history` 交互
+
+1. 在机器人私聊中发送独立文本 `/history`（忽略首尾空白和大小写）。
+2. 下拉菜单展示 thread_name，空名称显示“未命名会话”，value 为 thread_id。
+3. 点击“激活此会话”，再在二次确认弹窗中选择确认或取消。
+4. 取消不提交表单，不停止任务、不解归档、不写入数据库；下拉选中的显示值可能保留。
+5. 确认后先提示正在处理，完成恢复和写库后原卡片显示“已激活”；失败明确提示。
+
+采用 Card JSON 2.0 表单的 `form_action_type: submit` 按钮搭配 `confirm`，不依赖下拉组件直接触发弹窗。
+下拉本身没有 callback；最终 thread_id 从 `action.form_value.history_thread` 读取，
+仅接受 `activate_history` 提交按钮，拒绝 `action.option` 或单纯选择事件触发恢复。
+参考：[表单容器](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/card-json-v2-components/containers/form-container)、
+[按钮](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/card-json-v2-components/interactive-components/button)。
+
+卡片每页 20 条，可前后翻页；这是本功能的展示策略，非平台上限。卡片选项使用发送时的历史快照，
+重新 `/history` 获取最新列表。所有权在真正恢复前再次查询数据库，历史删除或归属不符时拒绝。
+仅私聊入口使用个人 union_id；群聊没有历史选择入口，群聊 session_history 的记录和原有消息处理不变。
+私聊 `/history` 不进入模型，并作为后续聊天历史收集边界；群聊不应用该过滤规则。
+`/history` 为固定命令，不新增配置字段；既有自定义 `/new`、`/stop` 命令不应设为 `/history`，
+私聊入口中 `/history` 优先。
+
+服务端为每张卡保存随机 ticket、操作者 union_id、原私聊 chat_id、message_id 及选项快照。
+回调同时核对 operator.union_id、context.open_chat_id、context.open_message_id，拒绝转发到群聊、
+其他用户操作和伪造卡片参数。每张卡确认只消费一次；翻页使用 revision 拒绝旧页重复回调。
+处理失败后重新发送 `/history`，避免同一回调重投造成重复停止或恢复。
+状态仅保存于当前网关进程，24 小时失效，最多保存 1024 张，满时淘汰最早的非处理中卡片；
+这些值来源于本功能初始内存策略，非压测结论。重启或淘汰后旧卡片提示重新 `/history`。
+该机制沿用项目的单网关部署方式，不支持多进程之间共享卡片状态。
+
+SDK 同步回调通过 EventDispatcher 的独立控制容量提交给主事件循环，不等待 SDK 解归档或数据库操作。
+“正在处理”不是成功承诺；原卡更新失败时尝试另发结果卡，不再次执行恢复。
+若结果发送也失败，仅记录交付异常，不能撤销已经提交的活跃绑定。
+
+部署时需在飞书应用后台启用新版 `card.action.trigger` 回调并使用当前长连接接收方式，
+继续使用现有应用凭据和消息权限，不需要新增模板 ID 或明文凭据。
+离线测试使用真实 SDK 请求/回调模型，但不调用真实飞书或 Codex。
+飞书客户端实际表单渲染、确认/取消行为和后台回调投递仍需部署联调验证。
+专项回归：`python -B tests/run_tests.py --pattern test_lark_interactive_card.py`；
+恢复和持久化回归：`python -B tests/run_tests.py --pattern test_session_history.py`。
+
+恢复先验证历史记录归属。选择当前活跃线程直接成功，不停止任务或重复解除归档。
+切换其他线程时，复用 reset_tasks 门禁、停止确认、任务退出等待和提交锁；新输入等待
+切换完成。停止未确认时禁止切换。之后直接调用 SDK thread_unarchive，读取元数据，
+SDK 操作与客户端关闭成功后同步时间，最后写入原活跃映射。
+不额外归档此前的活跃线程，不重新命名已完成命名的目标，也不创建替代线程。
+选中未归档目标时仍按约定直接调用 thread_unarchive；SDK 若拒绝则返回恢复失败。
+
+任一步失败返回统一错误，保留原映射。解除归档成功后若数据库失败，目标可能已经
+解除归档，不承诺回滚 SDK 状态。底层 `FerskCodex.restore_session(user_id, thread_id)`
+仅供已完成停止与锁保护的调用方使用；前端应使用网关入口。
+并发保证沿用现有单网关进程、按 chat_id 串行提交的部署模型，不支持多个网关共同切换绑定。
+
+离线专项测试：`python -B tests/run_tests.py --pattern test_session_history.py`。
+
 在项目根目录运行测试：`python -m unittest discover -s tests -p 'test_thread_management.py'`。
 
 ## 中断当前 turn

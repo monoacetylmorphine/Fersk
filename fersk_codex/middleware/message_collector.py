@@ -59,7 +59,9 @@ def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch
     event_item = _history_item_from_event(data)
 
     if (is_stop_command(event_message.message_type, event_message.content)
-            or is_new_command(event_message.message_type, event_message.content)):
+            or is_new_command(event_message.message_type, event_message.content)
+            or (event_message.chat_type == "p2p"
+                and is_history_command(event_message.message_type, event_message.content))):
         return MessageBatch(event_message.chat_id, target_id, event_message.chat_type, ())
     else:
         # A history request can already include a later receive event. Anchor
@@ -82,6 +84,9 @@ def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch
             if sender_type == "user" and not _field(item, "deleted", False):
                 # /new 和 /stop 都是历史边界，不与后续输入合并。
                 if _is_new_thread_command(item) or _is_command(item, "stopThreadCommand"):
+                    break
+                if (event_message.chat_type == "p2p" and is_history_command(
+                        _field(item, "msg_type"), _field(_field(item, "body"), "content", ""))):
                     break
                 if _field(item, "msg_type") in SUPPORTED_MESSAGE_TYPES:
                     retained_desc.append(item)
@@ -132,6 +137,18 @@ def is_new_command(message_type: str, raw_content: str) -> bool:
 def is_stop_command(message_type: str, raw_content: str) -> bool:
     """与 /new 一致：仅识别独立文本，忽略首尾空白和大小写。"""
     return _is_command({"msg_type": message_type, "body": {"content": raw_content}}, "stopThreadCommand")
+
+
+def is_history_command(message_type: str, raw_content: str) -> bool:
+    """私聊历史入口使用固定 /history；调用方决定聊天范围，不修改配置格式。"""
+    if message_type != "text":
+        return False
+    try:
+        content = json.loads(raw_content)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    text = content.get("text") if isinstance(content, dict) else None
+    return isinstance(text, str) and text.strip().lower() == "/history"
 
 
 def _is_command(item: Any, config_key: str) -> bool:

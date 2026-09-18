@@ -19,6 +19,7 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
         patcher = patch.object(thread_management, "DB_PATH", self.db_path)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.enterContext(patch.object(codex.session_history, "DB_PATH", self.db_path))
 
     async def test_missing_user_creates_database_and_table(self):
         self.assertIsNone(await thread_management.get_user_thread("missing"))

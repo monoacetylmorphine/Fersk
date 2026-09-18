@@ -346,6 +346,11 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BackendInterruptTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+
     async def test_interrupt_arriving_during_turn_start_is_delivered(self):
         starting, resume = asyncio.Event(), asyncio.Event()
         async def events():

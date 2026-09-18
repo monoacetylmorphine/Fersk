@@ -9,7 +9,7 @@ from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from fersk_codex.core.thread_watchdog import RunProbe, settings
 from fersk_codex.middleware.session_cache import ActiveCodexRun, RETENTION_SECONDS
-from fersk_codex.middleware.message_collector import batch_from_chat_history, is_new_command, is_stop_command
+from fersk_codex.middleware.message_collector import batch_from_chat_history, is_new_command, is_stop_command, is_history_command
 
 logger = get_logger("Message")
 
@@ -39,7 +39,7 @@ def _is_bot_mentioned(mentions) -> bool:
 
 class MessageRouter:
     def __init__(self, cache, *, submit, stop, new, notify, fetch_history,
-                 add_reaction, clear_reactions, send_card, buffer_seconds):
+                 add_reaction, clear_reactions, send_card, buffer_seconds, history=None):
         self.cache = cache
         self.submit = submit
         self.stop = stop
@@ -50,6 +50,7 @@ class MessageRouter:
         self.clear_reactions = clear_reactions
         self.send_card = send_card
         self.buffer_seconds = buffer_seconds
+        self.history = history
 
     async def processing(self, data) -> None:
         """登记整个入站请求，避免旧任务回收新请求正在使用的会话锁。"""
@@ -72,6 +73,10 @@ class MessageRouter:
                 self.cache.received_at[message.message_id] = time.monotonic()
                 while len(self.cache.received_at) > CONFIG["messaging"]["recallCacheMaxEntries"]:
                     self.cache.received_at.pop(next(iter(self.cache.received_at)))
+                if (chat_type == "p2p" and self.history is not None
+                        and is_history_command(message.message_type, message.content)):
+                    await self.history(data)
+                    return
                 if is_stop_command(message.message_type, message.content):
                     await self.stop(data)
                     return

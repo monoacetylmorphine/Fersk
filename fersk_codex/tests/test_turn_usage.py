@@ -16,6 +16,9 @@ from fersk_codex.utils import logging as usage_log
 
 class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
         for name in ("_clients", "_processes", "_initializers", "_active_turns", "_live_turns"):
             self.enterContext(patch.object(codex.FerskCodex, name, {}))
         for name in ("_pending_interrupts", "_closed_runs"):

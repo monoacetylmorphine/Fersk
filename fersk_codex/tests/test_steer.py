@@ -3,6 +3,7 @@ import asyncio
 import ast
 from contextlib import ExitStack, aclosing
 from pathlib import Path
+from queue import Queue
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -27,6 +28,9 @@ def status(kind):
 
 class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
         stack = self.enterContext(ExitStack())
         for name, value in (("_active_turns", {}), ("_live_turns", {}),
                             ("_pending_interrupts", set()), ("_turns_guard", asyncio.Lock())):
@@ -534,22 +538,26 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.starts, ["first"])
 
     async def test_gateway_backend_and_real_sdk_handles_share_turn_and_stream(self):
-        queue = asyncio.Queue()
+        queue = Queue()
+        subscription = NS(next=lambda: queue.get(timeout=2), close=Mock())
+        entered = asyncio.Event()
+        async def start_turn(*args, **kwargs):
+            entered.set()
+            return NS(turn=NS(id="turn-1")), subscription
         low = NS(
-            turn_start=AsyncMock(return_value=NS(turn=NS(id="turn-1"))),
+            # 已安装 SDK 0.154.0 为每个 handle 返回独立订阅。
+            _start_turn=AsyncMock(side_effect=start_turn),
             thread_read=AsyncMock(return_value=status("active")),
             turn_steer=AsyncMock(return_value=NS(turn_id="turn-1")),
-            register_turn_notifications=Mock(), unregister_turn_notifications=Mock(),
-            next_turn_notification=AsyncMock(side_effect=lambda turn_id: None),
         )
-        async def next_event(turn_id):
-            return await queue.get()
-        low.next_turn_notification.side_effect = next_event
         runtime = NS(_client=low, _ensure_initialized=AsyncMock())
         thread = AsyncThread(runtime, "thread-1")
         runtime.thread_start = AsyncMock(return_value=thread)
         self.g.FerskCodex = FerskCodex
         with (patch.object(codex, "AsyncCodex") as client_class,
+              patch.object(codex.session_history, "register_session", AsyncMock()),
+              patch.object(codex, "_initialize_session_name", AsyncMock()),
+              patch.object(codex, "_sync_session_time", AsyncMock()),
               patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
               patch.object(codex, "set_user_thread", AsyncMock()),
               patch.object(codex, "prepare_workspace", AsyncMock()),
@@ -558,8 +566,6 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
               patch.object(FerskCodex, "_active_turns", {}),
               patch.object(FerskCodex, "_pending_interrupts", set())):
             client_class.return_value.__aenter__.return_value = runtime
-            entered = asyncio.Event()
-            low.register_turn_notifications.side_effect = lambda turn_id: entered.set()
             task = asyncio.create_task(self.g._handle_message_batch(self.batch("first", "m1"), 0))
             self.tasks.append(task)
             await asyncio.wait_for(entered.wait(), 1)
@@ -570,7 +576,7 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
                 args = low.turn_steer.call_args.args
                 self.assertEqual(args[:2], ("thread-1", "turn-1"))
                 self.assertEqual(args[2][0]["text"], "second")
-                low.turn_start.assert_awaited_once()
+                low._start_turn.assert_awaited_once()
                 self.assertEqual(len(self.cards), 2)
             finally:
                 completed = TurnCompletedNotification.model_validate({
@@ -580,10 +586,10 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
                         "durationMs": 10, "itemsView": "summary",
                     },
                 })
-                await queue.put(NS(method="turn/completed", payload=completed))
+                queue.put(NS(method="turn/completed", payload=completed))
                 await asyncio.wait_for(task, 1)
             saving.assert_not_awaited()
-            low.unregister_turn_notifications.assert_called_once_with("turn-1")
+            subscription.close.assert_called_once_with()
 
 
 class CollectorSteerTests(unittest.TestCase):
