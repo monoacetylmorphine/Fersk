@@ -1,4 +1,5 @@
 """验证 /stop、撤回和启动竞态；模拟飞书及 Codex，不读取凭据。"""
+from fersk_codex.middleware.session_cache import ActiveCodexRun
 import asyncio
 import importlib.util
 import json
@@ -8,8 +9,9 @@ from types import ModuleType, SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.core.codex import FerskCodex
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex.codex_execution import FerskCodex
+from fersk_codex.codex import codex_execution as codex
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.middleware import message_router
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_stop_command
@@ -67,7 +69,7 @@ class CommandTests(unittest.TestCase):
 
 class StopTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.enterContext(patch("fersk_codex.core.thread_watchdog.journal.record"))
+        self.enterContext(patch("fersk_codex.codex.thread_watchdog.journal.record"))
         def module(name, **values):
             result = ModuleType(name)
             result.__dict__.update(values)
@@ -91,40 +93,41 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
                 InputAssemblyError=type("InputAssemblyError", (Exception,), {}),
                 assemble_codex_input=AsyncMock(return_value=NS(codex_input="hello", notices=()))),
         }
-        spec = importlib.util.spec_from_file_location("gateway_stop_tests", (Path(__file__).resolve().parents[1] / "gateway.py"))
+        spec = importlib.util.spec_from_file_location("main_stop_tests", (Path(__file__).resolve().parents[1] / "main.py"))
         self.g = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {**stubs, spec.name: self.g}):
             spec.loader.exec_module(self.g)
+            self.runtime, self.execution, self.commands, self.router = self.g.create_gateway()
         async def running(**kwargs):
             yield {"type": "started", "thread_id": "thread-1", "turn_id": "turn-1"}
             yield {"type": "done"}
-        self.g.FerskCodex = NS(interrupt_and_confirm=AsyncMock(return_value=True), force_close=AsyncMock(return_value=True), completed_status=AsyncMock(return_value=None), forget_run=AsyncMock(),
+        self.runtime.codex = NS(interrupt_and_confirm=AsyncMock(return_value=True), force_close=AsyncMock(return_value=True), completed_status=AsyncMock(return_value=None), forget_run=AsyncMock(),
                               reset_thread=AsyncMock(), running=running, steer=AsyncMock(return_value={"type": "idle"}))
 
     def state(self, chat="chat-1", started=True):
-        state = self.g.ActiveCodexRun("run-" + chat, chat, frozenset({"m1", "m2"}), codex_started=started)
+        state = ActiveCodexRun("run-" + chat, chat, frozenset({"m1", "m2"}), codex_started=started)
         for mid in state.message_ids:
-            self.g.active_runs_by_message_id[chat + mid] = state
+            self.runtime.cache.active_runs_by_message_id[chat + mid] = state
         return state
 
     async def test_stop_bypasses_lock_and_deduplicates_batch(self):
         state = self.state()
         other = self.state("chat-2")
-        lock = await self.g._get_codex_lock("chat-1")
+        lock = await self.runtime._get_codex_lock("chat-1")
         async with lock:
-            await asyncio.wait_for(self.g.processing(event(" /STOP ")), 1)
+            await asyncio.wait_for(self.router.processing(event(" /STOP ")), 1)
         self.assertTrue(state.interrupted)
         self.assertFalse(other.interrupted)
-        self.g.FerskCodex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
-        self.g.getting_chat_history.assert_not_awaited()
-        self.g.adding_reaction_emoji.assert_not_awaited()
-        self.assertEqual(self.g.sending_card.call_args.kwargs["content"], CONFIG["messages"]["stopRequested"])
+        self.runtime.codex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
+        self.router.fetch_history.assert_not_awaited()
+        self.router.add_reaction.assert_not_awaited()
+        self.assertEqual(self.runtime.send_card.call_args.kwargs["content"], CONFIG["messages"]["stopRequested"])
 
     async def test_stop_before_turn_start(self):
         state = self.state(started=False)
-        await self.g.processing(event())
-        self.assertFalse(await self.g._start_codex_run(state))
-        self.g.FerskCodex.interrupt_and_confirm.assert_not_awaited()
+        await self.router.processing(event())
+        self.assertFalse(await self.runtime._start_codex_run(state))
+        self.runtime.codex.interrupt_and_confirm.assert_not_awaited()
 
     async def test_stop_closes_reply_stream(self):
         state = self.state()
@@ -135,11 +138,11 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
                 yield {"type": "answer", "content": "停止后内容"}
             finally:
                 closed.append(True)
-        self.g.FerskCodex.running = events
-        stream = self.g._reply_content(NS(union_id="user-1"), "hello", state)
+        self.runtime.codex.running = events
+        stream = self.execution._reply_content(NS(union_id="user-1"), "hello", state)
         await anext(stream)
-        await self.g.processing(event())
-        with self.assertRaises(self.g.CardStreamStopped):
+        await self.router.processing(event())
+        with self.assertRaises(self.card_module.CardStreamStopped):
             await anext(stream)
         self.assertEqual(closed, [True])
 
@@ -149,56 +152,56 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
             entered.set()
             await resume.wait()
             return "late-reaction"
-        self.g.adding_reaction_emoji.side_effect = reaction
-        task = asyncio.create_task(self.g.processing(event("hello", message_id="old")))
+        self.router.add_reaction.side_effect = reaction
+        task = asyncio.create_task(self.router.processing(event("hello", message_id="old")))
         await entered.wait()
-        await self.g.processing(event())
+        await self.router.processing(event())
         resume.set()
         await task
-        self.g.getting_chat_history.assert_not_awaited()
-        self.g.delete_reaction_emoji.assert_awaited_once_with(message_id="old", reaction_id="late-reaction")
+        self.router.fetch_history.assert_not_awaited()
+        self.runtime.delete_reaction.assert_awaited_once_with(message_id="old", reaction_id="late-reaction")
 
     async def test_repeat_stop_and_idle(self):
-        await self.g.processing(event())
-        self.assertEqual(self.g.sending_card.call_args.kwargs["content"], CONFIG["messages"]["stopIdle"])
+        await self.router.processing(event())
+        self.assertEqual(self.runtime.send_card.call_args.kwargs["content"], CONFIG["messages"]["stopIdle"])
         state = self.state()
-        await self.g.processing(event(message_id="stop-2"))
-        await self.g.processing(event(message_id="stop-3"))
+        await self.router.processing(event(message_id="stop-2"))
+        await self.router.processing(event(message_id="stop-3"))
         self.assertTrue(state.interrupted)
-        self.assertEqual(self.g.FerskCodex.interrupt_and_confirm.await_count, 1)
+        self.assertEqual(self.runtime.codex.interrupt_and_confirm.await_count, 1)
 
     async def test_interrupt_failure_keeps_output_closed(self):
         state = self.state()
-        self.g.FerskCodex.interrupt_and_confirm.side_effect = RuntimeError("offline")
-        await self.g.processing(event())
-        self.assertTrue(await self.g._run_was_interrupted(state))
-        self.assertEqual(self.g.sending_card.call_args.kwargs["content"], CONFIG["messages"]["stopFailed"])
+        self.runtime.codex.interrupt_and_confirm.side_effect = RuntimeError("offline")
+        await self.router.processing(event())
+        self.assertTrue(await self.runtime._run_was_interrupted(state))
+        self.assertEqual(self.runtime.send_card.call_args.kwargs["content"], CONFIG["messages"]["stopFailed"])
 
     async def test_recall_uses_same_interrupt_and_owner_filter(self):
         state = self.state()
-        self.g.active_runs_by_message_id["m1"] = state
+        self.runtime.cache.active_runs_by_message_id["m1"] = state
         recalled = NS(event=NS(message_id="m1", chat_id="chat-1", recall_type="admin"))
-        await self.g.processing_recall(recalled)
+        await self.commands.processing_recall(recalled)
         self.assertFalse(state.interrupted)
         recalled.event.recall_type = "message_owner"
-        await self.g.processing_recall(recalled)
+        await self.commands.processing_recall(recalled)
         self.assertTrue(state.interrupted)
-        self.g.FerskCodex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
+        self.runtime.codex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
 
     async def test_buffer_cancel_and_next_message_works(self):
         data = event("image")
         data.event.message.message_type = "image"
-        await self.g.router._buffer_message(data, 0)
-        task = self.g.buffer_tasks["chat-1"]
-        await self.g.processing(event())
+        await self.router._buffer_message(data, 0)
+        task = self.runtime.cache.buffer_tasks["chat-1"]
+        await self.router.processing(event())
         await asyncio.gather(task, return_exceptions=True)
-        self.assertNotIn("chat-1", self.g.buffer_tasks)
-        self.assertNotIn("chat-1", self.g.buffered_events)
-        self.g._handle_message_batch = AsyncMock()
-        await self.g.processing(event("hello", message_id="next"))
-        self.g._handle_message_batch.assert_awaited_once()
-        self.assertEqual(self.g._handle_message_batch.call_args.args[1], 0)
-        self.assertNotIn("chat-1", self.g.chat_generations)
+        self.assertNotIn("chat-1", self.runtime.cache.buffer_tasks)
+        self.assertNotIn("chat-1", self.runtime.cache.buffered_events)
+        self.router.submit = AsyncMock()
+        await self.router.processing(event("hello", message_id="next"))
+        self.router.submit.assert_awaited_once()
+        self.assertEqual(self.router.submit.call_args.args[1], 0)
+        self.assertNotIn("chat-1", self.runtime.cache.chat_generations)
 
     async def test_stop_during_history_fetch_discards_old_request(self):
         fetching, resume = asyncio.Event(), asyncio.Event()
@@ -206,41 +209,41 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
             fetching.set()
             await resume.wait()
             return []
-        self.g.getting_chat_history.side_effect = fetch
-        task = asyncio.create_task(self.g.processing(event("hello", message_id="old")))
+        self.router.fetch_history.side_effect = fetch
+        task = asyncio.create_task(self.router.processing(event("hello", message_id="old")))
         await fetching.wait()
-        await self.g.processing(event())
+        await self.router.processing(event())
         resume.set()
         await task
-        self.g.assemble_codex_input.assert_not_awaited()
+        self.execution.assemble_input.assert_not_awaited()
 
     async def test_stop_discards_request_waiting_for_lock(self):
         batch = batch_from_chat_history(event("hello", message_id="old"), [])
-        lock = await self.g._get_codex_lock("chat-1")
+        lock = await self.runtime._get_codex_lock("chat-1")
         async with lock:
-            task = asyncio.create_task(self.g._handle_message_batch(batch, 0))
+            task = asyncio.create_task(self.execution._handle_message_batch(batch, 0))
             await asyncio.sleep(0)
-            await self.g.processing(event())
+            await self.router.processing(event())
         await task
-        self.g.assemble_codex_input.assert_not_awaited()
+        self.execution.assemble_input.assert_not_awaited()
 
     async def test_group_requires_mention_and_replies_to_chat(self):
         data = event(chat_type="group")
         with patch("fersk_codex.middleware.message_router._is_bot_mentioned", return_value=False):
-            await self.g.processing(data)
-        self.g.sending_card.assert_not_awaited()
+            await self.router.processing(data)
+        self.runtime.send_card.assert_not_awaited()
         with patch("fersk_codex.middleware.message_router._is_bot_mentioned", return_value=True):
-            await self.g.processing(data)
-        self.assertEqual(self.g.sending_card.call_args.kwargs["union_id"], "chat-1")
+            await self.router.processing(data)
+        self.assertEqual(self.runtime.send_card.call_args.kwargs["union_id"], "chat-1")
 
     async def test_multimodal_batch_clears_every_reaction(self):
-        self.g.message_buffer_seconds = 0
+        self.router.buffer_seconds = lambda: 0
         for text_finishes in (False, True):
             with self.subTest(text_finishes=text_finishes):
-                self.g.received_message_ids.clear()
-                self.g.processed_message_ids.clear()
-                self.g.adding_reaction_emoji.side_effect = ["r1", "r2", "r3"]
-                self.g.delete_reaction_emoji.reset_mock()
+                self.runtime.cache.received_message_ids.clear()
+                self.runtime.cache.processed_message_ids.clear()
+                self.router.add_reaction.side_effect = ["r1", "r2", "r3"]
+                self.runtime.delete_reaction.reset_mock()
                 items = []
                 for index in range(1, 4):
                     mid = f"m{index}"
@@ -250,106 +253,106 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
                     item = history("describe", mid)
                     item["msg_type"] = kind
                     items.insert(0, item)
-                    self.g.getting_chat_history.return_value = list(items)
-                    await self.g.processing(data)
+                    self.router.fetch_history.return_value = list(items)
+                    await self.router.processing(data)
                 if not text_finishes:
                     # 实际执行定时 flush 路径，缩短窗口以避免测试等待。
-                    await self.g.buffer_tasks["chat-1"]
+                    await self.runtime.cache.buffer_tasks["chat-1"]
                 self.assertEqual(
-                    {tuple(call.kwargs.values()) for call in self.g.delete_reaction_emoji.await_args_list},
+                    {tuple(call.kwargs.values()) for call in self.runtime.delete_reaction.await_args_list},
                     {("m1", "r1"), ("m2", "r2"), ("m3", "r3")},
                 )
-                self.assertEqual(self.g.delete_reaction_emoji.await_count, 3)
-                self.assertFalse(self.g.reaction_message_ids)
+                self.assertEqual(self.runtime.delete_reaction.await_count, 3)
+                self.assertFalse(self.runtime.cache.reaction_message_ids)
 
     async def test_batch_cleanup_preserves_later_message_and_other_chat(self):
-        self.g.reaction_message_ids = {
+        self.runtime.cache.reaction_message_ids = {
             "chat-1": {"m1": "r1", "m2": "r2", "next": "r3"},
             "chat-2": {"other": "r4"},
         }
         batch = batch_from_chat_history(event("hello", message_id="m2"),
                                        [history("hello", "m2"), history("hello", "m1")])
-        await self.g._handle_message_batch(batch, 0)
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
-        self.assertEqual(self.g.reaction_message_ids,
+        await self.execution._handle_message_batch(batch, 0)
+        self.assertEqual(self.runtime.delete_reaction.await_count, 2)
+        self.assertEqual(self.runtime.cache.reaction_message_ids,
                          {"chat-1": {"next": "r3"}, "chat-2": {"other": "r4"}})
 
     async def test_stop_clears_snapshot_and_preserves_new_reaction(self):
         self.state()
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
         async def interrupt(run_id):
-            self.g.reaction_message_ids["chat-1"]["next"] = "r3"
+            self.runtime.cache.reaction_message_ids["chat-1"]["next"] = "r3"
             return True
-        self.g.FerskCodex.interrupt_and_confirm.side_effect = interrupt
-        await self.g.processing(event())
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
-        self.assertEqual(self.g.reaction_message_ids, {"chat-1": {"next": "r3"}})
+        self.runtime.codex.interrupt_and_confirm.side_effect = interrupt
+        await self.router.processing(event())
+        self.assertEqual(self.runtime.delete_reaction.await_count, 2)
+        self.assertEqual(self.runtime.cache.reaction_message_ids, {"chat-1": {"next": "r3"}})
 
     async def test_recall_then_batch_cleanup_is_idempotent(self):
         state = self.state()
-        self.g.active_runs_by_message_id["m1"] = state
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
-        await self.g.processing_recall(NS(event=NS(
+        self.runtime.cache.active_runs_by_message_id["m1"] = state
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
+        await self.commands.processing_recall(NS(event=NS(
             message_id="m1", chat_id="chat-1", recall_type="message_owner")))
-        self.assertEqual(self.g.reaction_message_ids, {"chat-1": {"m2": "r2"}})
-        await self.g._clear_reaction("chat-1", state.message_ids)
-        await self.g._clear_reaction("chat-1", state.message_ids)
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
-        self.assertFalse(self.g.reaction_message_ids)
+        self.assertEqual(self.runtime.cache.reaction_message_ids, {"chat-1": {"m2": "r2"}})
+        await self.runtime._clear_reaction("chat-1", state.message_ids)
+        await self.runtime._clear_reaction("chat-1", state.message_ids)
+        self.assertEqual(self.runtime.delete_reaction.await_count, 2)
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
 
     async def test_failed_delete_retains_record_and_continues(self):
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2", "m3": "r3"}}
-        self.g.delete_reaction_emoji.side_effect = [False, RuntimeError("offline"), True]
-        await self.g._clear_reaction("chat-1")
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 3)
-        self.assertEqual(self.g.reaction_message_ids, {"chat-1": {"m1": "r1", "m2": "r2"}})
-        self.assertFalse(self.g.reactions_being_cleared)
-        self.g.delete_reaction_emoji.side_effect = None
-        await self.g._clear_reaction("chat-1")
-        self.assertFalse(self.g.reaction_message_ids)
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2", "m3": "r3"}}
+        self.runtime.delete_reaction.side_effect = [False, RuntimeError("offline"), True]
+        await self.runtime._clear_reaction("chat-1")
+        self.assertEqual(self.runtime.delete_reaction.await_count, 3)
+        self.assertEqual(self.runtime.cache.reaction_message_ids, {"chat-1": {"m1": "r1", "m2": "r2"}})
+        self.assertFalse(self.runtime.cache.reactions_being_cleared)
+        self.runtime.delete_reaction.side_effect = None
+        await self.runtime._clear_reaction("chat-1")
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
 
     async def test_concurrent_cleanup_does_not_delete_twice(self):
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
         entered, resume = asyncio.Event(), asyncio.Event()
         async def delete(message_id, reaction_id):
             if message_id == "m1":
                 entered.set()
                 await resume.wait()
             return True
-        self.g.delete_reaction_emoji.side_effect = delete
-        task = asyncio.create_task(self.g._clear_reaction("chat-1"))
+        self.runtime.delete_reaction.side_effect = delete
+        task = asyncio.create_task(self.runtime._clear_reaction("chat-1"))
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            await self.g._clear_reaction("chat-1")
+            await self.runtime._clear_reaction("chat-1")
         finally:
             resume.set()
             await task
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
-        self.assertFalse(self.g.reaction_message_ids)
-        self.assertFalse(self.g.reactions_being_cleared)
+        self.assertEqual(self.runtime.delete_reaction.await_count, 2)
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
+        self.assertFalse(self.runtime.cache.reactions_being_cleared)
 
     async def test_failed_add_does_not_store_invalid_reaction(self):
-        self.g.adding_reaction_emoji.return_value = None
-        await self.g.processing(event("hello", message_id="m1"))
-        self.g.assemble_codex_input.assert_awaited_once()
-        self.g.delete_reaction_emoji.assert_not_awaited()
-        self.assertFalse(self.g.reaction_message_ids)
+        self.router.add_reaction.return_value = None
+        await self.router.processing(event("hello", message_id="m1"))
+        self.execution.assemble_input.assert_awaited_once()
+        self.runtime.delete_reaction.assert_not_awaited()
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
 
     async def test_batch_failure_still_clears_all_reactions(self):
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
-        self.g.assemble_codex_input.side_effect = RuntimeError("assembly failed")
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
+        self.execution.assemble_input.side_effect = RuntimeError("assembly failed")
         batch = batch_from_chat_history(event("hello", message_id="m2"),
                                        [history("hello", "m2"), history("hello", "m1")])
-        await self.g._handle_message_batch(batch, 0)
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
-        self.assertFalse(self.g.reaction_message_ids)
+        await self.execution._handle_message_batch(batch, 0)
+        self.assertEqual(self.runtime.delete_reaction.await_count, 2)
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
 
 
 class BackendInterruptTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
 
     async def test_interrupt_arriving_during_turn_start_is_delivered(self):
         starting, resume = asyncio.Event(), asyncio.Event()
@@ -364,10 +367,10 @@ class BackendInterruptTests(unittest.IsolatedAsyncioTestCase):
             patch.object(FerskCodex, "_active_turns", {}),
             patch.object(FerskCodex, "_pending_interrupts", set()),
             patch.object(FerskCodex, "_turns_guard", asyncio.Lock()),
-            patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
-            patch.object(codex, "set_user_thread", AsyncMock()),
-            patch.object(codex, "prepare_workspace", AsyncMock()),
-            patch.object(codex, "AsyncCodex") as client_class,
+            patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
+            patch.object(thread_manager, "set_user_thread", AsyncMock()),
+            patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+            patch.object(codex_runtime, "AsyncCodex") as client_class,
         ):
             client = client_class.return_value.__aenter__.return_value
             client.thread_start.return_value = NS(id="thread-1", turn=turn)

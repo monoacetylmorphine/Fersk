@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from fersk_codex import FerskCodex, LiveTurn
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_execution as codex
 from fersk_codex.utils.config_loader import CONFIG, _load_config
 
 

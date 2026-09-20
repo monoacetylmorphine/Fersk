@@ -2,7 +2,7 @@
 
 测试前请按根目录 README 安装包，并设置 `FERSK_CONFIG_FILE` 指向 `configs/config_default.json`。
 
-`core/thread_manager.py` 使用 aiosqlite，在配置项 `storage.databasePath`
+`codex/thread_manager.py` 使用 aiosqlite，在配置项 `storage.databasePath`
 指向的数据库（当前为 `~/.fersk/state.sqlite`）中保存绑定。
 首次访问自动创建目录和 `user_thread` 表，与 token usage 日志表共用数据库。
 
@@ -16,14 +16,14 @@
 数据库异常向调用方传播，不回退到内存存储；SQLite 锁等待上限为 30 秒。
 该模块不负责对整个 Codex 请求加锁，网关仅串行化输入组装及提交，回复流独立消费。
 
-`codex.py` 每次请求读取绑定，在启动 turn 前保存线程 ID；即使 turn 启动失败，
+`codex/codex_execution.py` 每次请求读取绑定，在启动 turn 前保存线程 ID；即使 turn 启动失败，
 下次请求仍可恢复该线程。新线程命令在原始 text 消息入口识别，确认旧任务停止并归档旧线程后持久化重置，
 归档或数据库写入失败时返回错误，不报告重置成功。下一条普通消息才创建新 thread。
 重启后保留已落库的绑定；旧版本内存字典中的绑定不会自动迁移。
 
 ## 历史会话与首次命名
 
-`core/session_history.py` 在同一个 `storage.databasePath` 中自动创建 `session_history` 表，
+`codex/session_history.py` 在同一个 `storage.databasePath` 中自动创建 `session_history` 表，
 不修改 `user_thread` 表结构。首次访问只创建新表及索引，不迁移或删除已有绑定。
 
 | 字段 | 类型 | 含义 |
@@ -60,11 +60,14 @@ SQLite 与 SDK 无共同事务，不保证故障时网络调用严格只发生�
 以下是网关复用的异步 Python 入口，不是 HTTP 路由：
 
 ```python
-from fersk_codex.gateway import history_options, processing_history_restore
+from fersk_codex.middleware.gateway_commands import GatewayCommands
 
-options = await history_options(data)
+# 使用启动层已创建并共享运行状态的实例，不在每次请求中重建。
+commands: GatewayCommands
+
+options = await commands.history_options(data)
 # [{"label": "きさらぎ駅是什么", "value": "thread-id", "updated_at": 1789637171}]
-result = await processing_history_restore(data, selected_thread_id)
+result = await commands.processing_history_restore(data, selected_thread_id)
 # 成功：{"ok": True, "thread_id": "thread-id", "content": "已恢复历史会话"}
 # 失败：{"ok": False, "content": "恢复历史会话失败"}
 ```
@@ -176,7 +179,7 @@ steer 不能变更模型；含图片输入要求当前模型/provider 与配置�
 
 ## 任务探针与超时
 
-`core/thread_watchdog.py` 按 run_id 记录接收时间、阶段、thread/turn ID、消息归属、
+`codex/thread_watchdog.py` 按 run_id 记录接收时间、阶段、thread/turn ID、消息归属、
 最后活动、工具执行、停止原因及结果。终端只输出任务生命周期和最终 `item/completed` 的白名单摘要，
 不输出 delta 或 item 中间事件；卡片持续展示推理和 commentary，最终答案替换当前卡正文，工具内容不展示。
 卡片按 9 分钟关闭、后续文本到达时创建续卡。交付失败记录为 `delivery_failed`，

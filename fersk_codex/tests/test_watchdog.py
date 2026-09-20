@@ -11,8 +11,9 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from fersk_codex.core.codex import FerskCodex, LiveTurn
-from fersk_codex.core.thread_watchdog import (
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex.codex_execution import FerskCodex, LiveTurn
+from fersk_codex.codex.thread_watchdog import (
     RunProbe, RunJournal, settings, should_log_event, summarize_event,
 )
 from fersk_codex.utils.config_loader import CONFIG, _load_config
@@ -21,7 +22,7 @@ import test_stop_command as helpers
 
 class ProbeTests(unittest.TestCase):
     def setUp(self):
-        self.enterContext(patch("fersk_codex.core.thread_watchdog.journal.record"))
+        self.enterContext(patch("fersk_codex.codex.thread_watchdog.journal.record"))
 
     def test_hard_deadline_survives_activity_tools_and_steer(self):
         probe = RunProbe("run", "chat", frozenset({"m"}), received_at=0)
@@ -35,7 +36,7 @@ class ProbeTests(unittest.TestCase):
         probe = RunProbe("run", "chat", frozenset({"m"}), last_activity=0)
         item_data = {"id": "tool", "type": "commandExecution", "aggregatedOutput": "完成\n"}
         item = NS(id="tool", type="commandExecution", model_dump=Mock(return_value=item_data))
-        with patch("fersk_codex.core.thread_watchdog.journal.record") as record:
+        with patch("fersk_codex.codex.thread_watchdog.journal.record") as record:
             probe.activity(NS(method="item/started", payload=NS(item=NS(root=item))))
             self.assertEqual(probe.tools, {"tool"})
             for method in ("item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
@@ -70,7 +71,7 @@ class ProbeTests(unittest.TestCase):
         probe = RunProbe("run", "chat", frozenset())
         for item in items:
             event = NS(method="item/completed", payload=NS(item=NS(root=item)))
-            with patch("fersk_codex.core.thread_watchdog.journal.record") as record:
+            with patch("fersk_codex.codex.thread_watchdog.journal.record") as record:
                 probe.activity(event)
                 summary = summarize_event(event)
                 self.assertEqual(record.call_args.args[0]["item"], summary["item"])
@@ -234,7 +235,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
         async def run():
             async with FerskCodex._session("late"):
                 self.fail("cancelled initialization must not submit a turn")
-        with patch("fersk_codex.core.codex.AsyncCodex", DelayedClient):
+        with patch("fersk_codex.codex.codex_runtime.AsyncCodex", DelayedClient):
             task = asyncio.create_task(run())
             await entered.wait()
             task.cancel()
@@ -247,7 +248,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
             process.terminate.assert_called_once()
 
     async def test_interrupted_and_unexpected_eof_never_emit_done(self):
-        from fersk_codex.core import codex
+        from fersk_codex.codex import codex_execution as codex
         from openai_codex.types import TurnStatus
         for final_status in (TurnStatus.interrupted, None):
             async def events():
@@ -256,14 +257,14 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
                         status=final_status, duration_ms=1)))
             handle = NS(id="turn", stream=events)
             thread = NS(id="thread", turn=AsyncMock(return_value=handle))
-            with (patch.object(codex, "AsyncCodex") as factory,
-                  patch.object(codex.session_history, "register_session", AsyncMock()),
-                  patch.object(codex, "_initialize_session_name", AsyncMock()),
-                  patch.object(codex, "_sync_session_time", AsyncMock()),
-                  patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
-                  patch.object(codex, "set_user_thread", AsyncMock()),
-                  patch.object(codex, "prepare_workspace", AsyncMock()),
-                  patch.object(codex, "SavingLog", AsyncMock())):
+            with (patch.object(codex_runtime, "AsyncCodex") as factory,
+                  patch.object(session_history, "register_session", AsyncMock()),
+                  patch.object(codex_session, "_initialize_session_name", AsyncMock()),
+                  patch.object(codex_session, "_sync_session_time", AsyncMock()),
+                  patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
+                  patch.object(thread_manager, "set_user_thread", AsyncMock()),
+                  patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+                  patch.object(codex_execution, "SavingLog", AsyncMock())):
                 factory.return_value.__aenter__.return_value.thread_start.return_value = thread
                 result = [event async for event in FerskCodex.running("user", "hello", "result")]
             self.assertEqual([event["type"] for event in result],
@@ -275,7 +276,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         helpers.StopTests.setUp(self)
         self.enterContext(patch.dict(settings(), maxRunSeconds=0.06, startupTimeoutSeconds=0.04,
                                      checkIntervalSeconds=0.005, cleanupTimeoutSeconds=0.1))
-        self.g.FerskCodex.completed_status = AsyncMock(return_value=None)
+        self.runtime.codex.completed_status = AsyncMock(return_value=None)
         self.cards = []
         async def card(union_id, content, *, session=None):
             if isinstance(content, str):
@@ -284,9 +285,9 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     async for chunk in content:
                         pass
-                except self.g.CardStreamStopped:
+                except self.card_module.CardStreamStopped:
                     pass
-        self.g.sending_card.side_effect = card
+        self.runtime.send_card.side_effect = card
 
     def batch(self):
         return helpers.batch_from_chat_history(helpers.event("hello", message_id="m1"), [])
@@ -295,29 +296,29 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
         captured = []
         async def running(**kwargs):
-            state = self.g.all_runs[kwargs["run_id"]]
+            state = self.runtime.cache.all_runs[kwargs["run_id"]]
             captured.append(state)
             yield {"type": "started"}
             state.probe.finish("completed")
             await asyncio.Event().wait()
-        self.g.FerskCodex.running = running
-        await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+        self.runtime.codex.running = running
+        await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
         state = captured[0]
         self.assertEqual(state.probe.terminal, "completed")
         self.assertTrue(state.probe.cleanup_timed_out)
         self.assertTrue(state.finished.is_set())
-        self.assertFalse(self.g.active_runs_by_chat)
-        self.assertFalse(self.g.all_runs)
-        self.g.FerskCodex.force_close.assert_awaited_once()
-        self.assertNotIn(state.chat_id, self.g.blocked_chats)
+        self.assertFalse(self.runtime.cache.active_runs_by_chat)
+        self.assertFalse(self.runtime.cache.all_runs)
+        self.runtime.codex.force_close.assert_awaited_once()
+        self.assertNotIn(state.chat_id, self.runtime.cache.blocked_chats)
         self.assertIn(CONFIG["messages"]["cleanupTimeout"], self.cards)
         async def healthy(**kwargs):
             yield {"type": "started"}
             yield {"type": "done"}
-        self.g.FerskCodex.running = healthy
+        self.runtime.codex.running = healthy
         following = helpers.batch_from_chat_history(helpers.event("下一条", message_id="next"), [])
-        await asyncio.wait_for(self.g._handle_message_batch(following, 0), 1)
-        self.assertFalse(self.g.all_runs)
+        await asyncio.wait_for(self.execution._handle_message_batch(following, 0), 1)
+        self.assertFalse(self.runtime.cache.all_runs)
 
     async def test_cancel_resistant_delivery_is_quarantined_and_waiters_wake(self):
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
@@ -326,7 +327,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         async def card(union_id, content, *, session=None):
             if isinstance(content, str):
                 return
-            captured.append(next(iter(self.g.all_runs.values())))
+            captured.append(next(iter(self.runtime.cache.all_runs.values())))
             async for _ in content:
                 pass
             while not release.is_set():
@@ -334,18 +335,18 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
                     await release.wait()
                 except asyncio.CancelledError:
                     pass
-        self.g.sending_card.side_effect = card
+        self.runtime.send_card.side_effect = card
         worker = None
         try:
-            await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+            await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
             state = captured[0]
             worker = state.task
             self.assertTrue(state.finished.is_set())
             self.assertTrue(state.detached)
-            self.assertIs(self.g.blocked_chats[state.chat_id], state)
-            self.assertFalse(self.g.active_runs_by_chat)
-            await self.g.processing_stop(helpers.event())
-            self.assertIn(state.chat_id, self.g.blocked_chats)
+            self.assertIs(self.runtime.cache.blocked_chats[state.chat_id], state)
+            self.assertFalse(self.runtime.cache.active_runs_by_chat)
+            await self.commands.processing_stop(helpers.event())
+            self.assertIn(state.chat_id, self.runtime.cache.blocked_chats)
         finally:
             release.set()
             if worker is not None:
@@ -358,61 +359,61 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
         async def confirm(run_id):
             await asyncio.Event().wait()
-        self.g.FerskCodex.running = running
-        self.g.FerskCodex.interrupt_and_confirm.side_effect = confirm
-        await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
-        self.assertFalse(self.g.active_runs_by_chat)
-        self.assertFalse(self.g.all_runs)
+        self.runtime.codex.running = running
+        self.runtime.codex.interrupt_and_confirm.side_effect = confirm
+        await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
+        self.assertFalse(self.runtime.cache.active_runs_by_chat)
+        self.assertFalse(self.runtime.cache.all_runs)
 
     async def test_force_close_hang_is_bounded_and_release_is_idempotent(self):
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.02, cleanupTimeoutSeconds=0.02))
         captured = []
         async def running(**kwargs):
-            state = self.g.all_runs[kwargs["run_id"]]
+            state = self.runtime.cache.all_runs[kwargs["run_id"]]
             captured.append(state)
             yield {"type": "started"}
             state.probe.finish("completed")
             await asyncio.Event().wait()
         async def close(run_id):
             await asyncio.Event().wait()
-        self.g.FerskCodex.running = running
-        self.g.FerskCodex.force_close.side_effect = close
-        with patch("fersk_codex.core.thread_watchdog.journal.record") as record:
-            await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+        self.runtime.codex.running = running
+        self.runtime.codex.force_close.side_effect = close
+        with patch("fersk_codex.codex.thread_watchdog.journal.record") as record:
+            await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
             state = captured[0]
-            self.g._release_run(state)
+            self.runtime._release_run(state)
         self.assertTrue(state.finished.is_set())
-        self.assertIs(self.g.blocked_chats[state.chat_id], state)
+        self.assertIs(self.runtime.cache.blocked_chats[state.chat_id], state)
         self.assertEqual(sum(call.args[0]["event"] == "released" for call in record.call_args_list), 1)
 
     async def test_silent_start_and_silent_stream_are_stopped_and_released(self):
         for started in (False, True):
-            self.g.processed_message_ids.clear()
+            self.runtime.cache.processed_message_ids.clear()
             self.cards.clear()
             async def running(**kwargs):
                 if started:
                     yield {"type": "started"}
                 await asyncio.Event().wait()
-            self.g.FerskCodex.running = running
-            await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+            self.runtime.codex.running = running
+            await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
             self.assertEqual(self.cards, [CONFIG["messages"]["taskTimeout"]])
-            self.assertFalse(self.g.active_runs_by_chat)
-            self.assertFalse(self.g.active_runs_by_message_id)
-            self.assertFalse(self.g.all_runs)
-            self.assertFalse(self.g.codex_locks)
-            self.assertFalse(self.g.received_at)
+            self.assertFalse(self.runtime.cache.active_runs_by_chat)
+            self.assertFalse(self.runtime.cache.active_runs_by_message_id)
+            self.assertFalse(self.runtime.cache.all_runs)
+            self.assertFalse(self.runtime.cache.codex_locks)
+            self.assertFalse(self.runtime.cache.received_at)
 
     async def test_card_wait_does_not_disable_watchdog(self):
         entered = asyncio.Event()
-        original = self.g.sending_card.side_effect
+        original = self.runtime.send_card.side_effect
         async def card(union_id, content, *, session=None):
             if isinstance(content, str):
                 await original(union_id, content)
             else:
                 entered.set()
                 await asyncio.Event().wait()
-        self.g.sending_card.side_effect = card
-        await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
+        self.runtime.send_card.side_effect = card
+        await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
         self.assertTrue(entered.is_set())
         self.assertEqual(self.cards, [CONFIG["messages"]["taskTimeout"]])
 
@@ -422,58 +423,58 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         async def confirm(run_id):
             await release.wait()
             return True
-        self.g.FerskCodex.interrupt_and_confirm.side_effect = confirm
-        first = asyncio.create_task(self.g.processing_stop(helpers.event()))
-        second = asyncio.create_task(self.g.processing_stop(helpers.event(message_id="stop2")))
+        self.runtime.codex.interrupt_and_confirm.side_effect = confirm
+        first = asyncio.create_task(self.commands.processing_stop(helpers.event()))
+        second = asyncio.create_task(self.commands.processing_stop(helpers.event(message_id="stop2")))
         await asyncio.sleep(0)
         self.assertFalse(self.cards)
         release.set()
         await asyncio.gather(first, second)
         self.assertEqual(self.cards, [CONFIG["messages"]["stopRequested"]])
-        self.g.FerskCodex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
+        self.runtime.codex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
 
     async def test_unconfirmed_stop_blocks_new_work_and_allows_stop_retry(self):
         state = helpers.StopTests.state(self)
-        self.g.FerskCodex.interrupt_and_confirm.return_value = False
-        await self.g.processing_stop(helpers.event())
-        self.assertIn(state.chat_id, self.g.blocked_chats)
-        await self.g._handle_message_batch(self.batch(), 1)
-        self.g.assemble_codex_input.assert_not_awaited()
-        self.g.FerskCodex.interrupt_and_confirm.return_value = True
-        await self.g.processing_stop(helpers.event(message_id="retry"))
-        self.assertFalse(self.g.blocked_chats)
+        self.runtime.codex.interrupt_and_confirm.return_value = False
+        await self.commands.processing_stop(helpers.event())
+        self.assertIn(state.chat_id, self.runtime.cache.blocked_chats)
+        await self.execution._handle_message_batch(self.batch(), 1)
+        self.execution.assemble_input.assert_not_awaited()
+        self.runtime.codex.interrupt_and_confirm.return_value = True
+        await self.commands.processing_stop(helpers.event(message_id="retry"))
+        self.assertFalse(self.runtime.cache.blocked_chats)
 
     async def test_completed_run_during_card_drain_is_not_failed(self):
-        self.g.FerskCodex.completed_status.return_value = "completed"
+        self.runtime.codex.completed_status.return_value = "completed"
         async def card(union_id, content, *, session=None):
             if not isinstance(content, str):
                 await asyncio.sleep(0.09)
-        self.g.sending_card.side_effect = card
-        await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
-        self.g.FerskCodex.interrupt_and_confirm.assert_not_awaited()
+        self.runtime.send_card.side_effect = card
+        await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
+        self.runtime.codex.interrupt_and_confirm.assert_not_awaited()
         self.assertFalse(self.cards)
 
     async def test_delivery_failure_does_not_mark_model_failed_or_interrupt_it(self):
         async def card(union_id, content, *, session=None):
             async for chunk in content:
                 pass
-            raise self.g.CardDeliveryError("delivery unavailable")
-        self.g.sending_card.side_effect = card
-        with patch("fersk_codex.core.thread_watchdog.journal.record") as record:
-            await asyncio.wait_for(self.g._handle_message_batch(self.batch(), 0), 1)
-        self.g.FerskCodex.interrupt_and_confirm.assert_not_awaited()
-        self.assertFalse(self.g.all_runs)
+            raise self.card_module.CardDeliveryError("delivery unavailable")
+        self.runtime.send_card.side_effect = card
+        with patch("fersk_codex.codex.thread_watchdog.journal.record") as record:
+            await asyncio.wait_for(self.execution._handle_message_batch(self.batch(), 0), 1)
+        self.runtime.codex.interrupt_and_confirm.assert_not_awaited()
+        self.assertFalse(self.runtime.cache.all_runs)
         records = [call.args[0] for call in record.call_args_list]
         self.assertEqual([r["terminal"] for r in records if r["event"] == "terminal"], ["completed"])
         self.assertTrue(any(r["event"] == "delivery_failed" for r in records))
 
     async def test_old_history_does_not_backdate_new_run(self):
-        self.g.processed_message_ids["chat-1"] = {"old": None}
-        self.g.received_at["old"] = 0
+        self.runtime.cache.processed_message_ids["chat-1"] = {"old": None}
+        self.runtime.cache.received_at["old"] = 0
         batch = helpers.batch_from_chat_history(helpers.event("hello", message_id="m1"),
             [helpers.history("hello", "m1"), helpers.history("previous", "old")])
-        await asyncio.wait_for(self.g._handle_message_batch(batch, 0), 1)
-        self.g.FerskCodex.interrupt_and_confirm.assert_not_awaited()
+        await asyncio.wait_for(self.execution._handle_message_batch(batch, 0), 1)
+        self.runtime.codex.interrupt_and_confirm.assert_not_awaited()
         self.assertFalse(self.cards)
 
 

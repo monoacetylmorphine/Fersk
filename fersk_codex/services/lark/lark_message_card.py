@@ -23,7 +23,7 @@ from fersk_codex.services.lark.lark_client import client
 from fersk_codex.services.lark.lark_requests import call_lark
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.utils.logger import get_logger
-from fersk_codex.core.thread_watchdog import settings
+from fersk_codex.codex.thread_watchdog import settings
 
 logger = get_logger("Card")
 UPDATE_INTERVAL = 0.25
@@ -84,7 +84,6 @@ def _replace_markdown_images(content: str) -> str:
 
 class CardStreamSession:
     """One run's output controls; the sender remains the only CardKit writer.
-
     Controls wake a silent source without cancelling its pending read. There is
     at most one prefetched event, so a slow card cannot build an unbounded queue.
     The gateway serializes steer RPCs with its existing owner.controls lock.
@@ -257,93 +256,6 @@ def _card(content: str, streaming: bool) -> dict:
     }
 
 
-# {
-#     "schema": "2.0",
-#     "config": {
-#         "update_multi": true,
-#         "streaming_mode": true,
-#         "streaming_config": {
-#             "print_step": {
-#                 "default": 1
-#             },
-#             "print_frequency_ms": {
-#                 "default": 70
-#             },
-#             "print_strategy": "delay"
-#         }
-#     },
-#     "body": {
-#         "direction": "vertical",
-#         "padding": "12px 12px 12px 12px",
-#         "elements": [
-#             {
-#                 "tag": "markdown",
-#                 "content": "",
-#                 "text_align": "left",
-#                 "text_size": "normal",
-#                 "margin": "0px 0px 0px 0px",
-#                 "element_id": "streaming_txt"
-#             },
-#             {
-#                 "tag": "hr",
-#                 "margin": "0px 0px 0px 0px"
-#             },
-#             {
-#                 "tag": "column_set",
-#                 "horizontal_spacing": "12px",
-#                 "horizontal_align": "right",
-#                 "columns": [
-#                     {
-#                         "tag": "column",
-#                         "width": "weighted",
-#                         "elements": [
-#                             {
-#                                 "tag": "markdown",
-#                                 "content": "<font color=\"grey-600\">内容由 AI 生成, 请仔细甄别</font>",
-#                                 "text_align": "center",
-#                                 "text_size": "notation",
-#                                 "margin": "4px 0px 0px 0px",
-#                                 "element_id": "footnote_text"
-#                             }
-#                         ],
-#                         "padding": "0px 0px 0px 0px",
-#                         "direction": "vertical",
-#                         "horizontal_spacing": "8px",
-#                         "vertical_spacing": "8px",
-#                         "horizontal_align": "left",
-#                         "vertical_align": "top",
-#                         "margin": "0px 0px 0px 0px",
-#                         "weight": 1
-#                     },
-#                     {
-#                         "tag": "column",
-#                         "width": "auto",
-#                         "elements": [],
-#                         "padding": "0px 0px 0px 0px",
-#                         "direction": "vertical",
-#                         "horizontal_spacing": "8px",
-#                         "vertical_spacing": "8px",
-#                         "horizontal_align": "left",
-#                         "vertical_align": "top",
-#                         "margin": "0px 0px 0px 0px"
-#                     },
-#                     {
-#                         "tag": "column",
-#                         "width": "auto",
-#                         "elements": [],
-#                         "padding": "0px 0px 0px 0px",
-#                         "vertical_spacing": "8px",
-#                         "horizontal_align": "left",
-#                         "vertical_align": "top",
-#                         "margin": "0px 0px 0px 0px"
-#                     }
-#                 ],
-#                 "margin": "0px 0px 4px 0px"
-#             }
-#         ]
-#     }
-# }
-
 async def _call(operation, request):
     try:
         async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
@@ -374,7 +286,6 @@ async def sending_card(
     *, session: CardStreamSession | None = None,
 ) -> str | None:
     """发送卡片并返回最后一张的 message_id；9 分钟关闭，按需续卡。
-
     union_id 来自消息批次，也兼容以 oc_ 开头的群 chat_id。
     空内容不发送；CardStreamStopped 结束流式状态且不刷新缓冲。
     """

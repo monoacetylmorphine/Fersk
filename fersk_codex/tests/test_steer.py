@@ -12,8 +12,9 @@ from openai_codex import AsyncThread, InvalidRequestError, LocalImageInput
 from openai_codex.types import TurnStatus, TurnCompletedNotification
 from openai_codex.generated.v2_all import AgentMessageThreadItem, ThreadStatus
 
-from fersk_codex.core import codex
-from fersk_codex.core.codex import FerskCodex, LiveTurn
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex
+from fersk_codex.codex.codex_execution import FerskCodex, LiveTurn
 from fersk_codex.utils.config_loader import CONFIG
 from fersk_codex.middleware.message_collector import batch_from_chat_history
 import test_stop_command as helpers
@@ -28,9 +29,9 @@ def status(kind):
 
 class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
         stack = self.enterContext(ExitStack())
         for name, value in (("_active_turns", {}), ("_live_turns", {}),
                             ("_pending_interrupts", set()), ("_turns_guard", asyncio.Lock())):
@@ -123,11 +124,11 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
         self.handle.stream = stream
         self.handle.steer.side_effect = steer
         self.thread.turn = AsyncMock(return_value=self.handle)
-        with (patch.object(codex, "AsyncCodex") as client_class,
-              patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
-              patch.object(codex, "set_user_thread", AsyncMock()),
-              patch.object(codex, "prepare_workspace", AsyncMock()),
-              patch.object(codex, "SavingLog", AsyncMock()) as saving):
+        with (patch.object(codex_runtime, "AsyncCodex") as client_class,
+              patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
+              patch.object(thread_manager, "set_user_thread", AsyncMock()),
+              patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+              patch.object(codex_execution, "SavingLog", AsyncMock()) as saving):
             client_class.return_value.__aenter__.return_value.thread_start.return_value = self.thread
             events = FerskCodex.running("user", "hello", "actual", notify_started=True)
             self.assertEqual((await anext(events))["type"], "started")
@@ -160,11 +161,11 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
             yield NS(method="turn/completed", payload=NS(turn=NS(duration_ms=10, status=TurnStatus.completed)))
         self.handle.stream = stream
         self.thread.turn = AsyncMock(return_value=self.handle)
-        with (patch.object(codex, "AsyncCodex") as client_class,
-              patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
-              patch.object(codex, "set_user_thread", AsyncMock()),
-              patch.object(codex, "prepare_workspace", AsyncMock()),
-              patch.object(codex, "SavingLog", AsyncMock())):
+        with (patch.object(codex_runtime, "AsyncCodex") as client_class,
+              patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
+              patch.object(thread_manager, "set_user_thread", AsyncMock()),
+              patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+              patch.object(codex_execution, "SavingLog", AsyncMock())):
             client_class.return_value.__aenter__.return_value.thread_start.return_value = self.thread
             events = [event async for event in FerskCodex.running("user", "hello", "phases")]
         self.assertEqual(events, [
@@ -176,15 +177,19 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reasoning_delta_variants_reach_gateway_before_answer(self):
         # 事件格式来自根目录两份流式样本；短文本仅用于验证传递与替换。
-        source = ast.parse((Path(__file__).resolve().parents[1] / "gateway.py").read_text())
-        reply = next(n for n in source.body
+        source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
+        reply = next(n for n in ast.walk(source)
                      if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         class CardReplace:
             def __init__(self, content):
                 self.content = content
         namespace = dict(aclosing=aclosing, CardReplace=CardReplace,
                          _run_was_interrupted=AsyncMock(return_value=False))
-        exec(compile(ast.Module(body=[reply], type_ignores=[]), "gateway.py", "exec"), namespace)
+        exec(compile(ast.Module(body=[reply], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
+        adapter = NS(runtime=NS(
+            codex=namespace.get("FerskCodex"),
+            _run_was_interrupted=namespace["_run_was_interrupted"],
+        ))
 
         for method, phase in [("item/reasoning/textDelta", "final_answer"),
                               ("item/reasoning/summaryTextDelta", None)]:
@@ -206,14 +211,14 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                         duration_ms=10, status=TurnStatus.completed)))
                 self.handle.stream = stream
                 self.thread.turn = AsyncMock(return_value=self.handle)
-                with (patch.object(codex, "AsyncCodex") as client_class,
-                      patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
-                      patch.object(codex, "set_user_thread", AsyncMock()),
-                      patch.object(codex, "prepare_workspace", AsyncMock()),
-                      patch.object(codex, "SavingLog", AsyncMock())):
+                with (patch.object(codex_runtime, "AsyncCodex") as client_class,
+                      patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
+                      patch.object(thread_manager, "set_user_thread", AsyncMock()),
+                      patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+                      patch.object(codex_execution, "SavingLog", AsyncMock())):
                     client_class.return_value.__aenter__.return_value.thread_start.return_value = self.thread
                     events = FerskCodex.running("user", "hello", "reasoning-variants")
-                    rendered = [chunk async for chunk in namespace["_reply_content"](
+                    rendered = [chunk async for chunk in namespace["_reply_content"](adapter,
                         None, None, NS(), events=events)]
                 self.assertEqual(rendered[:2], ["推理一", "推理二"])
                 self.assertEqual(len(rendered), 3)
@@ -252,12 +257,12 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
                         chunk.applied.set_result(True)
                     else:
                         chunks.append(chunk)
-            except self.g.CardStreamStopped:
+            except self.card_module.CardStreamStopped:
                 pass
-        self.g.FerskCodex.running = running
-        self.g.FerskCodex.steer.return_value = {"type": "steered"}
-        self.g.sending_card.side_effect = card
-        self.g.assemble_codex_input.side_effect = lambda batch: NS(
+        self.runtime.codex.running = running
+        self.runtime.codex.steer.return_value = {"type": "steered"}
+        self.runtime.send_card.side_effect = card
+        self.execution.assemble_input.side_effect = lambda batch: NS(
             codex_input="|".join(m.content.get("text", "attachment") for m in batch.messages), notices=())
 
     async def asyncTearDown(self):
@@ -271,7 +276,7 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         return batch_from_chat_history(helpers.event(text, chat=chat, message_id=mid), items or [])
 
     async def start(self):
-        task = asyncio.create_task(self.g._handle_message_batch(self.batch("first", "m1"), 0))
+        task = asyncio.create_task(self.execution._handle_message_batch(self.batch("first", "m1"), 0))
         self.tasks.append(task)
         await asyncio.wait_for(self.started.wait(), 1)
         return task
@@ -281,23 +286,23 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         for index in (2, 3):
             batch = self.batch(f"next-{index}", f"m{index}", items=[
                 helpers.history(f"next-{index}", f"m{index}"), helpers.history("first", "m1")])
-            await asyncio.wait_for(self.g._handle_message_batch(batch, 0), 1)
+            await asyncio.wait_for(self.execution._handle_message_batch(batch, 0), 1)
         self.assertFalse(task.done())
         self.assertEqual(self.starts, ["first"])
         self.assertEqual(len(self.cards), 3)
-        self.assertEqual([c.args[1] for c in self.g.FerskCodex.steer.await_args_list], ["next-2", "next-3"])
-        owner = self.g.active_runs_by_chat["chat-1"]
+        self.assertEqual([c.args[1] for c in self.runtime.codex.steer.await_args_list], ["next-2", "next-3"])
+        owner = self.runtime.cache.active_runs_by_chat["chat-1"]
         self.assertEqual(owner.message_ids, frozenset({"m1", "m2", "m3"}))
         self.finish.set()
         await task
-        await self.g._handle_message_batch(self.batch("fresh", "m4"), 0)
+        await self.execution._handle_message_batch(self.batch("fresh", "m4"), 0)
         self.assertEqual(self.starts, ["first", "fresh"])
-        self.assertFalse(self.g.active_runs_by_message_id)
+        self.assertFalse(self.runtime.cache.active_runs_by_message_id)
 
     async def test_idle_race_drains_old_stream_then_starts_new_turn(self):
         task = await self.start()
-        self.g.FerskCodex.steer.return_value = {"type": "idle"}
-        follow = asyncio.create_task(self.g._handle_message_batch(self.batch("second", "m2"), 0))
+        self.runtime.codex.steer.return_value = {"type": "idle"}
+        follow = asyncio.create_task(self.execution._handle_message_batch(self.batch("second", "m2"), 0))
         self.tasks.append(follow)
         await asyncio.sleep(0)
         self.assertEqual(self.starts, ["first"])
@@ -307,45 +312,45 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_command_stops_and_never_steers(self):
         task = await self.start()
-        await asyncio.wait_for(self.g.processing(helpers.event("/new", message_id="m2")), 1)
+        await asyncio.wait_for(self.router.processing(helpers.event("/new", message_id="m2")), 1)
         await asyncio.wait_for(task, 1)
-        self.g.FerskCodex.steer.assert_not_awaited()
-        self.g.FerskCodex.reset_thread.assert_awaited_once_with("user-1")
+        self.runtime.codex.steer.assert_not_awaited()
+        self.runtime.codex.reset_thread.assert_awaited_once_with("user-1")
         self.assertEqual(self.starts, ["first"])
         self.assertIn(CONFIG["messages"]["newThreadCreated"], self.cards)
 
     async def test_recall_accepted_steer_interrupts_owner_and_cleans_all_reactions(self):
         task = await self.start()
-        await self.g._handle_message_batch(self.batch("second", "m2"), 0)
-        owner = self.g.active_runs_by_chat["chat-1"]
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
-        await self.g.processing_recall(NS(event=NS(chat_id="chat-1", message_id="m2", recall_type="message_owner")))
-        self.g.FerskCodex.interrupt_and_confirm.assert_awaited_once_with(owner.run_id)
+        await self.execution._handle_message_batch(self.batch("second", "m2"), 0)
+        owner = self.runtime.cache.active_runs_by_chat["chat-1"]
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
+        await self.commands.processing_recall(NS(event=NS(chat_id="chat-1", message_id="m2", recall_type="message_owner")))
+        self.runtime.codex.interrupt_and_confirm.assert_awaited_once_with(owner.run_id)
         self.finish.set()
         await task
-        self.assertFalse(self.g.reaction_message_ids)
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
 
     async def test_recall_during_steer_ack_interrupts_original_turn(self):
         task = await self.start()
         async def steer(*args, **kwargs):
-            await self.g.processing_recall(NS(event=NS(
+            await self.commands.processing_recall(NS(event=NS(
                 chat_id="chat-1", message_id="m2", recall_type="message_owner")))
             return {"type": "steered"}
-        self.g.FerskCodex.steer.side_effect = steer
-        owner = self.g.active_runs_by_chat["chat-1"]
-        await self.g._handle_message_batch(self.batch("second", "m2"), 0)
+        self.runtime.codex.steer.side_effect = steer
+        owner = self.runtime.cache.active_runs_by_chat["chat-1"]
+        await self.execution._handle_message_batch(self.batch("second", "m2"), 0)
         self.assertTrue(owner.interrupted)
-        self.g.FerskCodex.interrupt_and_confirm.assert_awaited_once_with(owner.run_id)
+        self.runtime.codex.interrupt_and_confirm.assert_awaited_once_with(owner.run_id)
         self.finish.set()
         await task
 
     async def test_stop_during_steer_prevents_next_old_submission(self):
         task = await self.start()
         async def steer(*args, **kwargs):
-            await self.g.processing_stop(helpers.event())
+            await self.commands.processing_stop(helpers.event())
             return {"type": "idle"}
-        self.g.FerskCodex.steer.side_effect = steer
-        follow = asyncio.create_task(self.g._handle_message_batch(self.batch("second", "m2"), 0))
+        self.runtime.codex.steer.side_effect = steer
+        follow = asyncio.create_task(self.execution._handle_message_batch(self.batch("second", "m2"), 0))
         self.tasks.append(follow)
         await asyncio.sleep(0)
         self.finish.set()
@@ -354,26 +359,26 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_steer_does_not_start_or_close_original_stream(self):
         task = await self.start()
-        self.g.FerskCodex.steer.return_value = {"type": "error", "content": "failed"}
-        await self.g._handle_message_batch(self.batch("second", "m2"), 0)
+        self.runtime.codex.steer.return_value = {"type": "error", "content": "failed"}
+        await self.execution._handle_message_batch(self.batch("second", "m2"), 0)
         self.assertEqual(self.starts, ["first"])
         self.assertFalse(task.done())
         self.assertEqual(self.cards[-1], "failed")
 
     async def test_repeated_delivery_and_late_reaction_do_not_resubmit(self):
         self.finish.set()
-        await self.g.processing(helpers.event("first", message_id="m1"))
-        await self.g.processing(helpers.event("first", message_id="m1"))
+        await self.router.processing(helpers.event("first", message_id="m1"))
+        await self.router.processing(helpers.event("first", message_id="m1"))
         self.assertEqual(self.starts, ["first"])
-        self.g.adding_reaction_emoji.assert_awaited_once()
-        await self.g._handle_message_batch(self.batch("history", "m2"), 0)
-        await self.g.processing(helpers.event("history", message_id="m2"))
+        self.router.add_reaction.assert_awaited_once()
+        await self.execution._handle_message_batch(self.batch("history", "m2"), 0)
+        await self.router.processing(helpers.event("history", message_id="m2"))
         self.assertEqual(self.starts, ["first", "history"])
-        self.assertFalse(self.g.reaction_message_ids)
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
 
     async def test_completed_steer_is_filtered_from_next_history(self):
         task = await self.start()
-        await self.g._handle_message_batch(self.batch("supplement", "m2"), 0)
+        await self.execution._handle_message_batch(self.batch("supplement", "m2"), 0)
         self.finish.set()
         await task
         # Even if history has not returned the new card, the accepted input
@@ -383,9 +388,9 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
             {"message_id": "old-card", "sender": {"sender_type": "app"}},
             helpers.history("first", "m1"),
         ])
-        await self.g._handle_message_batch(batch, 0)
+        await self.execution._handle_message_batch(batch, 0)
         self.assertEqual(self.starts, ["first", "fresh"])
-        self.g.FerskCodex.steer.assert_awaited_once()
+        self.runtime.codex.steer.assert_awaited_once()
 
     def real_card_sender(self):
         """Exercise the real adapter/controller/writer; mock only network I/O."""
@@ -413,19 +418,19 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         async def call(operation, request):
             return operation(request)
         self.enterContext(patch.object(card, "_call", side_effect=call))
-        self.g.sending_card.side_effect = card.sending_card
+        self.runtime.send_card.side_effect = card.sending_card
         return card, client, sent, bodies, writes, closed
 
     async def test_real_sender_rotates_while_silent_and_final_goes_to_new_card(self):
         card, client, sent, bodies, writes, closed = self.real_card_sender()
         task = await self.start()
         await asyncio.wait_for(sent.wait(), 1)
-        owner = self.g.active_runs_by_chat["chat-1"]
-        await self.g._handle_message_batch(self.batch("supplement", "m2"), 0)
+        owner = self.runtime.cache.active_runs_by_chat["chat-1"]
+        await self.execution._handle_message_batch(self.batch("supplement", "m2"), 0)
         self.assertEqual(len(bodies), 2)
         self.assertEqual(closed, ["card-1"])
         self.assertEqual(bodies[1]["body"]["elements"][0]["content"], CONFIG["messages"]["steerAccepted"])
-        self.assertIs(self.g.active_runs_by_chat["chat-1"], owner)
+        self.assertIs(self.runtime.cache.active_runs_by_chat["chat-1"], owner)
         self.finish.set()
         await task
         self.assertEqual(writes, [("card-2", "after")])
@@ -440,8 +445,8 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
             self.finish.set()
             await asyncio.sleep(0)
             return {"type": "steered"}
-        self.g.FerskCodex.steer.side_effect = steer
-        await asyncio.wait_for(self.g._handle_message_batch(self.batch("supplement", "m2"), 0), 1)
+        self.runtime.codex.steer.side_effect = steer
+        await asyncio.wait_for(self.execution._handle_message_batch(self.batch("supplement", "m2"), 0), 1)
         await asyncio.wait_for(task, 1)
         self.assertEqual(writes, [("card-2", "after")])
         self.assertEqual(closed, ["card-1", "card-2"])
@@ -451,13 +456,13 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         task = await self.start()
         await asyncio.wait_for(sent.wait(), 1)
         client.cardkit.v1.card.create.side_effect = card.CardRequestError("offline")
-        await self.g._handle_message_batch(self.batch("supplement", "m2"), 0)
+        await self.execution._handle_message_batch(self.batch("supplement", "m2"), 0)
         self.assertFalse(task.done())
         self.finish.set()
         await task
         self.assertEqual(self.starts, ["first"])
-        self.g.FerskCodex.interrupt_and_confirm.assert_not_awaited()
-        self.g.FerskCodex.steer.assert_awaited_once()
+        self.runtime.codex.interrupt_and_confirm.assert_not_awaited()
+        self.runtime.codex.steer.assert_awaited_once()
 
     async def test_real_sender_stop_during_close_never_sends_new_work_card(self):
         card, client, sent, bodies, writes, closed = self.real_card_sender()
@@ -470,10 +475,10 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
             return operation(request)
         self.enterContext(patch.object(card, "_call", side_effect=call))
-        follow = asyncio.create_task(self.g._handle_message_batch(self.batch("supplement", "m2"), 0))
+        follow = asyncio.create_task(self.execution._handle_message_batch(self.batch("supplement", "m2"), 0))
         self.tasks.append(follow)
         await asyncio.wait_for(entered.wait(), 1)
-        stopped = asyncio.create_task(self.g.processing_stop(helpers.event(message_id="stop")))
+        stopped = asyncio.create_task(self.commands.processing_stop(helpers.event(message_id="stop")))
         self.tasks.append(stopped)
         await asyncio.sleep(0)
         release.set()
@@ -482,59 +487,59 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_other_chat_can_start_while_first_is_running(self):
         await self.start()
-        other = asyncio.create_task(self.g._handle_message_batch(self.batch("other", "m2", "chat-2"), 0))
+        other = asyncio.create_task(self.execution._handle_message_batch(self.batch("other", "m2", "chat-2"), 0))
         self.tasks.append(other)
         await asyncio.sleep(0)
         async with asyncio.timeout(1):
             while len(self.starts) < 2:
                 await asyncio.sleep(0)
         self.assertEqual(self.starts, ["first", "other"])
-        self.g.FerskCodex.steer.assert_not_awaited()
+        self.runtime.codex.steer.assert_not_awaited()
 
     async def test_startup_window_does_not_create_two_turns(self):
         entering, release = asyncio.Event(), asyncio.Event()
-        original = self.g.FerskCodex.running
+        original = self.runtime.codex.running
         async def slow_start(**kwargs):
             entering.set()
             await release.wait()
             async for event in original(**kwargs):
                 yield event
-        self.g.FerskCodex.running = slow_start
-        first = asyncio.create_task(self.g._handle_message_batch(self.batch("first", "m1"), 0))
+        self.runtime.codex.running = slow_start
+        first = asyncio.create_task(self.execution._handle_message_batch(self.batch("first", "m1"), 0))
         self.tasks.append(first)
         await asyncio.wait_for(entering.wait(), 1)
-        second = asyncio.create_task(self.g._handle_message_batch(self.batch("second", "m2"), 0))
+        second = asyncio.create_task(self.execution._handle_message_batch(self.batch("second", "m2"), 0))
         self.tasks.append(second)
         await asyncio.sleep(0)
-        self.g.FerskCodex.steer.assert_not_awaited()
+        self.runtime.codex.steer.assert_not_awaited()
         release.set()
         await asyncio.wait_for(second, 1)
         self.assertEqual(self.starts, ["first"])
-        self.g.FerskCodex.steer.assert_awaited_once()
+        self.runtime.codex.steer.assert_awaited_once()
 
     async def test_finish_during_steer_ack_keeps_message_cleanup(self):
         task = await self.start()
-        self.g.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
+        self.runtime.cache.reaction_message_ids = {"chat-1": {"m1": "r1", "m2": "r2"}}
         async def steer(*args, **kwargs):
             self.finish.set()
             await asyncio.sleep(0)
             self.assertFalse(task.done())
             return {"type": "steered"}
-        self.g.FerskCodex.steer.side_effect = steer
-        await self.g._handle_message_batch(self.batch("second", "m2"), 0)
+        self.runtime.codex.steer.side_effect = steer
+        await self.execution._handle_message_batch(self.batch("second", "m2"), 0)
         await asyncio.wait_for(task, 1)
-        self.assertFalse(self.g.reaction_message_ids)
-        self.assertFalse(self.g.active_runs_by_message_id)
-        self.assertEqual(self.g.delete_reaction_emoji.await_count, 2)
+        self.assertFalse(self.runtime.cache.reaction_message_ids)
+        self.assertFalse(self.runtime.cache.active_runs_by_message_id)
+        self.assertEqual(self.runtime.delete_reaction.await_count, 2)
 
     async def test_buffered_attachment_flush_steers_running_turn(self):
         await self.start()
-        self.g.message_buffer_seconds = 0
+        self.router.buffer_seconds = lambda: 0
         data = helpers.event("image", message_id="m2")
         data.event.message.message_type = "image"
-        await self.g.processing(data)
-        await asyncio.wait_for(self.g.buffer_tasks["chat-1"], 1)
-        self.g.FerskCodex.steer.assert_awaited_once()
+        await self.router.processing(data)
+        await asyncio.wait_for(self.runtime.cache.buffer_tasks["chat-1"], 1)
+        self.runtime.codex.steer.assert_awaited_once()
         self.assertEqual(self.starts, ["first"])
 
     async def test_gateway_backend_and_real_sdk_handles_share_turn_and_stream(self):
@@ -553,24 +558,24 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         runtime = NS(_client=low, _ensure_initialized=AsyncMock())
         thread = AsyncThread(runtime, "thread-1")
         runtime.thread_start = AsyncMock(return_value=thread)
-        self.g.FerskCodex = FerskCodex
-        with (patch.object(codex, "AsyncCodex") as client_class,
-              patch.object(codex.session_history, "register_session", AsyncMock()),
-              patch.object(codex, "_initialize_session_name", AsyncMock()),
-              patch.object(codex, "_sync_session_time", AsyncMock()),
-              patch.object(codex, "get_user_thread", AsyncMock(return_value=None)),
-              patch.object(codex, "set_user_thread", AsyncMock()),
-              patch.object(codex, "prepare_workspace", AsyncMock()),
-              patch.object(codex, "SavingLog", AsyncMock()) as saving,
+        self.runtime.codex = FerskCodex
+        with (patch.object(codex_runtime, "AsyncCodex") as client_class,
+              patch.object(session_history, "register_session", AsyncMock()),
+              patch.object(codex_session, "_initialize_session_name", AsyncMock()),
+              patch.object(codex_session, "_sync_session_time", AsyncMock()),
+              patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
+              patch.object(thread_manager, "set_user_thread", AsyncMock()),
+              patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+              patch.object(codex_execution, "SavingLog", AsyncMock()) as saving,
               patch.object(FerskCodex, "_live_turns", {}),
               patch.object(FerskCodex, "_active_turns", {}),
               patch.object(FerskCodex, "_pending_interrupts", set())):
             client_class.return_value.__aenter__.return_value = runtime
-            task = asyncio.create_task(self.g._handle_message_batch(self.batch("first", "m1"), 0))
+            task = asyncio.create_task(self.execution._handle_message_batch(self.batch("first", "m1"), 0))
             self.tasks.append(task)
             await asyncio.wait_for(entered.wait(), 1)
             try:
-                await self.g._handle_message_batch(self.batch("second", "m2"), 0)
+                await self.execution._handle_message_batch(self.batch("second", "m2"), 0)
                 low.thread_read.assert_awaited_once_with("thread-1", include_turns=False)
                 low.turn_steer.assert_awaited_once()
                 args = low.turn_steer.call_args.args

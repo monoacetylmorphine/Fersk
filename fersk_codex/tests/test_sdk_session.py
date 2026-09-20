@@ -2,14 +2,15 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex
 
 
 class SdkSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_preserves_user_configuration(self):
         manager = AsyncMock()
         manager._client = None
-        with patch.object(codex, "AsyncCodex", return_value=manager) as factory:
+        with patch.object(codex_runtime, "AsyncCodex", return_value=manager) as factory:
             async with codex.FerskCodex._session(None) as client:
                 self.assertIs(client, manager.__aenter__.return_value)
             factory.assert_called_once_with()
@@ -28,9 +29,9 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(self.cls, '_closed_runs', set()))
         self.manager = AsyncMock()
         self.manager._client = SimpleNamespace(_sync=SimpleNamespace(_proc=None))
-        self.factory = self.enterContext(patch.object(codex, 'AsyncCodex', return_value=self.manager))
-        self.enterContext(patch.dict(codex.settings(), cleanupTimeoutSeconds=0.05))
-        self.enterContext(patch.object(codex.logger, 'exception'))
+        self.factory = self.enterContext(patch.object(codex_runtime, 'AsyncCodex', return_value=self.manager))
+        self.enterContext(patch.dict(codex_runtime.settings(), cleanupTimeoutSeconds=0.05))
+        self.enterContext(patch.object(codex_runtime.logger, 'exception'))
 
     async def test_control_sessions_have_distinct_ids_and_release_indexes(self):
         async with self.cls._session(None):
@@ -44,8 +45,8 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
     async def test_force_close_success_allows_reset_without_replaying_archive(self):
         self.manager.__aexit__.side_effect = RuntimeError('close failed')
         with patch.object(self.cls, 'force_close', AsyncMock(return_value=True)) as close, \
-                patch.object(codex, 'get_user_thread', AsyncMock(return_value='old')), \
-                patch.object(codex, 'set_user_thread', AsyncMock()) as save:
+                patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value='old')), \
+                patch.object(thread_manager, 'set_user_thread', AsyncMock()) as save:
             await self.cls.reset_thread('user')
         close.assert_awaited_once()
         self.manager.__aenter__.return_value.thread_archive.assert_awaited_once_with(thread_id='old')
@@ -56,11 +57,11 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
     async def test_unconfirmed_close_prevents_reset_and_restore_binding_writes(self):
         self.manager.__aexit__.side_effect = RuntimeError('close failed')
         with patch.object(self.cls, 'force_close', AsyncMock(return_value=False)), \
-                patch.object(codex, 'get_user_thread', AsyncMock(return_value='old')), \
-                patch.object(codex, 'set_user_thread', AsyncMock()) as save, \
-                patch.object(codex.session_history, 'get_session', AsyncMock(return_value=object())), \
-                patch.object(codex, '_initialize_session_name', AsyncMock()), \
-                patch.object(codex.session_history, 'update_session_time', AsyncMock()) as update:
+                patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value='old')), \
+                patch.object(thread_manager, 'set_user_thread', AsyncMock()) as save, \
+                patch.object(session_history, 'get_session', AsyncMock(return_value=object())), \
+                patch.object(codex_session, '_initialize_session_name', AsyncMock()), \
+                patch.object(session_history, 'update_session_time', AsyncMock()) as update:
             for operation in (self.cls.reset_thread('user'), self.cls.restore_session('user', 'target')):
                 with self.assertRaisesRegex(RuntimeError, '未确认'):
                     await operation
@@ -119,12 +120,12 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_background_cleanup_backs_off_and_expires(self):
         from fersk_codex.middleware.session_cache import RETENTION_SECONDS
         self.cls._control_cleanup['control'] = (100, 100)
-        with patch.object(codex.time, 'monotonic', return_value=100), \
+        with patch.object(codex_runtime.time, 'monotonic', return_value=100), \
                 patch.object(self.cls, 'force_close', AsyncMock(return_value=False)) as close:
             await self.cls.cleanup_control_sessions()
             await self.cls.cleanup_control_sessions()
             close.assert_awaited_once()
-        with patch.object(codex.time, 'monotonic', return_value=100 + RETENTION_SECONDS), \
+        with patch.object(codex_runtime.time, 'monotonic', return_value=100 + RETENTION_SECONDS), \
                 patch.object(self.cls, 'discard_expired_run', AsyncMock()) as discard:
             await self.cls.cleanup_control_sessions()
             discard.assert_awaited_once_with('control')

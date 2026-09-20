@@ -10,15 +10,16 @@ from unittest.mock import AsyncMock, patch
 
 from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnStatus
 
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex
 from fersk_codex.utils import logging as usage_log
 
 
 class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
         for name in ("_clients", "_processes", "_initializers", "_active_turns", "_live_turns"):
             self.enterContext(patch.object(codex.FerskCodex, name, {}))
         for name in ("_pending_interrupts", "_closed_runs"):
@@ -26,12 +27,12 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.db = directory / "usage.sqlite"
         self.enterContext(patch.object(usage_log, "DB_PATH", self.db))
-        self.enterContext(patch.object(codex, "get_user_thread", AsyncMock(return_value=None)))
-        self.enterContext(patch.object(codex, "set_user_thread", AsyncMock()))
-        self.enterContext(patch.object(codex, "prepare_workspace", AsyncMock()))
-        self.save = self.enterContext(patch.object(codex, "SavingLog", AsyncMock(wraps=usage_log.SavingLog)))
-        self.finalize = self.enterContext(patch.object(codex, "finalize_usage", AsyncMock(wraps=usage_log.finalize_usage)))
-        self.factory = self.enterContext(patch.object(codex, "AsyncCodex"))
+        self.enterContext(patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)))
+        self.enterContext(patch.object(thread_manager, "set_user_thread", AsyncMock()))
+        self.enterContext(patch.object(codex_execution, "prepare_workspace", AsyncMock()))
+        self.save = self.enterContext(patch.object(codex_execution, "SavingLog", AsyncMock(wraps=usage_log.SavingLog)))
+        self.finalize = self.enterContext(patch.object(codex_execution, "finalize_usage", AsyncMock(wraps=usage_log.finalize_usage)))
+        self.factory = self.enterContext(patch.object(codex_runtime, "AsyncCodex"))
 
     def events(self, ending, totals=(10, 25), run_id="run-1"):
         async def stream():
@@ -168,7 +169,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_save_does_not_hide_turn_failure_or_retry(self):
         self.save.side_effect = OSError("disk unavailable")
-        with patch.object(codex.logger, "exception") as logger:
+        with patch.object(codex_execution.logger, "exception") as logger:
             events = [e async for e in self.events(TurnStatus.failed)]
         self.assertEqual(events[-1]["type"], "error")
         self.assertEqual(self.save.await_count, 2)
@@ -186,7 +187,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         async def stuck(**kwargs):
             await asyncio.Event().wait()
         self.save.side_effect = stuck
-        with patch.dict(codex.settings(), cleanupTimeoutSeconds=0.01), patch.object(codex.logger, "exception") as logger:
+        with patch.dict(codex_runtime.settings(), cleanupTimeoutSeconds=0.01), patch.object(codex_execution.logger, "exception") as logger:
             events = await asyncio.wait_for(self.drain(self.events(TurnStatus.completed)), 1)
         self.assertEqual(events[-1]["type"], "done")
         self.assertEqual(self.save.await_count, 2)

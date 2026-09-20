@@ -10,15 +10,16 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from openai_codex.types import TurnStatus
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex
 from fersk_codex.utils import workspace as module
 
 
 class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.children = []
         self.started = asyncio.Event()
@@ -61,10 +62,10 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         handle = NS(id='turn', stream=stream)
         thread = NS(id='thread', turn=AsyncMock(return_value=handle))
         with patch.object(module.asyncio, 'create_subprocess_exec', self.sleeping_git), \
-             patch.dict(codex.CONFIG['storage'], workspaceRoot=str(self.root)), \
-             patch.object(codex, 'get_user_thread', AsyncMock(return_value=None)), \
-             patch.object(codex, 'set_user_thread', AsyncMock()), \
-             patch.object(codex, 'AsyncCodex') as factory:
+             patch.dict(codex_execution.CONFIG['storage'], workspaceRoot=str(self.root)), \
+             patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value=None)), \
+             patch.object(thread_manager, 'set_user_thread', AsyncMock()), \
+             patch.object(codex_runtime, 'AsyncCodex') as factory:
             factory.return_value.__aenter__.return_value.thread_start.return_value = thread
             slow = asyncio.create_task(module.prepare_workspace(self.root / 'slow', 10))
             try:
@@ -103,9 +104,9 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.children[0].returncode)
 
     async def test_init_failure_prevents_model_submission(self):
-        with patch.object(codex, 'get_user_thread', AsyncMock(return_value=None)), \
-             patch.object(codex, 'prepare_workspace', AsyncMock(side_effect=TimeoutError)), \
-             patch.object(codex, 'AsyncCodex') as factory:
+        with patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value=None)), \
+             patch.object(codex_execution, 'prepare_workspace', AsyncMock(side_effect=TimeoutError)), \
+             patch.object(codex_runtime, 'AsyncCodex') as factory:
             events = [event async for event in codex.FerskCodex.running('user', 'hello')]
         self.assertEqual(events[0]['type'], 'error')
         factory.assert_not_called()

@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from fersk_codex.core import thread_watchdog as watchdog
+from fersk_codex.codex import thread_watchdog as watchdog
 
 
 class DailyLogTests(unittest.IsolatedAsyncioTestCase):

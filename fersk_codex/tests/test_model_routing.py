@@ -7,15 +7,16 @@ from unittest.mock import AsyncMock, patch
 from openai_codex import LocalImageInput, MentionInput, TextInput
 from openai_codex.types import TurnStatus
 
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex
 from fersk_codex.utils.config_loader import CONFIG
 
 
 class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.enterContext(patch.object(codex.session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
 
     async def test_text_and_attachment_routes_for_new_and_resumed_threads(self):
         routes = {
@@ -45,11 +46,11 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
                     thread = NS(id="thread", turn=AsyncMock(return_value=handle))
                     with (
                         patch.dict(CONFIG["codex"]["models"], routes),
-                        patch.object(codex, "get_user_thread", AsyncMock(return_value=existing)),
-                        patch.object(codex, "set_user_thread", AsyncMock()),
-                        patch.object(codex, "prepare_workspace", AsyncMock()),
-                        patch.object(codex, "SavingLog", AsyncMock()),
-                        patch.object(codex, "AsyncCodex") as factory,
+                        patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=existing)),
+                        patch.object(thread_manager, "set_user_thread", AsyncMock()),
+                        patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+                        patch.object(codex_execution, "SavingLog", AsyncMock()),
+                        patch.object(codex_runtime, "AsyncCodex") as factory,
                     ):
                         client = factory.return_value.__aenter__.return_value
                         client.thread_start.return_value = thread

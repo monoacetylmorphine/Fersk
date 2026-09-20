@@ -1,5 +1,8 @@
 """私聊历史卡片离线回归：真实 SDK 数据模型，外部请求和恢复操作模拟。"""
 
+from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.middleware import gateway_commands
+from fersk_codex.codex import thread_manager
 import asyncio
 import json
 import sys
@@ -14,7 +17,7 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTr
 
 from fersk_codex.services.lark import lark_interactive_card as cards
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_history_command
-from fersk_codex.core import codex, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex, session_history, thread_manager
 import test_stop_command as helpers
 
 
@@ -113,35 +116,35 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         helpers.StopTests.setUp(self)
         self.send = self.enterContext(patch.object(cards, "send_interactive_card", AsyncMock(return_value="message-1")))
         self.update = self.enterContext(patch.object(cards, "update_interactive_card", AsyncMock()))
-        self.listing = self.enterContext(patch.object(self.g, "list_sessions", AsyncMock(return_value=[
+        self.listing = self.enterContext(patch.object(gateway_commands, "list_sessions", AsyncMock(return_value=[
             NS(thread_id="thread-1", thread_name="历史名称", updated_at=None)])))
-        self.real_restore = self.g.processing_history_restore
-        self.restore = self.enterContext(patch.object(self.g, "processing_history_restore", AsyncMock(
+        self.real_restore = self.commands.processing_history_restore
+        self.restore = self.enterContext(patch.object(self.commands, "processing_history_restore", AsyncMock(
             return_value={"ok": True, "thread_id": "thread-1"})))
-        self.card = self.g.history_cards.create("user-1", "chat-1", options())
+        self.card = self.commands.history_cards.create("user-1", "chat-1", options())
         self.card.message_id = "message-1"
 
     async def test_private_command_bypasses_model_and_group_unchanged(self):
-        await self.g.processing(helpers.event(" /HISTORY "))
+        await self.router.processing(helpers.event(" /HISTORY "))
         self.listing.assert_awaited_once_with("user-1")
         self.send.assert_awaited_once()
-        self.g.getting_chat_history.assert_not_awaited()
-        self.g.adding_reaction_emoji.assert_not_awaited()
+        self.router.fetch_history.assert_not_awaited()
+        self.router.add_reaction.assert_not_awaited()
         self.restore.assert_not_awaited()
         self.send.reset_mock()
-        await self.g.processing_history(helpers.event("/history", chat_type="group"))
+        await self.commands.processing_history(helpers.event("/history", chat_type="group"))
         self.send.assert_not_awaited()
         route = AsyncMock()
-        with patch.object(self.g.router, "_route_message", route), patch(
+        with patch.object(self.router, "_route_message", route), patch(
                 "fersk_codex.middleware.message_router._is_bot_mentioned", return_value=True):
-            await self.g.processing(helpers.event("/history", chat_type="group", message_id="group-1"))
+            await self.router.processing(helpers.event("/history", chat_type="group", message_id="group-1"))
         route.assert_awaited_once()
         self.send.assert_not_awaited()
 
     async def test_confirm_activates_once_with_trusted_context(self):
         data = callback(self.card)
-        await self.g.processing_history_action(data)
-        await self.g.processing_history_action(data)
+        await self.commands.processing_history_action(data)
+        await self.commands.processing_history_action(data)
         self.restore.assert_awaited_once()
         trusted, thread_id = self.restore.call_args.args
         self.assertEqual(trusted.event.message.chat_type, "p2p")
@@ -153,14 +156,14 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancel_unknown_select_and_foreign_callbacks_do_not_restore(self):
         dispatcher = Mock()
-        reply = self.g.dispatch_history_action(dispatcher, callback(self.card, action="cancel"))
+        reply = self.commands.dispatch_history_action(dispatcher, callback(self.card, action="cancel"))
         self.assertIn("未执行", reply.toast.content)
         dispatcher.submit.assert_not_called()
         for data in (callback(self.card, user="other"), callback(self.card, selected="foreign")):
-            await self.g.processing_history_action(data)
+            await self.commands.processing_history_action(data)
         data = callback(self.card)
         data.event.action.tag = "select_static"
-        await self.g.processing_history_action(data)
+        await self.commands.processing_history_action(data)
         self.restore.assert_not_awaited()
         self.assertFalse(self.card.finished)
 
@@ -168,8 +171,8 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.restore.return_value = {"ok": False}
         self.update.side_effect = RuntimeError("network")
         data = callback(self.card)
-        await self.g.processing_history_action(data)
-        await self.g.processing_history_action(data)
+        await self.commands.processing_history_action(data)
+        await self.commands.processing_history_action(data)
         self.restore.assert_awaited_once()
         self.assertIn("激活失败", json.dumps(self.send.call_args.args[1], ensure_ascii=False))
         self.assertTrue(self.card.finished)
@@ -182,9 +185,9 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return {"ok": True}
         self.restore.side_effect = restore
-        task = asyncio.create_task(self.g.processing_history_action(callback(self.card)))
+        task = asyncio.create_task(self.commands.processing_history_action(callback(self.card)))
         await started.wait()
-        await self.g.processing_history_action(callback(self.card))
+        await self.commands.processing_history_action(callback(self.card))
         release.set()
         await task
         self.restore.assert_awaited_once()
@@ -193,17 +196,17 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.card.options = tuple(options(cards.PAGE_SIZE + 1))
         data = callback(self.card, action="history_page")
         data.event.action.value["page"] = 1
-        await self.g.processing_history_action(data)
-        updated = self.g.history_cards.cards[self.card.token]
+        await self.commands.processing_history_action(data)
+        updated = self.commands.history_cards.cards[self.card.token]
         self.assertEqual(updated.page, 1)
         self.assertEqual(updated.revision, 1)
-        await self.g.processing_history_action(data)
+        await self.commands.processing_history_action(data)
         self.update.assert_awaited_once()
         self.restore.assert_not_awaited()
 
     async def test_query_error_not_reported_as_empty_history(self):
         self.listing.side_effect = RuntimeError("database")
-        await self.g.processing_history(helpers.event("/history"))
+        await self.commands.processing_history(helpers.event("/history"))
         text = json.dumps(self.send.call_args.args[1], ensure_ascii=False)
         self.assertIn("失败", text)
         self.assertNotIn("暂无", text)
@@ -211,7 +214,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_history_card_limits_sorted_database_records_without_deleting_history(self):
         directory = self.enterContext(TemporaryDirectory())
         self.enterContext(patch.object(session_history, "DB_PATH", Path(directory) / "state.sqlite"))
-        self.enterContext(patch.object(self.g, "list_sessions", session_history.list_sessions))
+        self.enterContext(patch.object(gateway_commands, "list_sessions", session_history.list_sessions))
         expected = []
         # 故意乱序插入、制造同秒和空时间，验证按数据库更新时间排序后再截取。
         for index in range(36):
@@ -225,16 +228,16 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         await session_history.update_session_time("other", "foreign", 999)
         expected_ids = [item[1] for item in sorted(expected, reverse=True)]
         for limit in (30, 5, 40):
-            with self.subTest(limit=limit), patch.dict(self.g.CONFIG["messaging"], sessionHistoryLimit=limit), patch.object(cards, "PAGE_SIZE", limit):
-                await self.g.processing_history(helpers.event("/history"))
+            with self.subTest(limit=limit), patch.dict(CONFIG["messaging"], sessionHistoryLimit=limit), patch.object(cards, "PAGE_SIZE", limit):
+                await self.commands.processing_history(helpers.event("/history"))
                 body = self.send.call_args.args[1]
                 values = body["body"]["elements"][1]["elements"][0]["options"]
                 self.assertEqual([item["value"] for item in values], expected_ids[:limit])
                 self.assertNotIn("下一页", json.dumps(body, ensure_ascii=False))
-        legacy = dict(self.g.CONFIG["messaging"])
+        legacy = dict(CONFIG["messaging"])
         legacy.pop("sessionHistoryLimit")
-        with patch.dict(self.g.CONFIG["messaging"], legacy, clear=True):
-            await self.g.processing_history(helpers.event("/history"))
+        with patch.dict(CONFIG["messaging"], legacy, clear=True):
+            await self.commands.processing_history(helpers.event("/history"))
         self.assertEqual(len(self.send.call_args.args[1]["body"]["elements"][1]["elements"][0]["options"]), 30)
         self.assertEqual(len(await session_history.list_sessions("user-1")), 36)
 
@@ -253,31 +256,31 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
             yield sdk
 
         self.enterContext(patch.object(codex.FerskCodex, "_session", session))
-        self.g.FerskCodex.restore_session = codex.FerskCodex.restore_session
-        self.enterContext(patch.object(self.g, "processing_history_restore", self.real_restore))
+        self.runtime.codex.restore_session = codex.FerskCodex.restore_session
+        self.enterContext(patch.object(self.commands, "processing_history_restore", self.real_restore))
         for failure in ("unarchive", "database", None):
             with self.subTest(failure=failure):
                 await thread_manager.set_user_thread("user-1", "old")
                 self.card.finished = False
                 sdk.thread_unarchive.reset_mock()
                 sdk.thread_unarchive.side_effect = RuntimeError("unarchive") if failure == "unarchive" else None
-                binding = (patch.object(codex, "set_user_thread", AsyncMock(side_effect=OSError("disk")))
+                binding = (patch.object(thread_manager, "set_user_thread", AsyncMock(side_effect=OSError("disk")))
                            if failure == "database" else nullcontext())
                 with binding:
-                    await self.g.processing_history_action(callback(self.card))
+                    await self.commands.processing_history_action(callback(self.card))
                 sdk.thread_unarchive.assert_awaited_once_with("thread-1")
                 self.assertEqual(await thread_manager.get_user_thread("user-1"), "old" if failure else "thread-1")
-                self.assertNotIn("chat-1", self.g.reset_tasks)
+                self.assertNotIn("chat-1", self.runtime.cache.reset_tasks)
                 text = json.dumps(self.update.call_args.args[1], ensure_ascii=False)
                 self.assertIn("激活失败" if failure else "已激活", text)
 
     def test_callback_capacity_and_expiry_return_error_toast(self):
         dispatcher = Mock()
         dispatcher.submit.return_value = False
-        self.assertEqual(self.g.dispatch_history_action(dispatcher, callback(self.card)).toast.type, "error")
+        self.assertEqual(self.commands.dispatch_history_action(dispatcher, callback(self.card)).toast.type, "error")
         dispatcher.submit.reset_mock()
         self.card.created_at -= cards.CARD_TTL_SECONDS
-        self.assertIn("失效", self.g.dispatch_history_action(dispatcher, callback(self.card)).toast.content)
+        self.assertIn("失效", self.commands.dispatch_history_action(dispatcher, callback(self.card)).toast.content)
         dispatcher.submit.assert_not_called()
 
 

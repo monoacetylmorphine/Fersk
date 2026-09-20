@@ -20,74 +20,74 @@ class NewCommandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_entry_bypasses_assembly_and_duplicate_event(self):
         message = helpers.event('/new')
-        await self.g.processing(message)
-        await self.g.processing(message)
-        self.g.FerskCodex.reset_thread.assert_awaited_once_with('user-1')
-        self.g.assemble_codex_input.assert_not_awaited()
-        self.g.getting_chat_history.assert_not_awaited()
+        await self.router.processing(message)
+        await self.router.processing(message)
+        self.runtime.codex.reset_thread.assert_awaited_once_with('user-1')
+        self.execution.assemble_input.assert_not_awaited()
+        self.router.fetch_history.assert_not_awaited()
 
     async def test_stop_unconfirmed_does_not_reset(self):
         state = helpers.StopTests.state(self)
-        self.g.FerskCodex.interrupt_and_confirm.return_value = False
-        await self.g.processing(helpers.event('/new'))
-        self.g.FerskCodex.reset_thread.assert_not_awaited()
+        self.runtime.codex.interrupt_and_confirm.return_value = False
+        await self.router.processing(helpers.event('/new'))
+        self.runtime.codex.reset_thread.assert_not_awaited()
         self.assertTrue(state.interrupted)
-        self.assertEqual(self.g.sending_card.call_args.kwargs['content'], CONFIG['messages']['stopFailed'])
+        self.assertEqual(self.runtime.send_card.call_args.kwargs['content'], CONFIG['messages']['stopFailed'])
 
     async def test_reset_failure_is_not_success(self):
-        self.g.FerskCodex.reset_thread.side_effect = RuntimeError('archive failed')
-        await self.g.processing(helpers.event('/new'))
-        self.assertEqual(self.g.sending_card.call_args.kwargs['content'], CONFIG['messages']['newThreadFailed'])
-        self.assertFalse(self.g.reset_tasks)
+        self.runtime.codex.reset_thread.side_effect = RuntimeError('archive failed')
+        await self.router.processing(helpers.event('/new'))
+        self.assertEqual(self.runtime.send_card.call_args.kwargs['content'], CONFIG['messages']['newThreadFailed'])
+        self.assertFalse(self.runtime.cache.reset_tasks)
 
     async def test_new_input_waits_for_reset(self):
         entered, release = asyncio.Event(), asyncio.Event()
         async def reset(_):
             entered.set()
             await release.wait()
-        self.g.FerskCodex.reset_thread.side_effect = reset
-        command = asyncio.create_task(self.g.processing(helpers.event('/new')))
+        self.runtime.codex.reset_thread.side_effect = reset
+        command = asyncio.create_task(self.router.processing(helpers.event('/new')))
         await asyncio.wait_for(entered.wait(), 1)
-        self.g.router._process_chat_history = AsyncMock()
-        message = asyncio.create_task(self.g.processing(helpers.event('hello', message_id='next')))
+        self.router._process_chat_history = AsyncMock()
+        message = asyncio.create_task(self.router.processing(helpers.event('hello', message_id='next')))
         await asyncio.sleep(0)
-        self.g.router._process_chat_history.assert_not_awaited()
+        self.router._process_chat_history.assert_not_awaited()
         release.set()
         await asyncio.wait_for(asyncio.gather(command, message), 1)
-        self.assertEqual(self.g.router._process_chat_history.call_args.args[1], 1)
-        self.assertNotIn('chat-1', self.g.chat_generations)
+        self.assertEqual(self.router._process_chat_history.call_args.args[1], 1)
+        self.assertNotIn('chat-1', self.runtime.cache.chat_generations)
 
     async def test_stop_invalidates_input_waiting_for_reset(self):
         entered, release = asyncio.Event(), asyncio.Event()
         async def reset(_):
             entered.set()
             await release.wait()
-        self.g.FerskCodex.reset_thread.side_effect = reset
-        command = asyncio.create_task(self.g.processing(helpers.event('/new')))
+        self.runtime.codex.reset_thread.side_effect = reset
+        command = asyncio.create_task(self.router.processing(helpers.event('/new')))
         await asyncio.wait_for(entered.wait(), 1)
-        self.g.router._process_chat_history = AsyncMock()
-        message = asyncio.create_task(self.g.processing(helpers.event('hello', message_id='next')))
+        self.router._process_chat_history = AsyncMock()
+        message = asyncio.create_task(self.router.processing(helpers.event('hello', message_id='next')))
         await asyncio.sleep(0)
-        await self.g.processing(helpers.event('/stop', message_id='halt'))
+        await self.router.processing(helpers.event('/stop', message_id='halt'))
         release.set()
         await asyncio.wait_for(asyncio.gather(command, message), 1)
-        self.g.router._process_chat_history.assert_not_awaited()
+        self.router._process_chat_history.assert_not_awaited()
 
     async def test_direct_types_and_unknown_do_not_flush_buffer(self):
-        self.g._cancel_buffer = AsyncMock()
-        self.g.router._process_chat_history = AsyncMock()
-        self.g.router._buffer_message = AsyncMock()
+        self.router._cancel_buffer = AsyncMock()
+        self.router._process_chat_history = AsyncMock()
+        self.router._buffer_message = AsyncMock()
         msg = helpers.event('hello')
         msg.event.message.message_type = 'video'
-        await self.g.router._route_message(msg, 0)
-        self.g._cancel_buffer.assert_not_awaited()
-        self.g.router._process_chat_history.assert_not_awaited()
+        await self.router._route_message(msg, 0)
+        self.router._cancel_buffer.assert_not_awaited()
+        self.router._process_chat_history.assert_not_awaited()
         msg.event.message.message_type = 'image'
-        await self.g.router._route_message(msg, 0)
-        self.g.router._buffer_message.assert_awaited_once()
+        await self.router._route_message(msg, 0)
+        self.router._buffer_message.assert_awaited_once()
         msg.event.message.message_type = 'text'
-        await self.g.router._route_message(msg, 0)
-        self.g.router._process_chat_history.assert_awaited_once()
+        await self.router._route_message(msg, 0)
+        self.router._process_chat_history.assert_awaited_once()
 
     def test_unknown_history_is_skipped(self):
         bad = helpers.history('bad', 'bad'); bad['msg_type'] = 'video'

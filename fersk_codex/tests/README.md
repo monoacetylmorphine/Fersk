@@ -35,3 +35,11 @@ python -B tests/run_tests.py --reverse
 卡片结束前不删除、交付失败后也删除、失败记录跨任务释放保留及无新输入时后台重试。
 Office 样例在内存中构造真实 ZIP 包及必要元数据，覆盖伪 ZIP、缺失部件、类型不匹配、
 元数据大小和实体声明；文本覆盖保留扩展名、二进制伪装和 JSON/JSONL 区分。
+
+Codex 拆分后的回归直接使用 `codex_execution.FerskCodex`；SDK 客户端在
+`codex_runtime` 中 mock，会话元数据同步在 `codex_session` 中 mock，执行与用量依赖在
+`codex_execution` 中 mock，线程绑定在 `thread_manager` 中 mock。
+
+网关拆分测试通过 `main.create_gateway()` 创建独立实例，mock 指向 runtime、execution、commands
+或 router 的实际依赖，不再替换旧 `gateway` 模块的全局变量。共享缓存、停止与撤回、steer、
+卡片交付、历史恢复和过期清理沿用原回归场景；启动测试验证组件隔离、事件注册和后台任务退出。

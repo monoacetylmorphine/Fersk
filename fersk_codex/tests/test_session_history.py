@@ -1,5 +1,6 @@
 """历史会话的真实 SQLite 持久化及模拟 SDK 集成测试，不调用外部服务。"""
 
+from fersk_codex.middleware import gateway_commands
 import asyncio
 from pathlib import Path
 import sqlite3
@@ -11,7 +12,8 @@ from unittest.mock import AsyncMock, patch
 from openai_codex import LocalImageInput, MentionInput, TextInput
 from openai_codex.types import TurnStatus
 
-from fersk_codex.core import codex, session_history as history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, codex_session
+from fersk_codex.codex import codex_execution as codex, session_history as history, thread_manager
 import test_stop_command as helpers
 
 
@@ -39,8 +41,8 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         self.db_path = Path(directory) / "state.sqlite"
         self.enterContext(patch.object(history, "DB_PATH", self.db_path))
         self.enterContext(patch.object(thread_manager, "DB_PATH", self.db_path))
-        self.enterContext(patch.object(codex, "prepare_workspace", AsyncMock()))
-        self.factory = self.enterContext(patch.object(codex, "AsyncCodex"))
+        self.enterContext(patch.object(codex_execution, "prepare_workspace", AsyncMock()))
+        self.factory = self.enterContext(patch.object(codex_runtime, "AsyncCodex"))
         self.client = self.factory.return_value.__aenter__.return_value
         self.metadata = NS(name=None, updated_at=100)
 
@@ -177,7 +179,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(RuntimeError):
                     await codex.FerskCodex.restore_session("user", "thread-1")
             self.assertEqual(await thread_manager.get_user_thread("user"), "old")
-        with patch.object(codex, "set_user_thread", AsyncMock(side_effect=OSError("disk"))):
+        with patch.object(thread_manager, "set_user_thread", AsyncMock(side_effect=OSError("disk"))):
             with self.assertRaises(OSError):
                 await codex.FerskCodex.restore_session("user", "thread-1")
         self.assertEqual(await thread_manager.get_user_thread("user"), "old")
@@ -187,7 +189,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         await self.register()
         await thread_manager.set_user_thread("user", "thread-1")
         self.thread.read.side_effect = RuntimeError("offline")
-        with patch.object(codex.logger, "exception") as log:
+        with patch.object(codex_session.logger, "exception") as log:
             self.assertEqual(await self.run_prompt(), [{"type": "done"}])
         log.assert_called_once()
         self.thread.turn.assert_awaited_once()
@@ -200,7 +202,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_name_is_not_marked_complete_by_time_sync(self):
         await self.register(timestamp=None)
-        await codex._sync_session_time("user", self.thread)
+        await codex_session._sync_session_time("user", self.thread)
         self.assertIsNone((await history.get_session("user", "thread-1")).updated_at)
         self.thread.read.assert_not_awaited()
 
@@ -209,7 +211,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         await history.update_session_time("user", "thread-1", 100)
         self.metadata.status = NS(root=NS(type="active"))
         handle = NS(id="turn-1", steer=AsyncMock(return_value=NS(turn_id="turn-1")))
-        route = codex.CONFIG["codex"]["models"]["text"]
+        route = codex_execution.CONFIG["codex"]["models"]["text"]
         live = codex.LiveTurn(self.thread, handle, route["model"], route["provider"], user_id="user")
         with patch.object(codex.FerskCodex, "_live_turns", {"history-run": live}):
             self.assertEqual(await codex.FerskCodex.steer("history-run", "first text"), {"type": "steered"})
@@ -229,8 +231,8 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         async def stuck(**kwargs):
             await asyncio.Event().wait()
         self.thread.read.side_effect = stuck
-        with patch.dict(codex.settings(), cleanupTimeoutSeconds=0.01), patch.object(codex.logger, "exception") as log:
-            await asyncio.wait_for(codex._sync_session_time("user", self.thread), 1)
+        with patch.dict(codex_runtime.settings(), cleanupTimeoutSeconds=0.01), patch.object(codex_session.logger, "exception") as log:
+            await asyncio.wait_for(codex_session._sync_session_time("user", self.thread), 1)
         log.assert_called_once()
         self.assertEqual((await history.get_session("user", "thread-1")).updated_at, 100)
 
@@ -251,72 +253,72 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
 class HistoryGatewayTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         helpers.StopTests.setUp(self)
-        self.g.FerskCodex.restore_session = AsyncMock()
-        self.get_session = self.enterContext(patch.object(self.g, "get_session", AsyncMock(return_value=object())))
-        self.get_active = self.enterContext(patch.object(self.g, "get_user_thread", AsyncMock(return_value="old")))
+        self.runtime.codex.restore_session = AsyncMock()
+        self.get_session = self.enterContext(patch.object(gateway_commands, "get_session", AsyncMock(return_value=object())))
+        self.get_active = self.enterContext(patch.object(gateway_commands, "get_user_thread", AsyncMock(return_value="old")))
 
     async def test_options_keep_same_names_distinct(self):
         records = [history.SessionRecord("user-1", tid, "same", 100) for tid in ("a", "b")]
-        with patch.object(self.g, "list_sessions", AsyncMock(return_value=records)) as listing:
-            result = await self.g.history_options(helpers.event())
+        with patch.object(gateway_commands, "list_sessions", AsyncMock(return_value=records)) as listing:
+            result = await self.commands.history_options(helpers.event())
         listing.assert_awaited_once_with("user-1")
         self.assertEqual([item["value"] for item in result], ["a", "b"])
         self.assertEqual([item["label"] for item in result], ["same", "same"])
 
     async def test_foreign_thread_does_not_stop_current_run(self):
         self.get_session.return_value = None
-        with patch.object(self.g, "_stop_chat", AsyncMock()) as stop:
-            result = await self.g.processing_history_restore(helpers.event(), "foreign")
+        with patch.object(self.commands, "_stop_chat", AsyncMock()) as stop:
+            result = await self.commands.processing_history_restore(helpers.event(), "foreign")
         self.assertEqual(result, {"ok": False, "content": "恢复历史会话失败"})
         stop.assert_not_awaited()
-        self.g.FerskCodex.restore_session.assert_not_awaited()
+        self.runtime.codex.restore_session.assert_not_awaited()
 
     async def test_current_selection_does_not_stop(self):
         self.get_active.return_value = "chosen"
-        with patch.object(self.g, "_stop_chat", AsyncMock()) as stop:
-            result = await self.g.processing_history_restore(helpers.event(), "chosen")
+        with patch.object(self.commands, "_stop_chat", AsyncMock()) as stop:
+            result = await self.commands.processing_history_restore(helpers.event(), "chosen")
         self.assertTrue(result["ok"])
         stop.assert_not_awaited()
 
     async def test_stop_failure_prevents_restore(self):
         helpers.StopTests.state(self)
-        self.g.FerskCodex.interrupt_and_confirm.return_value = False
-        result = await self.g.processing_history_restore(helpers.event(), "chosen")
+        self.runtime.codex.interrupt_and_confirm.return_value = False
+        result = await self.commands.processing_history_restore(helpers.event(), "chosen")
         self.assertFalse(result["ok"])
-        self.g.FerskCodex.restore_session.assert_not_awaited()
-        self.assertFalse(self.g.reset_tasks)
+        self.runtime.codex.restore_session.assert_not_awaited()
+        self.assertFalse(self.runtime.cache.reset_tasks)
 
     async def test_restore_failure_returns_frontend_error(self):
-        self.g.FerskCodex.restore_session.side_effect = RuntimeError("unarchive failed")
-        result = await self.g.processing_history_restore(helpers.event(), "chosen")
+        self.runtime.codex.restore_session.side_effect = RuntimeError("unarchive failed")
+        result = await self.commands.processing_history_restore(helpers.event(), "chosen")
         self.assertEqual(result, {"ok": False, "content": "恢复历史会话失败"})
-        self.assertFalse(self.g.reset_tasks)
+        self.assertFalse(self.runtime.cache.reset_tasks)
 
     async def test_new_input_waits_for_restore(self):
         entered, release = asyncio.Event(), asyncio.Event()
         async def restore(*args):
             entered.set()
             await release.wait()
-        self.g.FerskCodex.restore_session.side_effect = restore
-        task = asyncio.create_task(self.g.processing_history_restore(helpers.event(), "chosen"))
+        self.runtime.codex.restore_session.side_effect = restore
+        task = asyncio.create_task(self.commands.processing_history_restore(helpers.event(), "chosen"))
         await asyncio.wait_for(entered.wait(), 1)
-        self.g.router._process_chat_history = AsyncMock()
-        message = asyncio.create_task(self.g.processing(helpers.event("hello", message_id="next")))
+        self.router._process_chat_history = AsyncMock()
+        message = asyncio.create_task(self.router.processing(helpers.event("hello", message_id="next")))
         try:
             await asyncio.sleep(0)
-            self.g.router._process_chat_history.assert_not_awaited()
+            self.router._process_chat_history.assert_not_awaited()
         finally:
             release.set()
         result, _ = await asyncio.wait_for(asyncio.gather(task, message), 1)
         self.assertTrue(result["ok"])
-        self.g.FerskCodex.restore_session.assert_awaited_once_with("user-1", "chosen")
-        self.g.router._process_chat_history.assert_awaited_once()
-        self.assertFalse(self.g.reset_tasks)
+        self.runtime.codex.restore_session.assert_awaited_once_with("user-1", "chosen")
+        self.router._process_chat_history.assert_awaited_once()
+        self.assertFalse(self.runtime.cache.reset_tasks)
 
     async def test_group_history_uses_existing_chat_binding_scope(self):
-        await self.g.processing_history_restore(helpers.event(chat_type="group"), "chosen")
+        await self.commands.processing_history_restore(helpers.event(chat_type="group"), "chosen")
         self.get_session.assert_awaited_once_with("chat-1", "chosen")
-        self.g.FerskCodex.restore_session.assert_awaited_once_with("chat-1", "chosen")
+        self.runtime.codex.restore_session.assert_awaited_once_with("chat-1", "chosen")
 
     async def test_parallel_selections_are_serialized(self):
         entered, release = asyncio.Event(), asyncio.Event()
@@ -326,10 +328,10 @@ class HistoryGatewayTests(unittest.IsolatedAsyncioTestCase):
             if thread_id == "first":
                 entered.set()
                 await release.wait()
-        self.g.FerskCodex.restore_session.side_effect = restore
-        first = asyncio.create_task(self.g.processing_history_restore(helpers.event(), "first"))
+        self.runtime.codex.restore_session.side_effect = restore
+        first = asyncio.create_task(self.commands.processing_history_restore(helpers.event(), "first"))
         await asyncio.wait_for(entered.wait(), 1)
-        second = asyncio.create_task(self.g.processing_history_restore(helpers.event(), "second"))
+        second = asyncio.create_task(self.commands.processing_history_restore(helpers.event(), "second"))
         try:
             await asyncio.sleep(0)
             self.assertEqual(calls, ["first"])
@@ -338,7 +340,7 @@ class HistoryGatewayTests(unittest.IsolatedAsyncioTestCase):
         results = await asyncio.wait_for(asyncio.gather(first, second), 1)
         self.assertTrue(all(result["ok"] for result in results))
         self.assertEqual(calls, ["first", "second"])
-        self.assertFalse(self.g.reset_tasks)
+        self.assertFalse(self.runtime.cache.reset_tasks)
 
 
 if __name__ == "__main__":

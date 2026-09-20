@@ -49,4 +49,4 @@ RUN install -m 0755 docker/entrypoint.sh /usr/local/bin/fersk-entrypoint \
 USER ${APP_UID}:${APP_GID}
 WORKDIR ${HOME}
 ENTRYPOINT ["fersk-entrypoint"]
-CMD ["python", "-m", "fersk_codex.gateway"]
+CMD ["python", "-m", "fersk_codex.main"]

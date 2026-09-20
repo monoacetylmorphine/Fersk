@@ -4,19 +4,20 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.core import codex
+from fersk_codex.codex import codex_execution
+from fersk_codex.codex import codex_execution as codex
 
 
 class CodexRetryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.sleep = self.enterContext(patch.object(codex.asyncio, 'sleep', new_callable=AsyncMock))
-        self.retryable = self.enterContext(patch.object(codex, 'is_retryable_error', return_value=True))
-        self.enterContext(patch.object(codex.logger, 'warning'))
+        self.sleep = self.enterContext(patch.object(codex_execution.asyncio, 'sleep', new_callable=AsyncMock))
+        self.retryable = self.enterContext(patch.object(codex_execution, 'is_retryable_error', return_value=True))
+        self.enterContext(patch.object(codex_execution.logger, 'warning'))
 
     async def retry(self, operation, **options):
         defaults = dict(max_attempts=4, initial_delay_s=1, max_delay_s=2, jitter_ratio=0, backoff_multiplier=2)
         defaults.update(options)
-        return await codex._retry_on_overload_async(operation, operation_name='test', **defaults)
+        return await codex_execution._retry_on_overload_async(operation, operation_name='test', **defaults)
 
     async def test_immediate_success_does_not_sleep(self):
         operation = AsyncMock(return_value=object())
@@ -75,7 +76,7 @@ class CodexRetryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_jitter_uses_configured_range(self):
         operation = AsyncMock(side_effect=[RuntimeError('busy'), 'ok'])
-        with patch.object(codex.random, 'uniform', return_value=0.2) as random:
+        with patch.object(codex_execution.random, 'uniform', return_value=0.2) as random:
             self.assertEqual(await self.retry(operation, jitter_ratio=0.2), 'ok')
         random.assert_called_once_with(-0.2, 0.2)
         self.sleep.assert_awaited_once_with(1.2)

@@ -80,7 +80,7 @@ fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
 
 ### 1. 飞书 WebSocket 接收到消息
 
-入口为 [gateway.py](fersk_codex/gateway.py) 的 `main()`。启动时初始化业务日志、事件处理器和缓存维护任务，通过 `asyncio.to_thread(websocket_client.start)` 启动飞书长连接。
+入口为 [main.py](fersk_codex/main.py) 的 `main()`。启动时初始化业务日志、事件处理器和缓存维护任务，通过 `asyncio.to_thread(websocket_client.start)` 启动飞书长连接。
 
 收到 `im.message.receive_v1` 后，SDK 调用同步回调 `do_p2_im_message_receive_v1()`。回调判断是否为 `/stop`、`/new`，再通过 [EventDispatcher.submit()](fersk_codex/utils/event_dispatcher.py) 把处理协程提交到主事件循环。
 
@@ -133,7 +133,7 @@ fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
 
 ### 6. 创建运行状态，准备模型输入
 
-批次进入 `gateway.py` 的 `_handle_message_batch()`。先检查容量、会话阻塞状态，并过滤已经处理或正在处理的消息；随后创建 `ActiveCodexRun`、唯一 `run_id` 和 `RunProbe`，同时启动执行任务与 watchdog。
+批次进入 `middleware/gateway_execution.py` 的 `GatewayExecution._handle_message_batch()`。先检查容量、会话阻塞状态，并过滤已经处理或正在处理的消息；随后创建 `ActiveCodexRun`、唯一 `run_id` 和 `RunProbe`，同时启动执行任务与 watchdog。
 
 执行任务 `_execute_message_batch()` 取得该会话的 `_submission_lock`，再次检查消息状态，登记活动消息归属，进入 `preparing` 阶段，然后调用 [assemble_codex_input()](fersk_codex/middleware/message_assemble.py)：
 
@@ -154,7 +154,7 @@ fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
 - 旧模型已经结束：等待旧 owner 的 `finished`，再检查会话状态并尝试启动新任务。
 - 追加出错：提示错误并结束当前提交。
 
-没有可追加的 owner 时，进入 `starting`，调用 [FerskCodex.running()](fersk_codex/core/codex.py)：
+没有可追加的 owner 时，进入 `starting`，调用 [FerskCodex.running()](fersk_codex/codex/codex_execution.py)：
 
 1. 从数据库读取用户或群对应的 thread 绑定。
 2. 根据文本、文件或图片输入选择模型配置。
@@ -220,7 +220,7 @@ gateway 收到 `started` 后创建 `CardStreamSession`，登记会话 owner，�
 
 ### 贯穿流程的异常保护与特殊分支
 
-[watchdog](fersk_codex/core/thread_watchdog.py) 与执行任务并行运行，默认每秒检查一次：
+[watchdog](fersk_codex/codex/thread_watchdog.py) 与执行任务并行运行，默认每秒检查一次：
 
 | 检查项 | 配置字段 | 默认值 |
 | --- | --- | --- |

@@ -8,7 +8,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.core import codex, thread_manager as thread_management
+from fersk_codex.codex import codex_execution, codex_runtime, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex, thread_manager as thread_management
 
 
 class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
@@ -19,7 +20,7 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
         patcher = patch.object(thread_management, "DB_PATH", self.db_path)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.enterContext(patch.object(codex.session_history, "DB_PATH", self.db_path))
+        self.enterContext(patch.object(session_history, "DB_PATH", self.db_path))
 
     async def test_missing_user_creates_database_and_table(self):
         self.assertIsNone(await thread_management.get_user_thread("missing"))
@@ -55,7 +56,7 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_command_archives_and_persists_reset(self):
         await thread_management.set_user_thread("user-1", "thread-1")
-        with patch.object(codex, "AsyncCodex") as client_class:
+        with patch.object(codex_runtime, "AsyncCodex") as client_class:
             client = client_class.return_value.__aenter__.return_value
             await codex.FerskCodex.reset_thread("user-1")
         client.thread_archive.assert_awaited_once_with(thread_id="thread-1")
@@ -63,7 +64,7 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_archive_failure_preserves_binding(self):
         await thread_management.set_user_thread("user-1", "thread-1")
-        with patch.object(codex, "AsyncCodex") as client_class:
+        with patch.object(codex_runtime, "AsyncCodex") as client_class:
             client = client_class.return_value.__aenter__.return_value
             client.thread_archive.side_effect = RuntimeError("archive failed")
             with self.assertRaises(RuntimeError):
@@ -71,16 +72,16 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await thread_management.get_user_thread("user-1"), "thread-1")
 
     async def test_reset_database_failure_propagates(self):
-        with patch.object(codex, "get_user_thread", AsyncMock(return_value=None)), patch.object(
-            codex, "set_user_thread", AsyncMock(side_effect=sqlite3.OperationalError("locked"))
+        with patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)), patch.object(
+            thread_manager, "set_user_thread", AsyncMock(side_effect=sqlite3.OperationalError("locked"))
         ):
             with self.assertRaises(sqlite3.OperationalError):
                 await codex.FerskCodex.reset_thread("user-1")
 
     async def test_prompt_new_is_not_a_control_command(self):
-        self.enterContext(patch.object(codex, "get_user_thread", AsyncMock(return_value=None)))
-        with patch.object(codex, "AsyncCodex") as client_class, patch.object(codex, "prepare_workspace", AsyncMock()), patch.object(
-            codex, "set_user_thread", AsyncMock(side_effect=sqlite3.OperationalError("locked"))
+        self.enterContext(patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)))
+        with patch.object(codex_runtime, "AsyncCodex") as client_class, patch.object(codex_execution, "prepare_workspace", AsyncMock()), patch.object(
+            thread_manager, "set_user_thread", AsyncMock(side_effect=sqlite3.OperationalError("locked"))
         ):
             client = client_class.return_value.__aenter__.return_value
             client.thread_start.return_value.id = "new-thread"
@@ -92,9 +93,9 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
     async def test_binding_failure_prevents_turn_start(self):
         await thread_management.set_user_thread("user-1", "thread-1")
         with (
-            patch.object(codex, "AsyncCodex") as client_class,
-            patch.object(codex, "prepare_workspace", AsyncMock()),
-            patch.object(codex, "set_user_thread", new=AsyncMock(
+            patch.object(codex_runtime, "AsyncCodex") as client_class,
+            patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+            patch.object(thread_manager, "set_user_thread", new=AsyncMock(
                 side_effect=sqlite3.OperationalError("database is locked"),
             )),
         ):

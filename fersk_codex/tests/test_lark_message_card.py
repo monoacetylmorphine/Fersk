@@ -185,8 +185,8 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             release.set()
 
     async def test_reasoning_is_replaced_by_answer_in_same_card(self):
-        source = ast.parse((Path(__file__).resolve().parents[1] / "gateway.py").read_text())
-        fn = next(n for n in source.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
+        source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
+        fn = next(n for n in ast.walk(source) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         async def recalled(state):
             return False
         async def events(**kwargs):
@@ -210,8 +210,12 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                          _run_was_interrupted=recalled, CardStreamStopped=self.card.CardStreamStopped,
                          CardReplace=self.card.CardReplace,
                          CONFIG={"messages": {"codexFailure": "失败"}})
-        exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway.py", "exec"), namespace)
-        stream = namespace["_reply_content"](
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
+        adapter = SimpleNamespace(runtime=SimpleNamespace(
+            codex=namespace.get("FerskCodex"),
+            _run_was_interrupted=namespace["_run_was_interrupted"],
+        ))
+        stream = namespace["_reply_content"](adapter,
             SimpleNamespace(union_id="on_user"), "prompt", SimpleNamespace(run_id="run-1"),
         )
         with patch.object(self.card, "UPDATE_INTERVAL", 0):
@@ -226,8 +230,8 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c.args[0].request_body.sequence for c in writes] + [close.sequence], [1, 2, 3, 4])
 
     async def test_gateway_adapter_streams_errors_and_stops_on_recall(self):
-        source = ast.parse((Path(__file__).resolve().parents[1] / "gateway.py").read_text())
-        fn = next(n for n in source.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
+        source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
+        fn = next(n for n in ast.walk(source) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         state = SimpleNamespace(interrupted=False, run_id="run-1")
         closed = []
         async def events(**kwargs):
@@ -242,10 +246,14 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                          _run_was_interrupted=recalled, CardStreamStopped=self.card.CardStreamStopped,
                          CardReplace=self.card.CardReplace,
                          CONFIG={"messages": {"codexFailure": "失败"}})
-        exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway.py", "exec"), namespace)
-        stream = namespace["_reply_content"](SimpleNamespace(union_id="on_user"), "prompt", state)
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
+        adapter = SimpleNamespace(runtime=SimpleNamespace(
+            codex=namespace.get("FerskCodex"),
+            _run_was_interrupted=namespace["_run_was_interrupted"],
+        ))
+        stream = namespace["_reply_content"](adapter, SimpleNamespace(union_id="on_user"), "prompt", state)
         self.assertEqual([chunk async for chunk in stream], [self.card.CardReplace("正文"), "\n\n错误"])
-        stream = namespace["_reply_content"](SimpleNamespace(union_id="on_user"), "prompt", state)
+        stream = namespace["_reply_content"](adapter, SimpleNamespace(union_id="on_user"), "prompt", state)
         self.assertEqual(await anext(stream), self.card.CardReplace("正文"))
         state.interrupted = True
         with self.assertRaises(self.card.CardStreamStopped):
@@ -384,8 +392,8 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.settings.assert_called_once()
 
     async def test_commentary_and_tools_do_not_hide_following_reasoning(self):
-        source = ast.parse((Path(__file__).resolve().parents[1] / "gateway.py").read_text())
-        fn = next(n for n in source.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
+        source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
+        fn = next(n for n in ast.walk(source) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         async def recalled(state):
             return False
         async def events():
@@ -398,8 +406,12 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             yield {"type": "answer", "phase": "final_answer", "content": "最终答案", "item_id": "a2"}
         namespace = dict(aclosing=aclosing, _run_was_interrupted=recalled,
                          CardStreamStopped=self.card.CardStreamStopped, CardReplace=self.card.CardReplace)
-        exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway.py", "exec"), namespace)
-        chunks = [c async for c in namespace["_reply_content"](None, None, None, events=events())]
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
+        adapter = SimpleNamespace(runtime=SimpleNamespace(
+            codex=namespace.get("FerskCodex"),
+            _run_was_interrupted=namespace["_run_was_interrupted"],
+        ))
+        chunks = [c async for c in namespace["_reply_content"](adapter, None, None, None, events=events())]
         self.assertEqual(chunks, ["推理一", "\n\n进度", "\n\n推理二", "后续", self.card.CardReplace("最终答案")])
 
 

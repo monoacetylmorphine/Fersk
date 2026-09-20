@@ -152,7 +152,8 @@ ffmpeg 转码/切片完成累计计时，切片或重试不续期；不包含 AS
 群聊仍按群聊 ID 共享历史和工作区，不按发送者隔离。
 
 入站命令、缓冲窗口和历史收集位于 `middleware/message_router.py`；会话状态、消息去重与过期回收
-位于 `middleware/session_cache.py`。`gateway.py` 注入服务回调并负责模型执行、steer 和停止协调。
+位于 `middleware/session_cache.py`。`main.py` 创建共享缓存并注入服务回调；`gateway_execution.py` 负责执行和 steer，
+`gateway_runtime.py` 负责运行状态与停止确认，`gateway_commands.py` 负责用户控制操作。
 
 ## 飞书请求容量与日志
 
