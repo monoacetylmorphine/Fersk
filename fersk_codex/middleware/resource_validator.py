@@ -394,7 +394,16 @@ def _validate_office(data: bytes, extension: str) -> None:
             overrides = [node.get("ContentType") for node in types
                          if node.tag == "{http://schemas.openxmlformats.org/package/2006/content-types}Override"
                          and unquote(node.get("PartName", "")).lstrip("/") == target]
-            if overrides != [OFFICE_TYPES[extension]]:
+            # OPC 按部件名优先匹配 Override，缺省时按扩展名匹配 Default。
+            # 来源：WPS 实际样例通过 Default 声明 workbook.xml 的主文档类型。
+            content_types = overrides
+            if not overrides:
+                part_extension = posixpath.splitext(target)[1].lstrip(".").lower()
+                content_types = [node.get("ContentType") for node in types
+                                 if node.tag == "{http://schemas.openxmlformats.org/package/2006/content-types}Default"
+                                 and node.get("Extension", "").lower() == part_extension
+                                 and part_extension]
+            if content_types != [OFFICE_TYPES[extension]]:
                 raise ResourceValidationError("Office 主文档类型与扩展名不匹配")
     except ResourceValidationError:
         raise

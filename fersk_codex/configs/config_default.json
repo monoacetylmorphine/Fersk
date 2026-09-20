@@ -173,7 +173,7 @@
     }
   },
   "logging": {
-    "logLevel": "INFO",
+    "logLevel": "DEBUG",
     "tokenUsageTable": "token_usage",
     "timestampFormat": "%Y-%m-%d-%H-%M-%S-%f"
   },

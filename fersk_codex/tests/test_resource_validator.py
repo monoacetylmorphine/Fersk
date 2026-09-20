@@ -185,6 +185,44 @@ class ResourceValidatorTests(unittest.TestCase):
                 self.validate(office_bytes('.docx', overrides={'[Content_Types].xml': metadata}),
                               file_name='report.docx')
 
+    def test_office_default_content_types_and_override_precedence(self):
+        # 来源：用户 WPS 样例的 BOM、根相对关系和 Default 声明；不包含业务内容。
+        for extension, expected_type in OFFICE_TYPES.items():
+            for part_extension in ('xml', 'XML'):
+                target = 'custom/main.' + part_extension
+                default = f'<Default Extension="xml" ContentType="{expected_type}"/>'
+                override = f'<Override PartName="/{target}" ContentType="{expected_type}"/>'
+                wrong_override = f'<Override PartName="/{target}" ContentType="application/xml"/>'
+                cases = [
+                    ('default', default, True),
+                    ('override_wins', '<Default Extension="xml" ContentType="application/xml"/>' + override, True),
+                    ('wrong_override', default + wrong_override, False),
+                    ('missing_override_type', default + f'<Override PartName="/{target}"/>', False),
+                    ('duplicate_override', default + override + override, False),
+                    ('duplicate_default', default + default, False),
+                    ('wrong_default', '<Default Extension="xml" ContentType="application/xml"/>', False),
+                    ('unmatched_default', f'<Default Extension="bin" ContentType="{expected_type}"/>', False),
+                    ('missing_default_type', '<Default Extension="xml"/>', False),
+                    ('missing_declaration', '', False),
+                ]
+                for label, declarations, accepted in cases:
+                    with self.subTest(extension=extension, part_extension=part_extension, case=label):
+                        payload = office_bytes(extension, target=target, overrides={
+                            '[Content_Types].xml': ('\ufeff<?xml version="1.0" encoding="utf-8"?>'
+                                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                                + declarations + '</Types>'),
+                            '_rels/.rels': ('\ufeff<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                '<Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+                                f'Target="/{target}"/></Relationships>'),
+                        })
+                        if accepted:
+                            result = self.validate(payload, file_name='report' + extension)
+                            self.assertEqual(result.extension, extension)
+                            self.assertEqual(result.data, payload)
+                        else:
+                            with self.assertRaisesRegex(ResourceValidationError, 'Office 主文档类型与扩展名不匹配'):
+                                self.validate(payload, file_name='report' + extension)
+
     def test_office_mime_supplies_extension_without_filename(self):
         payload = office_bytes('.docx')
         result = self.validate(payload, headers={'content-type':

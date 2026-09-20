@@ -35,6 +35,9 @@ python -B tests/run_tests.py --reverse
 卡片结束前不删除、交付失败后也删除、失败记录跨任务释放保留及无新输入时后台重试。
 Office 样例在内存中构造真实 ZIP 包及必要元数据，覆盖伪 ZIP、缺失部件、类型不匹配、
 元数据大小和实体声明；文本覆盖保留扩展名、二进制伪装和 JSON/JSONL 区分。
+DOCX、XLSX、PPTX 的主部件类型均优先采用 `Override`，不存在时按部件扩展名匹配
+`Default`，兼容 WPS 的默认类型声明。回归覆盖 UTF-8 BOM、根相对主部件路径、
+扩展名大小写、Override 优先级，以及缺失、错误和重复声明的拒绝；不依赖用户原始文件。
 
 Codex 拆分后的回归直接使用 `codex_execution.FerskCodex`；SDK 客户端在
 `codex_runtime` 中 mock，会话元数据同步在 `session_codex` 中 mock，执行与用量依赖在

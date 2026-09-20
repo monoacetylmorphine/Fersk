@@ -12,6 +12,10 @@
 
 Docker 从仓库根目录执行 `docker build -f fersk_codex/Dockerfile -t fersk-codex .`。容器首次启动原子初始化共享挂载配置，已有配置不覆盖。
 
+文档处理依赖包含 `markitdown[xlsx]` 和 `openpyxl`，分别用于 XLSX 转 Markdown 及读写工作簿。
+版本统一由 `pyproject.toml` 和 `uv.lock` 管理；本地运行 `uv sync --locked` 安装，
+Docker 构建沿用现有流程按锁文件安装。
+
 Codex 执行实现位于 `codex/`，会话实现位于 `session/`：
 
 - `codex_runtime.py`：SDK 生命周期、共享运行状态、停止、steer 和资源清理。
