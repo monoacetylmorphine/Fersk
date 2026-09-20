@@ -10,11 +10,11 @@ from fersk_codex.codex.thread_watchdog import RunProbe, probes, settings
 from fersk_codex.services.lark.lark_message_card import (
     CardDeliveryError, CardReplace, CardStreamSession, CardStreamStopped,
 )
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from .message_assemble import InputAssemblyError
 from .message_collector import MessageBatch
-from .session_cache import ActiveCodexRun
+from fersk_codex.session.session_gateway import ActiveCodexRun
 from .gateway_runtime import GatewayRuntime
 
 logger = get_logger("Message")

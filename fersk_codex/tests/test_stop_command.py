@@ -1,5 +1,5 @@
 """验证 /stop、撤回和启动竞态；模拟飞书及 Codex，不读取凭据。"""
-from fersk_codex.middleware.session_cache import ActiveCodexRun
+from fersk_codex.session.session_gateway import ActiveCodexRun
 import asyncio
 import importlib.util
 import json
@@ -9,10 +9,11 @@ from types import ModuleType, SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
+from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex.codex_execution import FerskCodex
 from fersk_codex.codex import codex_execution as codex
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.middleware import message_router
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_stop_command
 
@@ -351,8 +352,8 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
 class BackendInterruptTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
 
     async def test_interrupt_arriving_during_turn_start_is_delivered(self):
         starting, resume = asyncio.Event(), asyncio.Event()

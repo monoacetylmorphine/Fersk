@@ -12,8 +12,9 @@ from unittest.mock import AsyncMock, patch
 from openai_codex import LocalImageInput, MentionInput, TextInput
 from openai_codex.types import TurnStatus
 
-from fersk_codex.codex import codex_execution, codex_runtime, codex_session
-from fersk_codex.codex import codex_execution as codex, session_history as history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime
+from fersk_codex.codex import codex_execution as codex, thread_manager
+from fersk_codex.session import session_codex, session_history as history
 import test_stop_command as helpers
 
 
@@ -189,7 +190,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         await self.register()
         await thread_manager.set_user_thread("user", "thread-1")
         self.thread.read.side_effect = RuntimeError("offline")
-        with patch.object(codex_session.logger, "exception") as log:
+        with patch.object(session_codex.logger, "exception") as log:
             self.assertEqual(await self.run_prompt(), [{"type": "done"}])
         log.assert_called_once()
         self.thread.turn.assert_awaited_once()
@@ -202,7 +203,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_name_is_not_marked_complete_by_time_sync(self):
         await self.register(timestamp=None)
-        await codex_session._sync_session_time("user", self.thread)
+        await session_codex._sync_session_time("user", self.thread)
         self.assertIsNone((await history.get_session("user", "thread-1")).updated_at)
         self.thread.read.assert_not_awaited()
 
@@ -231,8 +232,8 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         async def stuck(**kwargs):
             await asyncio.Event().wait()
         self.thread.read.side_effect = stuck
-        with patch.dict(codex_runtime.settings(), cleanupTimeoutSeconds=0.01), patch.object(codex_session.logger, "exception") as log:
-            await asyncio.wait_for(codex_session._sync_session_time("user", self.thread), 1)
+        with patch.dict(codex_runtime.settings(), cleanupTimeoutSeconds=0.01), patch.object(session_codex.logger, "exception") as log:
+            await asyncio.wait_for(session_codex._sync_session_time("user", self.thread), 1)
         log.assert_called_once()
         self.assertEqual((await history.get_session("user", "thread-1")).updated_at, 100)
 

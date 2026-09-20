@@ -37,7 +37,7 @@ Office 样例在内存中构造真实 ZIP 包及必要元数据，覆盖伪 ZIP�
 元数据大小和实体声明；文本覆盖保留扩展名、二进制伪装和 JSON/JSONL 区分。
 
 Codex 拆分后的回归直接使用 `codex_execution.FerskCodex`；SDK 客户端在
-`codex_runtime` 中 mock，会话元数据同步在 `codex_session` 中 mock，执行与用量依赖在
+`codex_runtime` 中 mock，会话元数据同步在 `session_codex` 中 mock，执行与用量依赖在
 `codex_execution` 中 mock，线程绑定在 `thread_manager` 中 mock。
 
 网关拆分测试通过 `main.create_gateway()` 创建独立实例，mock 指向 runtime、execution、commands

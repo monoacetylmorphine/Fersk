@@ -15,7 +15,7 @@ from lark_oapi.api.im.v1 import (
 from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
 
 from fersk_codex.services.lark.lark_requests import call_lark
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 # 来源：用户要求，默认展示最近 30 条；与网关的选项总数上限一致。
 PAGE_SIZE = CONFIG["messaging"].get("sessionHistoryLimit", 30)

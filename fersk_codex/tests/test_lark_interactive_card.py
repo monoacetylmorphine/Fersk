@@ -1,6 +1,6 @@
 """私聊历史卡片离线回归：真实 SDK 数据模型，外部请求和恢复操作模拟。"""
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.middleware import gateway_commands
 from fersk_codex.codex import thread_manager
 import asyncio
@@ -17,7 +17,8 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTr
 
 from fersk_codex.services.lark import lark_interactive_card as cards
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_history_command
-from fersk_codex.codex import codex_execution as codex, session_history, thread_manager
+from fersk_codex.codex import codex_execution as codex, thread_manager
+from fersk_codex.session import session_history
 import test_stop_command as helpers
 
 

@@ -2,9 +2,10 @@
 
 import asyncio
 
-from . import session_history, thread_manager
+from fersk_codex.codex import thread_manager
+from fersk_codex.codex.thread_watchdog import settings
+from fersk_codex.session import session_history
 from fersk_codex.utils.logger import get_logger
-from .thread_watchdog import settings
 
 logger = get_logger("Codex")
 
@@ -64,7 +65,7 @@ class CodexSession:
     @classmethod
     async def reset_thread(cls, user_id: str) -> None:
         """Explicit control operation; prompt text never resets a thread."""
-        from .codex_execution import _retry_on_overload_async
+        from fersk_codex.codex.codex_execution import _retry_on_overload_async
 
         thread_id = await thread_manager.get_user_thread(user_id)
         if thread_id:

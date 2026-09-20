@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from openai_codex import LocalImageInput, MentionInput, TextInput
 from fersk_codex.middleware.message_collector import CollectedMessage, MessageBatch
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 
 def batch(*messages):

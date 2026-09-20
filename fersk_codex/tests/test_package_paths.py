@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from fersk_codex import FerskCodex, LiveTurn
 from fersk_codex.codex import codex_execution as codex
-from fersk_codex.utils.config_loader import CONFIG, _load_config
+from fersk_codex.configs.loader import CONFIG, _load_config
 
 
 class PackagePathTests(unittest.TestCase):

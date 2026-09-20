@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import time
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 
 logger = get_logger("Reaction")

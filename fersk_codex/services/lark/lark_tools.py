@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import *
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 from fersk_codex.services.lark.lark_client import client
 from fersk_codex.services.lark.lark_requests import call_lark

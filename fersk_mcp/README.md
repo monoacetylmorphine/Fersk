@@ -60,6 +60,10 @@ docker run --rm \
 
 离线验证：从仓库根目录运行 `fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py`，测试使用临时配置和模拟客户端，不发送真实请求。
 
-默认配置、Schema、校验逻辑和初始化脚本的唯一实体位于 `fersk_codex/configs/`；本项目内同名路径是指向它们的符号链接。两个服务执行相同的完整校验后各自使用所需字段，详情见根目录 README。已有挂载配置不自动覆盖。
+默认配置、Schema、校验逻辑和初始化脚本的唯一实体位于 `fersk_codex/configs/`；本项目内同名路径是指向它们的符号链接，校验与初始化模块分别为 `configs/validation.py` 和 `configs/initialization.py`。两个服务执行相同的完整校验后各自使用所需字段，详情见根目录 README。已有挂载配置不自动覆盖。
+
+`configs/loader.py` 通过符号链接共用 `fersk_codex/configs/loader.py`，MCP 保留存储路径原值，Codex 将其解析为绝对路径；模块分别加载，配置对象相互独立。
+
+`services/lark/lark_requests.py` 通过符号链接共用 `fersk_codex/services/lark/lark_requests.py`，两个服务仍各自加载配置并创建独立线程池。Docker 构建会一并复制共享源码。`services/lark/lark_client.py` 保持独立，以保留 MCP 调用工具时才校验飞书凭据的行为；Codex 则在启动时校验凭据并提供 WebSocket 客户端。
 
 文件发送的接收方目录必须同时满足正则 `(?:on_|oc_)[A-Za-z0-9]+` 与总长度 35，并且只识别到一个接收方。长度取自用户提供的参考 ID（3 字符前缀加 32 字符主体）；不新增调用授权或工作区归属检查。

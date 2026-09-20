@@ -2,7 +2,7 @@ import aiosqlite
 from typing import Dict, Any
 from pathlib import Path
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 
 logger = get_logger("Usage")

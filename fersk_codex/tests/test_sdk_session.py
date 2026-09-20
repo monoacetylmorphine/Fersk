@@ -2,7 +2,8 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.codex import codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_runtime, thread_manager
+from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex import codex_execution as codex
 
 
@@ -60,7 +61,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value='old')), \
                 patch.object(thread_manager, 'set_user_thread', AsyncMock()) as save, \
                 patch.object(session_history, 'get_session', AsyncMock(return_value=object())), \
-                patch.object(codex_session, '_initialize_session_name', AsyncMock()), \
+                patch.object(session_codex, '_initialize_session_name', AsyncMock()), \
                 patch.object(session_history, 'update_session_time', AsyncMock()) as update:
             for operation in (self.cls.reset_thread('user'), self.cls.restore_session('user', 'target')):
                 with self.assertRaisesRegex(RuntimeError, '未确认'):
@@ -118,7 +119,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.cls._clients)
 
     async def test_failed_background_cleanup_backs_off_and_expires(self):
-        from fersk_codex.middleware.session_cache import RETENTION_SECONDS
+        from fersk_codex.session.session_gateway import RETENTION_SECONDS
         self.cls._control_cleanup['control'] = (100, 100)
         with patch.object(codex_runtime.time, 'monotonic', return_value=100), \
                 patch.object(self.cls, 'force_close', AsyncMock(return_value=False)) as close:

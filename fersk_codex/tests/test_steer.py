@@ -12,10 +12,11 @@ from openai_codex import AsyncThread, InvalidRequestError, LocalImageInput
 from openai_codex.types import TurnStatus, TurnCompletedNotification
 from openai_codex.generated.v2_all import AgentMessageThreadItem, ThreadStatus
 
-from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
+from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex import codex_execution as codex
 from fersk_codex.codex.codex_execution import FerskCodex, LiveTurn
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.middleware.message_collector import batch_from_chat_history
 import test_stop_command as helpers
 
@@ -30,8 +31,8 @@ def status(kind):
 class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
         stack = self.enterContext(ExitStack())
         for name, value in (("_active_turns", {}), ("_live_turns", {}),
                             ("_pending_interrupts", set()), ("_turns_guard", asyncio.Lock())):
@@ -561,8 +562,8 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
         self.runtime.codex = FerskCodex
         with (patch.object(codex_runtime, "AsyncCodex") as client_class,
               patch.object(session_history, "register_session", AsyncMock()),
-              patch.object(codex_session, "_initialize_session_name", AsyncMock()),
-              patch.object(codex_session, "_sync_session_time", AsyncMock()),
+              patch.object(session_codex, "_initialize_session_name", AsyncMock()),
+              patch.object(session_codex, "_sync_session_time", AsyncMock()),
               patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
               patch.object(thread_manager, "set_user_thread", AsyncMock()),
               patch.object(codex_execution, "prepare_workspace", AsyncMock()),

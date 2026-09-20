@@ -3,7 +3,7 @@ import json
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.middleware.message_collector import is_new_command, batch_from_chat_history
 import test_stop_command as helpers
 

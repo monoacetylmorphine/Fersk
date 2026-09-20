@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from fersk_codex.utils import config_loader
-from fersk_codex.utils.config_loader import CONFIG, _load_config
+from fersk_codex.configs import loader as config_loader
+from fersk_codex.configs.loader import CONFIG, _load_config
 
 
 class ConfigTests(unittest.TestCase):

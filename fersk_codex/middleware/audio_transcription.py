@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 from openai import AsyncOpenAI
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 
 logger = get_logger("Audio")

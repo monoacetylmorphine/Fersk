@@ -23,7 +23,7 @@
 
 ## 历史会话与首次命名
 
-`codex/session_history.py` 在同一个 `storage.databasePath` 中自动创建 `session_history` 表，
+`session/session_history.py` 在同一个 `storage.databasePath` 中自动创建 `session_history` 表，
 不修改 `user_thread` 表结构。首次访问只创建新表及索引，不迁移或删除已有绑定。
 
 | 字段 | 类型 | 含义 |
@@ -228,7 +228,7 @@ steer 沿用原 run 的绝对期限，不自动续期。总期限不因工具执
 
 ## 配置启动校验
 
-`utils/config_loader.py` 启动时使用本项目共享源 `configs/config_schema.json` 执行 Draft 2020-12 全量校验及格式校验，
+`configs/loader.py` 启动时使用本项目共享源 `configs/config_schema.json` 执行 Draft 2020-12 全量校验及格式校验，
 拒绝非有限数值。直接与缓冲消息类型不得重叠，并集必须等于支持类型；两个命令不得相同
 或带空白。错误包含配置路径、字段路径与约束名称，不打印配置值。自定义配置文件也需要
 提供 `audio.limits.conversionTimeoutSeconds` 和 Schema 要求的消息文案。

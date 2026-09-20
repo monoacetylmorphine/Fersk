@@ -11,12 +11,13 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
+from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex.codex_execution import FerskCodex, LiveTurn
 from fersk_codex.codex.thread_watchdog import (
     RunProbe, RunJournal, settings, should_log_event, summarize_event,
 )
-from fersk_codex.utils.config_loader import CONFIG, _load_config
+from fersk_codex.configs.loader import CONFIG, _load_config
 import test_stop_command as helpers
 
 
@@ -259,8 +260,8 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
             thread = NS(id="thread", turn=AsyncMock(return_value=handle))
             with (patch.object(codex_runtime, "AsyncCodex") as factory,
                   patch.object(session_history, "register_session", AsyncMock()),
-                  patch.object(codex_session, "_initialize_session_name", AsyncMock()),
-                  patch.object(codex_session, "_sync_session_time", AsyncMock()),
+                  patch.object(session_codex, "_initialize_session_name", AsyncMock()),
+                  patch.object(session_codex, "_sync_session_time", AsyncMock()),
                   patch.object(thread_manager, "get_user_thread", AsyncMock(return_value=None)),
                   patch.object(thread_manager, "set_user_thread", AsyncMock()),
                   patch.object(codex_execution, "prepare_workspace", AsyncMock()),

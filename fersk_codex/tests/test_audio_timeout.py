@@ -7,7 +7,7 @@ from types import ModuleType
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 
 def load_audio():

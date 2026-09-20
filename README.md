@@ -25,7 +25,7 @@ MCP 在容器内监听 `0.0.0.0`，Compose 默认发布到宿主机 `127.0.0.1:8
 
 `MCP_PORT` 是 Compose 的宿主机端口及容器监听端口，默认 8000；用 shell 或 `--env-file` 设置，并同步注入 MCP 容器，避免映射不匹配。`MCP_BIND_ADDRESS` 默认 `127.0.0.1`；需要远程访问时可显式设置可访问的宿主机地址。服务当前无鉴权，保持默认本机绑定可避免直接开放到局域网。`mcp.path` 继续来自共享 `config.json`，也可由共享 `.env` 中的 `MCP_PATH` 覆盖。
 
-四个共享文件的唯一实体均在 `fersk_codex/configs/`：`config_default.json`、`config_schema.json`、`config_validation.py`、`initialize_config.py`。MCP 的 `configs/` 下同名文件通过符号链接引用；请在完整仓库中开发和构建，保留符号链接，不要单独拷贝项目目录。
+四个共享文件的唯一实体均在 `fersk_codex/configs/`：`config_default.json`、`config_schema.json`、`validation.py`、`initialization.py`。MCP 的 `configs/` 下同名文件通过符号链接引用；请在完整仓库中开发和构建，保留符号链接，不要单独拷贝项目目录。
 
 两个服务启动均完整校验同一份 `~/.fersk/config.json`，任何配置段格式错误都会阻止启动。校验通过后各自使用所需字段：Codex 不初始化 MCP 服务或消费其模型设置；MCP 使用 `mcp`、飞书凭据/上传设置和共享请求超时，不启动 Codex。校验不读取模型密钥值，缺少图像凭据仅在调用图像工具时报告。
 
@@ -55,7 +55,7 @@ Web 与 Worker 通过 YAML anchor 共用数据库、ClickHouse、Redis 和事件
 
 ## 构建与验证
 
-两个服务均从仓库根目录构建，统一使用根目录 `.dockerignore`，子项目不再维护独立忽略文件。Codex 使用源码与构建输入白名单（包含 MCP 依赖的共享配置和入口脚本），MCP 保留目录内容；最后统一排除 `.venv`、`__pycache__`、`*.egg-info`、`build`、`dist`、`.env`、`.git`、`tests` 和 `.DS_Store`。新增 Codex 源码目录或非 Python 资源时，需要同步更新根目录白名单。
+两个服务均从仓库根目录构建，统一使用根目录 `.dockerignore`，子项目不再维护独立忽略文件。Codex 使用源码与构建输入白名单（包含 `configs`、`codex`、`middleware`、`session`、`services`、`utils` 和入口脚本），MCP 保留目录内容；最后统一排除 `.venv`、`__pycache__`、`*.egg-info`、`build`、`dist`、`.env`、`.git`、`tests` 和 `.DS_Store`。新增 Codex 源码目录或非 Python 资源时，需要同步更新根目录白名单。
 
 两个项目均使用各自 `uv.lock` 安装依赖。按部署要求，Langfuse、Worker、PostgreSQL、ClickHouse、MinIO 和 Redis 均使用 `latest`；Python 使用 `3.13.15-slim-bookworm`，主项目 Node 使用最新 `lts-bookworm-slim`，两个项目 uv 使用 `latest`。基础设施镜像、Node、uv 与系统包仍随构建或拉取更新，未宣称逐字节可复现构建。
 
@@ -178,7 +178,7 @@ gateway 收到 `started` 后创建 `CardStreamSession`，登记会话 owner，�
 - 工具事件主要用于状态和日志，不直接作为卡片正文。
 - 用量事件写入数据库；当时尚未获得最终耗时，日志中的 `taskDuration_ms` 可以是 `0`，结束时再回填。
 
-[lark_card.py](fersk_codex/services/lark/lark_card.py) 在首次需要展示内容时创建 CardKit 卡片，再发送引用该卡片的飞书消息；之后持续更新正文，普通更新按约 0.25 秒间隔合并，实际也受网络耗时影响。单张流式卡片约 9 分钟后关闭，后续内容按需续卡。
+[lark_message_card.py](fersk_codex/services/lark/lark_message_card.py) 在首次需要展示内容时创建 CardKit 卡片，再发送引用该卡片的飞书消息；之后持续更新正文，普通更新按约 0.25 秒间隔合并，实际也受网络耗时影响。单张流式卡片约 9 分钟后关闭，后续内容按需续卡。
 
 卡片交付失败时记录错误并继续消费模型事件，不直接打断健康的模型任务，也不自动重发结果不确定的请求。
 

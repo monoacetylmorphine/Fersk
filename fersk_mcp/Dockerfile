@@ -20,8 +20,10 @@ WORKDIR /opt/fersk_mcp
 
 COPY fersk_mcp/pyproject.toml fersk_mcp/uv.lock fersk_mcp/README.md ./
 COPY fersk_mcp/__init__.py fersk_mcp/server.py ./
-COPY fersk_codex/configs/config_default.json fersk_codex/configs/config_schema.json fersk_codex/configs/config_validation.py fersk_codex/configs/initialize_config.py /opt/fersk_codex/configs/
+COPY fersk_codex/configs/config_default.json fersk_codex/configs/config_schema.json fersk_codex/configs/validation.py fersk_codex/configs/initialization.py fersk_codex/configs/loader.py /opt/fersk_codex/configs/
+COPY fersk_codex/services/lark/lark_requests.py /opt/fersk_codex/services/lark/
 COPY fersk_mcp/configs ./configs
+COPY fersk_mcp/services ./services
 COPY fersk_codex/docker/entrypoint.sh /usr/local/bin/fersk-entrypoint
 COPY fersk_mcp/tools ./tools
 COPY fersk_mcp/utils ./utils

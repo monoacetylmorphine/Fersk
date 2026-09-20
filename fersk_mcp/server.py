@@ -9,7 +9,7 @@ from mcp.server import MCPServer
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fersk_mcp.utils.config_loader import CONFIG
+from fersk_mcp.configs.loader import CONFIG
 from fersk_mcp.utils.logger import configure_logging
 from fersk_mcp.tools.lark_tools.sending_file import sending_file
 from fersk_mcp.tools.internal_tools.text2image import image_generator

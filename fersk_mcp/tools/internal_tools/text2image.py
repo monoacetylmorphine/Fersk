@@ -10,7 +10,7 @@ from openai import (
     OpenAIError,
 )
 
-from fersk_mcp.utils.config_loader import CONFIG
+from fersk_mcp.configs.loader import CONFIG
 from fersk_mcp.utils.logger import get_logger
 
 logger = get_logger("IMAGE")

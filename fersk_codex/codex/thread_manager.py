@@ -6,7 +6,7 @@ from typing import AsyncGenerator
 
 import aiosqlite
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 
 DB_PATH = CONFIG["storage"]["databasePath"]

@@ -9,9 +9,9 @@ from lark_oapi.api.im.v1 import (
     CreateMessageRequest, CreateMessageRequestBody,
 )
 
-from fersk_mcp.utils.config_loader import CONFIG
-from fersk_mcp.configs.lark_client import get_client
-from fersk_mcp.configs.lark_requests import call_lark
+from fersk_mcp.configs.loader import CONFIG
+from fersk_mcp.services.lark.lark_client import get_client
+from fersk_mcp.services.lark.lark_requests import call_lark
 
 # 来源：用户提供的 ID 样例，共 35 字符（前缀 3 + ID 32）；同样应用于 oc_。
 RECIPIENT_ID_LENGTH = 35

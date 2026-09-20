@@ -31,6 +31,7 @@ packages = [
     "fersk_codex.configs",
     "fersk_codex.codex",
     "fersk_codex.middleware",
+    "fersk_codex.session",
     "fersk_codex.services",
     "fersk_codex.services.lark",
     "fersk_codex.utils",

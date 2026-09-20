@@ -171,7 +171,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.settings.assert_called_once()
 
     async def test_http_wait_has_a_deadline(self):
-        from fersk_codex.utils.config_loader import CONFIG
+        from fersk_codex.configs.loader import CONFIG
         release = threading.Event()
         def blocked(request):
             release.wait(1)
@@ -422,7 +422,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
     use_async_api = LarkCardTests.use_async_api
 
     async def start_controlled(self, *, cancelled=lambda: False):
-        from fersk_codex.utils.config_loader import CONFIG
+        from fersk_codex.configs.loader import CONFIG
         queue = asyncio.Queue()
         opened = asyncio.Event()
         self.use_async_api(lambda op, req: opened.set()
@@ -482,7 +482,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.cardkit.v1.card_element.content.call_args.args[0].request_body.content, "oldtail")
 
     async def test_accepted_steer_with_eof_closes_placeholder_as_finished(self):
-        from fersk_codex.utils.config_loader import CONFIG
+        from fersk_codex.configs.loader import CONFIG
         session, queue, task, text = await self.start_controlled()
         async with session.steering(text) as barrier:
             await queue.put(None)

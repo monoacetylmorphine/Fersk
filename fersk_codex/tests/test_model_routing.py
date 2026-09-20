@@ -7,16 +7,17 @@ from unittest.mock import AsyncMock, patch
 from openai_codex import LocalImageInput, MentionInput, TextInput
 from openai_codex.types import TurnStatus
 
-from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
+from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex import codex_execution as codex
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 
 class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
 
     async def test_text_and_attachment_routes_for_new_and_resumed_threads(self):
         routes = {

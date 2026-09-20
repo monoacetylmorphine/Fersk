@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 
 SUPPORTED_MESSAGE_TYPES = set(CONFIG["messaging"]["supportedTypes"])

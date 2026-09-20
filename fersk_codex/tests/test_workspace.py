@@ -10,16 +10,17 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from openai_codex.types import TurnStatus
-from fersk_codex.codex import codex_execution, codex_runtime, codex_session, session_history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
+from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex import codex_execution as codex
-from fersk_codex.utils import workspace as module
+from fersk_codex.codex import codex_workspace as module
 
 
 class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_initialize_session_name", AsyncMock()))
-        self.enterContext(patch.object(codex_session, "_sync_session_time", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
+        self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.children = []
         self.started = asyncio.Event()

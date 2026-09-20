@@ -8,7 +8,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.codex import codex_execution, codex_runtime, session_history, thread_manager
+from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
+from fersk_codex.session import session_history
 from fersk_codex.codex import codex_execution as codex, thread_manager as thread_management
 
 

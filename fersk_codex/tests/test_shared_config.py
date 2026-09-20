@@ -13,13 +13,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class SharedConfigTests(unittest.TestCase):
     def test_both_projects_reference_one_canonical_source(self):
-        for name in ('config_default.json', 'config_schema.json', 'config_validation.py', 'initialize_config.py'):
+        for name in ('config_default.json', 'config_schema.json', 'validation.py', 'initialization.py'):
             paths = [(ROOT / project / 'configs' / name).resolve()
                      for project in ('fersk_codex', 'fersk_mcp')]
             self.assertEqual(paths, [ROOT / 'fersk_codex/configs' / name] * 2)
 
     def test_parallel_initialization_and_existing_config_protection(self):
-        spec = importlib.util.spec_from_file_location('initialize_config_test', ROOT / 'fersk_codex/configs/initialize_config.py')
+        spec = importlib.util.spec_from_file_location('initialize_config_test', ROOT / 'fersk_codex/configs/initialization.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         source = ROOT / 'fersk_codex/configs/config_default.json'

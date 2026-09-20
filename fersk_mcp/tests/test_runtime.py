@@ -44,6 +44,23 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         tools = await self.server.mcp.list_tools()
         self.assertEqual({tool.name for tool in tools}, {"sending_file", "image_generator"})
 
+    async def test_shared_lark_requests_keep_service_dependencies(self):
+        requests = importlib.import_module("fersk_mcp.services.lark.lark_requests")
+        codex_requests = importlib.import_module("fersk_codex.services.lark.lark_requests")
+        config = importlib.import_module("fersk_mcp.configs.loader")
+        executor = importlib.import_module("fersk_mcp.utils.bounded_executor")
+        self.assertEqual(Path(requests.__file__).resolve(), Path(codex_requests.__file__).resolve())
+        self.assertIs(requests.CONFIG, config.CONFIG)
+        self.assertIsInstance(requests.executor, executor.BoundedExecutor)
+        self.assertIsNot(requests.CONFIG, codex_requests.CONFIG)
+        self.assertIsNot(requests.executor, codex_requests.executor)
+        operation = MagicMock()
+        with patch.object(requests.executor, "call", new_callable=AsyncMock, return_value=42) as call:
+            self.assertEqual(await requests.call_lark(operation, "argument"), 42)
+        call.assert_awaited_once_with(
+            operation, "argument", timeout=config.CONFIG["codex"]["watchdog"]["cardRequestTimeoutSeconds"]
+        )
+
     async def test_missing_image_config_fails_only_image_call(self):
         with self.assertRaisesRegex(TypeError, "imageModel"):
             await self.image.image_generator("测试")
@@ -199,7 +216,7 @@ class ConfigScopeTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.config = json.loads((root / "configs/config_default.json").read_text())
         # 独立加载当前项目的校验器，不读取真实运行配置或其他项目。
-        spec = importlib.util.spec_from_file_location("mcp_config_under_test", root / "utils/config_loader.py")
+        spec = importlib.util.spec_from_file_location("fersk_mcp.configs.loader_under_test", root / "configs/loader.py")
         module = importlib.util.module_from_spec(spec)
         with patch.dict(os.environ, FERSK_CONFIG_FILE=str(root / "configs/config_default.json")), patch("dotenv.load_dotenv"):
             spec.loader.exec_module(module)
@@ -232,6 +249,17 @@ class ConfigScopeTests(unittest.TestCase):
             parent[keys[-1]] = value
             with self.assertRaises(RuntimeError):
                 self.load(config)
+
+    def test_shared_loader_preserves_mcp_storage_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(
+            (root / "configs/loader.py").resolve(),
+            root.parent / "fersk_codex/configs/loader.py",
+        )
+        self.config["storage"].update(
+            runLogPath="logs", databasePath="state.sqlite", workspaceRoot="~/workspace"
+        )
+        self.assertEqual(self.load(self.config)["storage"], self.config["storage"])
 
     def test_video_configuration_is_retained(self):
         loaded = self.load(self.config)

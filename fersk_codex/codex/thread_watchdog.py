@@ -10,9 +10,9 @@ from pathlib import Path
 import threading
 import time
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
-from fersk_codex.middleware.session_cache import RETENTION_SECONDS
+from fersk_codex.session.session_gateway import RETENTION_SECONDS
 
 logger = get_logger("Watchdog")
 

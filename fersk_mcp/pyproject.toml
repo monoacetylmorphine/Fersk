@@ -26,6 +26,8 @@ package = true
 packages = [
     "fersk_mcp",
     "fersk_mcp.configs",
+    "fersk_mcp.services",
+    "fersk_mcp.services.lark",
     "fersk_mcp.utils",
     "fersk_mcp.tools",
     "fersk_mcp.tools.internal_tools",

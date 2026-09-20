@@ -9,7 +9,7 @@ from unittest.mock import Mock
 from fersk_codex.middleware.resource_validator import (
     ResourceValidationError, read_resource_bytes, validate_downloaded_resource, OFFICE_TYPES, MAX_OFFICE_METADATA_BYTES,
 )
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 
 def office_bytes(extension, *, main_type=None, target="custom/main.xml", overrides=None):

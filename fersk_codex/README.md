@@ -2,7 +2,7 @@
 
 主项目通过飞书消息驱动 Codex，持久化配置与工作区从宿主机 `~/.fersk`、`~/.codex` 挂载读取。部署方式见[根目录说明](../README.md)。
 
-主项目直接使用 `AsyncCodex()`，由你通过 Codex CLI 管理挂载的用户配置；代码不注册扩展或覆盖其连接设置。两个服务共用本项目 `configs/` 下的 `config_default.json`、`config_schema.json`、`config_validation.py` 和 `initialize_config.py`，启动时完整校验，主项目不消费 `mcp` 段。共享源仍归属于本项目，MCP 使用符号链接引用。
+主项目直接使用 `AsyncCodex()`，由你通过 Codex CLI 管理挂载的用户配置；代码不注册扩展或覆盖其连接设置。两个服务共用本项目 `configs/` 下的 `config_default.json`、`config_schema.json`、`validation.py` 和 `initialization.py`，启动时完整校验，主项目不消费 `mcp` 段。共享源仍归属于本项目，MCP 使用符号链接引用。
 
 群聊机器人身份使用 `lark.credentials.robotUnionIdEnv` 指定环境变量名，默认读取 `LARK_ROBOT_UNION_ID`，并与飞书消息中的 `mention.id.union_id` 匹配；`robotNameEnv` 可作为名称匹配后备。
 
@@ -12,10 +12,10 @@
 
 Docker 从仓库根目录执行 `docker build -f fersk_codex/Dockerfile -t fersk-codex .`。容器首次启动原子初始化共享挂载配置，已有配置不覆盖。
 
-Codex 实现位于 `codex/`，按职责分为三个文件：
+Codex 执行实现位于 `codex/`，会话实现位于 `session/`：
 
 - `codex_runtime.py`：SDK 生命周期、共享运行状态、停止、steer 和资源清理。
-- `codex_session.py`：会话恢复、重置、名称初始化和时间同步。
+- `session/session_codex.py`：会话恢复、重置、名称初始化和时间同步。
 - `codex_execution.py`：定义 `FerskCodex`，负责模型路由、任务执行、事件流、重试、错误转换及用量记录。
 
 业务代码通过 `from fersk_codex.codex.codex_execution import FerskCodex, LiveTurn` 导入，
@@ -45,3 +45,5 @@ Docker 源码不包含 `.git`，没有可用 Git 或分发元数据时使用 `0.
 需要对无 Git 的发布源码指定准确版本时，可在构建命令环境中设置
 `SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FERSK_CODEX`；普通开发构建不需要该变量。
 `setuptools-scm` 仅作为构建依赖，不作为应用运行依赖。
+
+配置加载入口为 `configs/loader.py`，工作区准备逻辑位于 `codex/codex_workspace.py`。

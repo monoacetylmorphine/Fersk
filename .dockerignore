@@ -20,6 +20,9 @@ fersk_codex/codex/**
 !fersk_codex/middleware/
 fersk_codex/middleware/**
 !fersk_codex/middleware/*.py
+!fersk_codex/session/
+fersk_codex/session/**
+!fersk_codex/session/*.py
 !fersk_codex/services/
 fersk_codex/services/**
 !fersk_codex/services/*.py

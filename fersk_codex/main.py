@@ -12,7 +12,7 @@ if not __package__:
 
 from fersk_codex.codex.codex_execution import FerskCodex
 from fersk_codex.codex.thread_watchdog import journal
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger, configure_logging
 from fersk_codex.utils.event_dispatcher import EventDispatcher
 from fersk_codex.services.lark.lark_client import create_websocket_client
@@ -21,7 +21,7 @@ from fersk_codex.services.lark.lark_message_card import sending_card
 from fersk_codex.middleware.message_collector import is_stop_command, is_new_command, is_history_command
 from fersk_codex.middleware.message_router import MessageRouter, _bot_identity
 from fersk_codex.middleware.message_assemble import assemble_codex_input
-from fersk_codex.middleware.session_cache import SessionCache
+from fersk_codex.session.session_gateway import SessionCache
 from fersk_codex.middleware.gateway_runtime import GatewayRuntime
 from fersk_codex.middleware.gateway_execution import GatewayExecution
 from fersk_codex.middleware.gateway_commands import GatewayCommands

@@ -14,13 +14,14 @@ from openai_codex import (
 )
 from openai_codex.types import TurnStatus
 
-from fersk_codex.utils.workspace import prepare_workspace
+from fersk_codex.codex.codex_workspace import prepare_workspace
 from fersk_codex.utils.logging import SavingLog, finalize_usage
-from . import codex_session, session_history, thread_manager
+from . import thread_manager
+from fersk_codex.session import session_codex, session_history
 from .codex_runtime import CodexRuntime, LiveTurn
-from .codex_session import CodexSession
+from fersk_codex.session.session_codex import CodexSession
 from .thread_watchdog import probes, should_log_event, summarize_event
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from .thread_watchdog import settings
 
@@ -243,7 +244,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                 yield _error_event(error, operation="thread_binding_write")
                 return
             try:
-                await codex_session._initialize_session_name(user_id, thread, prompt)
+                await session_codex._initialize_session_name(user_id, thread, prompt)
             except Exception as error:
                 yield _error_event(error, operation="session_history_name")
                 return
@@ -372,7 +373,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                                 cls._active_turns.pop(run_id, None)
                                 cls._pending_interrupts.discard(run_id)
                     if completed:
-                        await codex_session._sync_session_time(user_id, thread)
+                        await session_codex._sync_session_time(user_id, thread)
                 finally:
                     # 所有退出路径仅收尾一次；已知耗时时回填，不重复插入用量。
                     if usage_received:

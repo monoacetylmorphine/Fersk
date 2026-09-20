@@ -1,12 +1,12 @@
 """验证生命周期边界，不等待真实的 24 小时。"""
 
 import asyncio
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fersk_codex.middleware.session_cache import ActiveCodexRun, SessionCache, RETENTION_SECONDS
+from fersk_codex.session.session_gateway import ActiveCodexRun, SessionCache, RETENTION_SECONDS
 import test_stop_command as helpers
 
 
@@ -40,13 +40,13 @@ class SessionCacheTests(unittest.IsolatedAsyncioTestCase):
 
     def test_duplicate_does_not_extend_retention(self):
         cache = SessionCache()
-        with patch('fersk_codex.middleware.session_cache.time.monotonic', return_value=100):
+        with patch('fersk_codex.session.session_gateway.time.monotonic', return_value=100):
             cache.remember(cache.received_message_ids, 'chat', 'm')
             cache.remember(cache.processed_message_ids, 'chat', 'm')
             cache.recall('m')
             cache.track_reaction('chat', 'm')
         cache.reaction_message_ids['chat'] = {'m': 'r'}
-        with patch('fersk_codex.middleware.session_cache.time.monotonic', return_value=200):
+        with patch('fersk_codex.session.session_gateway.time.monotonic', return_value=200):
             cache.remember(cache.received_message_ids, 'chat', 'm')
         cache.prune(100 + RETENTION_SECONDS - 1)
         self.assertIn('m', cache.received_message_ids['chat'])
@@ -192,7 +192,7 @@ class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(worker, return_exceptions=True)
 
     def test_pending_deletion_expiry_and_capacity_are_bounded(self):
-        from fersk_codex.utils.config_loader import CONFIG
+        from fersk_codex.configs.loader import CONFIG
         cache = self.runtime.cache
         with patch.dict(CONFIG['messaging'], recallCacheMaxEntries=1):
             cache.reaction_message_ids['chat'] = {'m1': 'r1', 'm2': 'r2'}

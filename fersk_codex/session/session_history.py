@@ -8,7 +8,7 @@ import aiosqlite
 import regex
 from openai_codex import TextInput
 
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 
 DB_PATH = CONFIG["storage"]["databasePath"]
 

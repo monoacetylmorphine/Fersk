@@ -9,9 +9,9 @@ from uuid import uuid4
 
 from openai_codex import AsyncCodex, InvalidRequestError, LocalImageInput
 
-from . import codex_session
+from fersk_codex.session import session_codex
 from .thread_watchdog import probes
-from fersk_codex.utils.config_loader import CONFIG
+from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from .thread_watchdog import settings
 
@@ -129,7 +129,7 @@ class CodexRuntime:
     @classmethod
     async def cleanup_control_sessions(cls):
         """后台每轮清理一个控制会话，失败保留，24 小时后按现有策略释放。"""
-        from fersk_codex.middleware.session_cache import RETENTION_SECONDS
+        from fersk_codex.session.session_gateway import RETENTION_SECONDS
         now = time.monotonic()
         for run_id, (created, due) in list(cls._control_cleanup.items()):
             if now < due:
@@ -277,7 +277,7 @@ class CodexRuntime:
                         (image_route["model"], image_route["provider"])):
                     return {"type": "error", "content": CONFIG["messages"]["steerImageUnsupported"]}
                 if live.user_id is not None:
-                    await codex_session._initialize_session_name(live.user_id, live.thread, prompt)
+                    await session_codex._initialize_session_name(live.user_id, live.thread, prompt)
                 try:
                     result = await live.handle.steer(prompt)
                 except InvalidRequestError as exc:
