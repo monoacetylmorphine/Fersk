@@ -149,14 +149,14 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("actual", FerskCodex._live_turns)
             saving.assert_not_awaited()
 
-    async def test_stream_preserves_message_phase_and_filters_tool_content(self):
+    async def test_stream_preserves_message_phase_and_forwards_tool_content(self):
         async def stream():
             for item_id, phase in [("progress", "commentary"), ("final", "final_answer")]:
                 item = AgentMessageThreadItem(id=item_id, phase=phase, text="", type="agentMessage")
                 yield NS(method="item/started", payload=NS(item=NS(root=item)))
                 yield NS(method="item/agentMessage/delta", payload=NS(item_id=item_id, delta="text"))
                 yield NS(method="item/completed", payload=NS(item=NS(root=item)))
-                yield NS(method="item/commandExecution/outputDelta", payload=NS(delta="secret tool output"))
+                yield NS(method="item/commandExecution/outputDelta", payload=NS(item_id="tool", delta="tool output"))
                 if phase == "commentary":
                     yield NS(method="item/reasoning/textDelta", payload=NS(item_id="r", delta="reasoning"))
             yield NS(method="turn/completed", payload=NS(turn=NS(duration_ms=10, status=TurnStatus.completed)))
@@ -171,8 +171,10 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in FerskCodex.running("user", "hello", "phases")]
         self.assertEqual(events, [
             {"type": "answer", "content": "text", "item_id": "progress", "phase": "commentary"},
+            {"type": "progress", "content": "tool output", "item_id": "tool"},
             {"type": "reasoning", "content": "reasoning", "item_id": "r"},
             {"type": "answer", "content": "text", "item_id": "final", "phase": "final_answer"},
+            {"type": "progress", "content": "tool output", "item_id": "tool"},
             {"type": "done"},
         ])
 
@@ -204,10 +206,19 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                     item.summary = ["推理一推理二"] if phase is None else []
                     item.content = [] if phase is None else ["推理一推理二"]
                     yield NS(method="item/completed", payload=NS(item=NS(root=item)))
+                    tool = NS(type="commandExecution", id="tool", command="test command", status="inProgress")
+                    yield NS(method="item/started", payload=NS(item=NS(root=tool)))
+                    yield NS(method="item/commandExecution/outputDelta", payload=NS(item_id="tool", delta="unique output"))
+                    tool.aggregated_output = "unique output plus tail"
+                    tool.status = "completed"
+                    yield NS(method="item/completed", payload=NS(item=NS(root=tool)))
+                    yield NS(method="item/completed", payload=NS(item=NS(root=NS(
+                        type="commandExecution", id="fallback", aggregated_output="completion only"))))
                     answer = AgentMessageThreadItem(id="a", phase=phase, text="", type="agentMessage")
                     yield NS(method="item/started", payload=NS(item=NS(root=answer)))
                     yield NS(method="item/agentMessage/delta", payload=NS(item_id="a", delta="答案"))
                     yield NS(method="item/completed", payload=NS(item=NS(root=answer)))
+                    yield NS(method="hook/completed", payload=NS(status="completed"))
                     yield NS(method="turn/completed", payload=NS(turn=NS(
                         duration_ms=10, status=TurnStatus.completed)))
                 self.handle.stream = stream
@@ -222,9 +233,14 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                     rendered = [chunk async for chunk in namespace["_reply_content"](adapter,
                         None, None, NS(), events=events)]
                 self.assertEqual(rendered[:2], ["推理一", "推理二"])
-                self.assertEqual(len(rendered), 3)
-                self.assertIsInstance(rendered[2], CardReplace)
-                self.assertEqual(rendered[2].content, "答案")
+                progress = "".join(rendered[:-1])
+                self.assertIn("test command", progress)
+                self.assertEqual(progress.count("unique output"), 1)
+                self.assertIn(" plus tail", progress)
+                self.assertIn("completion only", progress)
+                self.assertNotIn("hook/completed", progress)
+                self.assertIsInstance(rendered[-1], CardReplace)
+                self.assertEqual(rendered[-1].content, "答案")
 
 
 class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):

@@ -36,13 +36,21 @@ pnpm 使用 `latest` 和严格 peer dependency 检查安装 Node 包。冲突或
 执行外部技能目录中的 Python 脚本仍使用工作区解释器。
 
 Docker 沿用 Debian Bookworm，安装 Python 3.13、uv、Node.js LTS（工作区要求 >=22）、npm、pnpm，
-以及原有音频工具、LibreOffice Writer/Calc/Impress、Poppler、Pandoc、Tesseract 中英文 OCR。
+以及原有音频工具、LibreOffice Writer/Calc/Impress、Poppler（含 `poppler-data` CMap 数据）、
+`qpdf`、`curl`、Pandoc、Tesseract 中英文日文 OCR。`poppler-data` 用于解析 Adobe-Japan1
+等 PDF 字符映射，避免日文 PDF 因缺少 CMap 而无法提取文本。
 仅显式添加两个字体包：`fonts-inter`（英文 Inter）和 `fonts-noto-cjk`（中文使用 Noto Sans CJK SC）；
 系统依赖可能附带符号字体。没有安装 Apple 专有字体。
 禁用 apt 推荐包，通过 BuildKit 缓存 apt、npm 和 uv 下载，保留依赖文件先于源码复制的分层。
 `Dockerfile.dockerignore` 仅向构建发送本服务，排除参考 skills、本地环境和测试。
 镜像不默认安装 GCC：如果部署沙箱禁止 Unix socket，现有 LibreOffice shim 需要
 GCC 和 libc 开发头文件；该受限分支不属于默认精简镜像支持范围。
+
+Codex 任务默认使用 `codex.sandbox: "workspace-write"`。运行器必须允许非特权用户创建
+user namespace，且容器的 seccomp、AppArmor/SELinux 策略不得拦截该能力；否则 Bubblewrap
+（`bwrap`）无法启动，默认沙箱内的本地文件和图片操作会失败。该能力由宿主机/运行器安全
+策略控制，应用和任务不得自行修改内核 sysctl。部署时应先在目标运行器完成一次只读沙箱预检；
+预检失败时，保留默认沙箱配置，并仅为经过授权且确有必要的任务调用使用受限范围的升级执行。
 
 Codex 执行实现位于 `codex/`，会话实现位于 `session/`：
 

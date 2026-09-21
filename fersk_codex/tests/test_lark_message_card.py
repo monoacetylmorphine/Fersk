@@ -399,11 +399,13 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         async def events():
             yield {"type": "reasoning", "content": "推理一", "item_id": "r1"}
             yield {"type": "answer", "phase": "commentary", "content": "进度", "item_id": "a1"}
-            yield {"type": "commandExecution", "content": "不应出现"}
-            yield {"type": "usage", "content": "统计不应出现"}
+            yield {"type": "progress", "content": "工具输出", "item_id": "tool"}
+            yield {"type": "usage", "content": "统计"}
             yield {"type": "reasoning", "content": "推理二", "item_id": "r2"}
             yield {"type": "reasoning", "content": "后续", "item_id": "r2"}
             yield {"type": "answer", "phase": "final_answer", "content": "最终答案", "item_id": "a2"}
+            yield {"type": "usage", "content": "最终统计不应覆盖答案"}
+            yield {"type": "progress", "content": "hook 不应覆盖答案"}
         namespace = dict(aclosing=aclosing, _run_was_interrupted=recalled,
                          CardStreamStopped=self.card.CardStreamStopped, CardReplace=self.card.CardReplace)
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
@@ -412,7 +414,12 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             _run_was_interrupted=namespace["_run_was_interrupted"],
         ))
         chunks = [c async for c in namespace["_reply_content"](adapter, None, None, None, events=events())]
-        self.assertEqual(chunks, ["推理一", "\n\n进度", "\n\n推理二", "后续", self.card.CardReplace("最终答案")])
+        self.assertEqual(chunks, ["推理一", "\n\n进度", "\n\n工具输出", "\n\n统计",
+                                  "\n\n推理二", "后续", self.card.CardReplace("最终答案")])
+        await self.card.sending_card("user-1", namespace["_reply_content"](
+            adapter, None, None, None, events=events()))
+        updates = self.client.cardkit.v1.card_element.content.call_args_list
+        self.assertEqual(updates[-1].args[0].request_body.content, "最终答案")
 
 
 class CardSteerTests(unittest.IsolatedAsyncioTestCase):

@@ -19,10 +19,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates ffmpeg git libstdc++6 ripgrep zip unzip \
-        libreoffice-writer libreoffice-calc libreoffice-impress poppler-utils pandoc \
+        ca-certificates curl ffmpeg git libstdc++6 qpdf ripgrep zip unzip \
+        libreoffice-writer libreoffice-calc libreoffice-impress poppler-data poppler-utils pandoc \
         fontconfig fonts-inter fonts-noto-cjk \
-        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim tesseract-ocr-jpn \
     && fc-cache -f
 
 # 构建时安装 pnpm 最新版本；Office 业务包由用户工作区初始化器安装。

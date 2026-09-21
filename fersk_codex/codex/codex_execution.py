@@ -1,6 +1,7 @@
 """模型路由、重试、事件流转换以及用量记录。"""
 
 import asyncio
+import json
 import random
 from contextlib import aclosing
 from datetime import datetime, timedelta, timezone
@@ -284,6 +285,7 @@ class FerskCodex(CodexSession, CodexRuntime):
             completed = False
             interrupted = False
             message_phases = {}
+            tool_output = {}
             try:
                 if run_id is not None:
                     async with cls._turns_guard:
@@ -312,6 +314,27 @@ class FerskCodex(CodexSession, CodexRuntime):
                                         message_phases[item.id] = getattr(phase, "value", phase)
                                     else:
                                         message_phases.pop(item.id, None)
+                                elif item.type not in {"userMessage", "reasoning"}:
+                                    # 工具参数、状态和结果均展示；已流出的命令输出不重复追加。
+                                    data = (item.model_dump(mode="json", exclude_none=True)
+                                            if hasattr(item, "model_dump") else vars(item).copy())
+                                    output = data.pop("aggregated_output", data.pop("aggregatedOutput", None))
+                                    if event.method == "item/completed":
+                                        streamed = tool_output.pop(item.id, "")
+                                        if output and output.startswith(streamed):
+                                            output = output[len(streamed):]
+                                    if output:
+                                        data["output"] = output
+                                    label = "Tool Call Starting" if event.method == "item/started" else "Tool Call Ending"
+                                    yield {"type": "progress", "item_id": item.id,
+                                           "content": "\n" + label + "：" + item.type + "\n"
+                                           + json.dumps(data, ensure_ascii=False, default=str) + "\n"}
+
+                            elif event.method == "item/commandExecution/outputDelta":
+                                item_id = event.payload.item_id
+                                delta = event.payload.delta
+                                tool_output[item_id] = tool_output.get(item_id, "") + delta
+                                yield {"type": "progress", "item_id": item_id, "content": delta}
 
                             elif event.method in {
                                 "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
@@ -340,6 +363,15 @@ class FerskCodex(CodexSession, CodexRuntime):
                                         **usage,
                                     })
                                     yield {"type": "usage", "content": str(usage)}
+
+                            elif event.method not in {"turn/completed", "turn/started"}:
+                                # 其他运行时输出（例如 hook、工具进度、plan）保留原事件类型。
+                                payload = event.payload
+                                data = (payload.model_dump(mode="json", exclude_none=True)
+                                        if hasattr(payload, "model_dump") else vars(payload))
+                                yield {"type": "progress", "item_id": event.method,
+                                       "content": event.method + "\n" + json.dumps(
+                                           data, ensure_ascii=False, default=str) + "\n"}
 
                             elif event.method == "turn/completed":
                                 completed = True

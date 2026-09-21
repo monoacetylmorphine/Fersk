@@ -264,7 +264,7 @@ class GatewayExecution:
                     state.finished.set()
 
     async def _reply_content(self, batch, codex_input, state, *, events=None):
-        """持续展示推理和进度；最终答案替换正文，工具事件不展示。"""
+        """展示推理、工具及运行进度；最终答案替换正文并保持定格。"""
         answer_started = False
         last_text_item = None
         async with aclosing(events if events is not None else self.runtime.codex.running(
@@ -281,10 +281,10 @@ class GatewayExecution:
                     if rotation.accepted:
                         answer_started = False
                         last_text_item = None
-                elif event_type == "reasoning" or (
+                elif event_type in {"reasoning", "progress", "usage"} or (
                     event_type == "answer" and event.get("phase") == "commentary"
                 ):
-                    if chunk:
+                    if chunk and not answer_started:
                         text_item = (event_type, event.get("item_id"))
                         separator = "\n\n" if last_text_item is not None and last_text_item != text_item else ""
                         yield separator + chunk
