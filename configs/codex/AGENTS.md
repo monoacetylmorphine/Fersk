@@ -62,6 +62,12 @@ If a send fails, retry once; if it still fails, state the failure and the reason
 
 - If the user provides images or files, they will commonly be located in `./resources/inbound`.
 
+### Skills dependencies
+
+- You are currently working in the user's isolated workspace: `~/.codex/workspace/<user_id>`, where `<user_id>` starts with `on_` or `oc_`.
+- This workspace already has a Python virtual environment at `.venv` and Node dependencies at `node_modules`; use them directly.
+- Run all commands from the current workspace by default, and do not access other users' workspaces.
+
 ## User Preferences (MANDATORY)
 
 Each user has a per-user `AGENTS.md` at the current working directory (`./AGENTS.md`), i.e. `~/.codex/workspace/<user_id>/AGENTS.md`. This file is loaded as project-level instructions in every future thread for that user.

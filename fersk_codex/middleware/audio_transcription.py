@@ -216,13 +216,14 @@ class ASR:
         if not input_path.is_file():
             raise FileNotFoundError(f"音频文件不存在: {input_path}")
 
-        api_key_env = AUDIO_CONFIG["asr"]["apiKeyEnv"]
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise AudioProcessingError(f"未配置 {api_key_env}")
-
-        temporary_directory = Path(tempfile.mkdtemp(prefix=AUDIO_CONFIG["asr"]["temporaryDirectoryPrefix"]))
+        temporary_directory: Path | None = None
         try:
+            api_key_env = AUDIO_CONFIG["asr"]["apiKeyEnv"]
+            api_key = os.getenv(api_key_env)
+            if not api_key:
+                raise AudioProcessingError(f"未配置 {api_key_env}")
+
+            temporary_directory = Path(tempfile.mkdtemp(prefix=AUDIO_CONFIG["asr"]["temporaryDirectoryPrefix"]))
             try:
                 async with asyncio.timeout(AUDIO_CONFIG["limits"]["conversionTimeoutSeconds"]):
                     segments = await self._prepare_segments(input_path, temporary_directory)
@@ -244,4 +245,11 @@ class ASR:
             logger.debug("音频转写结束")
             return "\n".join(texts)
         finally:
-            shutil.rmtree(temporary_directory, ignore_errors=True)
+            if temporary_directory is not None:
+                shutil.rmtree(temporary_directory, ignore_errors=True)
+            # 按原文件扩展名清理，成功、失败或取消均删除 OGG，其他格式保留。
+            if input_path.suffix.lower() == ".ogg":
+                try:
+                    input_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("删除 OGG 原文件失败: path=%s", input_path, exc_info=True)

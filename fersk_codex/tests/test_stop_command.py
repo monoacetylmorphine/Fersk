@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 from types import ModuleType, SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -347,6 +348,39 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
         await self.execution._handle_message_batch(batch, 0)
         self.assertEqual(self.runtime.delete_reaction.await_count, 2)
         self.assertFalse(self.runtime.cache.reaction_message_ids)
+
+    async def test_failed_ogg_transcription_deletes_source_and_sends_lark_notice(self):
+        from fersk_codex.middleware import audio_transcription as audio
+        from fersk_codex.middleware.message_collector import CollectedMessage, MessageBatch
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'upload.ogg'
+            source.write_bytes(b'audio')
+            name = 'assembly_failed_ogg_notification_test'
+            spec = importlib.util.spec_from_file_location(
+                name, Path(__file__).resolve().parents[1] / 'middleware/message_assemble.py')
+            assembly = importlib.util.module_from_spec(spec)
+            stub = ModuleType('fersk_codex.services.lark.lark_tools')
+            stub.download_msg_resource = AsyncMock(return_value=str(source))
+            with patch.dict(sys.modules, {name: assembly, stub.__name__: stub}):
+                spec.loader.exec_module(assembly)
+            self.execution.assemble_input = assembly.assemble_codex_input
+            self.runtime.codex.running = AsyncMock()
+            batch = MessageBatch('chat-1', 'user-1', 'p2p', (
+                CollectedMessage('m1', 'file', {'file_key': 'voice', 'file_name': 'upload.ogg'}, 1),
+            ))
+            with patch.dict(audio.os.environ, {audio.AUDIO_CONFIG['asr']['apiKeyEnv']: 'test-key'}), patch.object(
+                audio.ASR, '_prepare_segments', AsyncMock(return_value=[source])
+            ), patch.object(audio.ASR, '_transcribe_segment', AsyncMock(side_effect=RuntimeError('ASR offline'))), patch.object(
+                audio, 'AsyncOpenAI'
+            ):
+                await self.execution._handle_message_batch(batch, 0)
+            self.assertFalse(source.exists())
+            self.runtime.send_card.assert_awaited_once()
+            notification = self.runtime.send_card.await_args.kwargs
+            self.assertEqual(notification['union_id'], 'user-1')
+            self.assertIn('upload.ogg', notification['content'])
+            self.assertIn(CONFIG['messages']['transcriptionFailedSuffix'], notification['content'])
+            self.runtime.codex.running.assert_not_called()
 
 
 class BackendInterruptTests(unittest.IsolatedAsyncioTestCase):

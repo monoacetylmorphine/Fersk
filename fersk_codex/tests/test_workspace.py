@@ -18,6 +18,7 @@ from fersk_codex.codex import codex_workspace as module
 
 class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch.object(module, '_initialize_environment', AsyncMock()))
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))

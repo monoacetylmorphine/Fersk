@@ -7,18 +7,28 @@ COPY --from=node-runtime /usr/local /usr/local
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    UV_NO_CACHE=1 \
     UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy \
     PATH="/opt/fersk_codex/.venv/bin:${PATH}" \
     PYTHONPATH=/opt
 
-# ffmpeg also provides ffprobe; git/ripgrep are useful to Codex in its workspace.
-RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+# 来源：现有音频流程及 skills-office；仅显式安装两套字体，禁用推荐包。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates ffmpeg git libstdc++6 ripgrep zip unzip \
-    && rm -rf /var/lib/apt/lists/* \
-    && node --version
+        libreoffice-writer libreoffice-calc libreoffice-impress poppler-utils pandoc \
+        fontconfig fonts-inter fonts-noto-cjk \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
+    && fc-cache -f
+
+# 构建时安装 pnpm 最新版本；Office 业务包由用户工作区初始化器安装。
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --global pnpm --no-audit --no-fund \
+    && node --version && pnpm --version
 
 ARG APP_USER=app
 ARG APP_UID=1000
@@ -35,7 +45,8 @@ ENV CODEX_HOME=${HOME}/.codex
 WORKDIR /opt/fersk_codex
 COPY fersk_codex/pyproject.toml fersk_codex/uv.lock ./
 ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
-RUN uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python \
         --default-index "${PYTHON_PACKAGE_INDEX}" \
     && ln -s "$(python -c 'from codex_cli_bin import bundled_codex_path; print(bundled_codex_path())')" \
         /usr/local/bin/codex \

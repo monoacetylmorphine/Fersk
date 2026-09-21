@@ -12,9 +12,37 @@
 
 Docker 从仓库根目录执行 `docker build -f fersk_codex/Dockerfile -t fersk-codex .`。容器首次启动原子初始化共享挂载配置，已有配置不覆盖。
 
-文档处理依赖包含 `markitdown[xlsx]` 和 `openpyxl`，分别用于 XLSX 转 Markdown 及读写工作簿。
-版本统一由 `pyproject.toml` 和 `uv.lock` 管理；本地运行 `uv sync --locked` 安装，
-Docker 构建沿用现有流程按锁文件安装。
+主服务依赖仍由 `pyproject.toml` 和 `uv.lock` 管理，Docker 构建时安装到
+`/opt/fersk_codex/.venv`。Office Python/npm 包不装入主服务环境；首次处理用户任务时，
+`codex_workspace.py` 在 `workspace/<user_id>/` 初始化 Git、`AGENTS.md`、`.venv`、
+`package.json`、`pnpm-lock.yaml` 和 `node_modules`，workspace 根目录不创建语言环境。
+所需包名直接定义在 `codex_workspace.py` 的 `PYTHON_PACKAGES`、`NODE_PACKAGE` 中，
+不依赖单独的资源目录。`skills-office/` 仅作参考，不参与部署或初始化，也不复制进镜像。
+Office 包不固定版本：首次创建用户环境时由 uv 解析满足依赖约束的最新 Python 包，
+pnpm 使用 `latest` 和严格 peer dependency 检查安装 Node 包。冲突或验证失败会报错，
+不会把环境标为完成。pnpm 在用户目录生成 `pnpm-lock.yaml`，用于后续复用已解析的版本，
+不是源码中预置的版本限制。已有完整环境不因包仓库发布新版而自动升级。
+维护依赖只需修改该 Python 文件中的包名清单。部署修复需重新构建镜像并重建容器，
+仅重启旧容器不会更新代码；无需删除用户工作区。
+
+同一用户初始化串行，不同用户互不阻塞；跨进程使用文件锁。初始化总超时为 600 秒
+（来源：本项目下载依赖的等待策略），Git 仍使用 `gitInitTimeoutSeconds`。
+安装失败或取消不会提交模型任务；成功后按内置依赖清单摘要、Python/Node 版本和关键目录复用环境，
+不重复下载安装。下载缓存使用 uv/pnpm 的用户缓存，不在 workspace 根目录建立共享环境。
+已有 `.git` 不影响补齐技能依赖，已有 `AGENTS.md` 原样保留；非受管环境、修改过的 Node
+清单、损坏或 Python 次版本不兼容的 `.venv` 会报错，不自动删除或覆盖。
+任务通过 Codex 的 `shell_environment_policy.set` 设置本用户 `VIRTUAL_ENV` 和 `PATH`，
+不修改服务全局环境，也不改写挂载的 Codex 配置。Node 生成脚本放在用户工作区或子目录；
+执行外部技能目录中的 Python 脚本仍使用工作区解释器。
+
+Docker 沿用 Debian Bookworm，安装 Python 3.13、uv、Node.js LTS（工作区要求 >=22）、npm、pnpm，
+以及原有音频工具、LibreOffice Writer/Calc/Impress、Poppler、Pandoc、Tesseract 中英文 OCR。
+仅显式添加两个字体包：`fonts-inter`（英文 Inter）和 `fonts-noto-cjk`（中文使用 Noto Sans CJK SC）；
+系统依赖可能附带符号字体。没有安装 Apple 专有字体。
+禁用 apt 推荐包，通过 BuildKit 缓存 apt、npm 和 uv 下载，保留依赖文件先于源码复制的分层。
+`Dockerfile.dockerignore` 仅向构建发送本服务，排除参考 skills、本地环境和测试。
+镜像不默认安装 GCC：如果部署沙箱禁止 Unix socket，现有 LibreOffice shim 需要
+GCC 和 libc 开发头文件；该受限分支不属于默认精简镜像支持范围。
 
 Codex 执行实现位于 `codex/`，会话实现位于 `session/`：
 

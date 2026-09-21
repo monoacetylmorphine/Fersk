@@ -14,7 +14,7 @@ from openai_codex import (
 )
 from openai_codex.types import TurnStatus
 
-from fersk_codex.codex.codex_workspace import prepare_workspace
+from fersk_codex.codex.codex_workspace import prepare_workspace, workspace_environment
 from fersk_codex.utils.logging import SavingLog, finalize_usage
 from . import thread_manager
 from fersk_codex.session import session_codex, session_history
@@ -176,6 +176,9 @@ class FerskCodex(CodexSession, CodexRuntime):
 
         thread_config = {
             "cwd":str(workspace),
+            # 来源：Codex shell_environment_policy.set；只覆盖当前用户的环境路径。
+            "config": {f"shell_environment_policy.set.{key}": value
+                       for key, value in workspace_environment(workspace).items()},
             "sandbox":_sandbox_from_config(),
             "model":model,
             "model_provider":model_provider,
@@ -212,6 +215,11 @@ class FerskCodex(CodexSession, CodexRuntime):
                         thread = await _retry_on_overload_async(
                             lambda: codex.thread_unarchive(thread_id),
                             operation_name="thread_unarchive",
+                        )
+                        # 解归档本身不接收配置，重新恢复才能注入当前用户的依赖路径。
+                        thread = await _retry_on_overload_async(
+                            lambda: codex.thread_resume(thread_id=thread_id, **thread_config),
+                            operation_name="thread_resume",
                         )
                     except Exception as error:
                         if is_retryable_error(error) or isinstance(

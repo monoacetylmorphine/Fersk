@@ -94,6 +94,7 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 api.assert_not_called()
                 self.assertEqual(len(outputs), 2)
                 self.assertFalse(converted.exists())
+                self.assertFalse(source.exists())
 
     async def test_success_and_nonzero_exit(self):
         result = await audio.ASR._run([sys.executable, '-c', 'print("ok")'], 'test')

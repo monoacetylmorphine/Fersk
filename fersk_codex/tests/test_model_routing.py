@@ -1,6 +1,7 @@
 """Verify model routing at thread submission without model or network calls."""
 
 from types import SimpleNamespace as NS
+from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -18,6 +19,25 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
+
+    async def test_unarchived_thread_reapplies_workspace_environment(self):
+        async def stream():
+            yield NS(method="turn/completed", payload=NS(turn=NS(status=TurnStatus.completed, duration_ms=1)))
+        thread = NS(id="archived", turn=AsyncMock(return_value=NS(id="turn", stream=stream)))
+        with (patch.object(thread_manager, "get_user_thread", AsyncMock(return_value="archived")),
+              patch.object(thread_manager, "set_user_thread", AsyncMock()),
+              patch.object(codex_execution, "prepare_workspace", AsyncMock()),
+              patch.object(codex_execution, "SavingLog", AsyncMock()),
+              patch.object(codex_runtime, "AsyncCodex") as factory):
+            client = factory.return_value.__aenter__.return_value
+            client.thread_resume.side_effect = [RuntimeError("archived"), thread]
+            client.thread_unarchive.return_value = thread
+            events = [event async for event in codex.FerskCodex.running("user", "hello")]
+            self.assertEqual(events, [{"type": "done"}])
+            self.assertEqual(client.thread_resume.await_count, 2)
+            self.assertEqual(client.thread_resume.await_args_list[0].kwargs["config"],
+                             client.thread_resume.await_args_list[1].kwargs["config"])
+            client.thread_start.assert_not_awaited()
 
     async def test_text_and_attachment_routes_for_new_and_resumed_threads(self):
         routes = {
@@ -60,5 +80,9 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
                         submit = client.thread_resume if existing else client.thread_start
                         self.assertEqual(submit.await_args.kwargs["model"], routes[route]["model"])
                         self.assertEqual(submit.await_args.kwargs["model_provider"], routes[route]["provider"])
+                        environment = submit.await_args.kwargs["config"]
+                        workspace = (Path(CONFIG["storage"]["workspaceRoot"]) / "user").resolve()
+                        self.assertEqual(environment["shell_environment_policy.set.VIRTUAL_ENV"], str(workspace / ".venv"))
+                        self.assertTrue(environment["shell_environment_policy.set.PATH"].startswith(str(workspace / ".venv/bin")))
                         thread.turn.assert_awaited_once_with(input=prompt)
                         self.assertEqual(events, [{"type": "done"}])

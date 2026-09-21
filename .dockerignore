@@ -1,4 +1,5 @@
 # 两个服务统一使用仓库根目录作为构建上下文。
+# 首先忽略所有文件
 **
 
 # Codex 仅包含应用源码、共享配置和构建输入。
@@ -36,7 +37,7 @@ fersk_codex/utils/**
 fersk_codex/docker/**
 !fersk_codex/docker/entrypoint.sh
 
-# MCP 保留目录内容，再统一排除开发环境和构建产物。
+# MCP 保留整个目录内容
 !fersk_mcp/
 !fersk_mcp/**
 
@@ -50,3 +51,6 @@ fersk_codex/docker/**
 **/.git
 **/tests
 **/.DS_Store
+**/node_modules
+**/skills-office
+**/skills

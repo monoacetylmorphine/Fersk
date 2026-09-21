@@ -1,6 +1,7 @@
 """Audio normalization boundaries and API cleanup, without ffmpeg or network."""
 
 import base64
+import asyncio
 import json
 from pathlib import Path
 import tempfile
@@ -150,6 +151,7 @@ class AudioTranscriptionTests(unittest.IsolatedAsyncioTestCase):
                     await audio.ASR().transfer(self.source)
         mkdir.assert_not_called()
         api.assert_not_called()
+        self.assertFalse(self.source.exists())
 
     async def test_transfer_keeps_order_skips_empty_segments_and_cleans_up(self):
         await self.check_transfer_cleanup(None)
@@ -157,7 +159,46 @@ class AudioTranscriptionTests(unittest.IsolatedAsyncioTestCase):
     async def test_transfer_cleans_up_after_api_failure(self):
         await self.check_transfer_cleanup(RuntimeError('ASR offline'))
 
-    async def check_transfer_cleanup(self, failure):
+    async def test_transfer_preserves_non_ogg_originals_on_success_and_failure(self):
+        for suffix in ('.m4a', '.mp3', '.wav'):
+            for failure in (None, RuntimeError('ASR offline')):
+                with self.subTest(suffix=suffix, failure=failure):
+                    self.source = self.directory / ('upload' + suffix)
+                    self.source.write_bytes(b'original audio')
+                    await self.check_transfer_cleanup(failure)
+                    self.assertEqual(self.source.read_bytes(), b'original audio')
+
+    async def test_transfer_deletes_uppercase_ogg_and_empty_transcription(self):
+        self.source = self.directory / 'upload.OGG'
+        self.source.write_bytes(b'audio')
+        await self.check_transfer_cleanup(None, texts=['', '', ''])
+
+    async def test_transfer_deletes_ogg_after_cancellation(self):
+        await self.check_transfer_cleanup(asyncio.CancelledError())
+
+    async def test_cleanup_failure_does_not_mask_result_or_asr_error(self):
+        for failure in (None, RuntimeError('ASR offline')):
+            with self.subTest(failure=failure), patch.object(
+                Path, 'unlink', side_effect=PermissionError('cannot delete')
+            ), patch.object(audio.logger, 'warning') as warning:
+                await self.check_transfer_cleanup(failure, deletion_failed=True)
+                warning.assert_called_once()
+
+    async def test_conversion_and_temporary_directory_failures_delete_ogg(self):
+        for stage in ('directory', 'conversion'):
+            with self.subTest(stage=stage):
+                self.source.write_bytes(b'audio')
+                failing_stage = patch.object(
+                    audio.tempfile, 'mkdtemp', side_effect=OSError('disk error')
+                ) if stage == 'directory' else patch.object(
+                    audio.ASR, '_prepare_segments', AsyncMock(side_effect=audio.AudioProcessingError('invalid audio'))
+                )
+                with failing_stage, patch.dict(audio.os.environ, {audio.AUDIO_CONFIG['asr']['apiKeyEnv']: 'test-key'}):
+                    with self.assertRaises((OSError, audio.AudioProcessingError)):
+                        await audio.ASR().transfer(self.source)
+                self.assertFalse(self.source.exists())
+
+    async def check_transfer_cleanup(self, failure, *, texts=None, deletion_failed=False):
         converted = self.directory / 'converted'
         converted.mkdir()
         segments = [converted / f'{i}.m4a' for i in range(3)]
@@ -166,14 +207,14 @@ class AudioTranscriptionTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(audio.os.environ, {audio.AUDIO_CONFIG['asr']['apiKeyEnv']: 'test-key'}), patch.object(
             audio.tempfile, 'mkdtemp', return_value=str(converted)
         ), patch.object(audio.ASR, '_prepare_segments', AsyncMock(return_value=segments)), patch.object(
-            audio.ASR, '_transcribe_segment', AsyncMock(side_effect=failure or ['first', '', 'last'])
+            audio.ASR, '_transcribe_segment', AsyncMock(side_effect=failure if failure is not None else (texts or ['first', '', 'last']))
         ) as transcribe, patch.object(audio, 'AsyncOpenAI') as factory:
             if failure:
-                with self.assertRaisesRegex(RuntimeError, 'ASR offline'):
+                with self.assertRaises(type(failure)):
                     await audio.ASR().transfer(self.source)
             else:
-                self.assertEqual(await audio.ASR().transfer(self.source), 'first\nlast')
+                self.assertEqual(await audio.ASR().transfer(self.source), '' if texts is not None else 'first\nlast')
                 self.assertEqual([call.args[1] for call in transcribe.await_args_list], segments)
             factory.return_value.__aexit__.assert_awaited_once()
         self.assertFalse(converted.exists())
-        self.assertTrue(self.source.exists())
+        self.assertEqual(self.source.exists(), deletion_failed or self.source.suffix.lower() != '.ogg')

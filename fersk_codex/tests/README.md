@@ -1,5 +1,26 @@
 # 测试
 
+工作区依赖直接内置于 `codex_workspace.py`，不读取参考 skills 或额外资源文件。
+`test_office_workspace.py` 验证安装命令直接接收包名，Node 首次生成用户锁文件且后续复用。
+部署验证应在不包含 skills-office 的镜像中初始化用户环境。
+
+单文件初始化改动的代码验证：`test_office_workspace.py` 12 项、`test_workspace.py` 7 项、
+`test_model_routing.py` 2 项通过；语法解析和 `git diff --check` 通过。
+本次后续仅执行代码检查，Docker 构建及部署验证由用户自行完成。
+
+Office 工作区离线测试位于 `test_office_workspace.py`：覆盖首次初始化、重复调用、旧 Git/worktree
+和 AGENTS.md 保留、非受管环境保护、清单冲突、安装失败重试、取消以及同用户串行/不同用户并行。
+依赖安装由 stub 模拟，不连接包仓库。`test_workspace.py` 保留真实 Git 子进程超时和回收检查。
+Linux 的 LibreOffice、Poppler、OCR、字体和 npm 原生模块仍需在实际构建镜像中做功能验证。
+
+2026-09-21 初轮 Office 集成验证（当时使用锁定依赖）：Linux arm64 镜像构建成功，缓存重建命中系统工具和主服务依赖层。
+非 root 容器完成两个用户环境初始化/复用、DOCX/PPTX 校验和渲染、XLSX 公式缓存值检查、
+PDF 提取/渲染及中英文 OCR；本地 Codex 线程 shell 命令确认 Python 使用用户 `.venv`。
+补齐兄弟项目测试夹具后，全量 Linux 回归为 375/376 通过；唯一失败是原有
+`HistoryTests.test_idempotent_registration_and_same_second_sorting` 的 SQLite WAL 锁竞争。
+修改前版本对同一用例重复 30 次出现 2 次相同失败，故未在本次 Office 改动中修改数据库逻辑。
+未执行 Linux amd64 或真实模型调用验证；文档样例不代表所有复杂 Office 格式都已覆盖。
+
 在已安装项目 `pyproject.toml`／`uv.lock` 依赖的 Python 3.13+ 环境中，从项目根目录运行：
 
 ```sh

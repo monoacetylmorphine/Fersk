@@ -13,8 +13,6 @@ dependencies = [
     "python-dotenv",
     "jsonschema>=4.0.0",
     "regex>=2026.9.10",
-    "markitdown[xlsx]>=0.1.7",
-    "openpyxl>=3.1.5",
 ]
 
 [project.scripts]
