@@ -1,5 +1,7 @@
 """私聊历史卡片离线回归：真实 SDK 数据模型，外部请求和恢复操作模拟。"""
 
+from __future__ import annotations
+
 from fersk_codex.configs.loader import CONFIG
 from fersk_codex.middleware import gateway_commands
 from fersk_codex.codex import thread_manager
@@ -40,12 +42,12 @@ def options(count=1):
 
 
 class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.store = cards.HistoryCardStore()
         self.card = self.store.create("user-1", "chat-1", options(cards.PAGE_SIZE + 3))
         self.card.message_id = "message-1"
 
-    def test_form_requires_selection_and_confirmation(self):
+    def test_form_requires_selection_and_confirmation(self) -> None:
         body = cards.build_history_card(self.card)
         self.assertEqual(body["schema"], "2.0")
         form = body["body"]["elements"][1]
@@ -63,11 +65,11 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
         self.card.page = 1
         self.assertEqual(len(cards.build_history_card(self.card)["body"]["elements"][1]["elements"][0]["options"]), 3)
 
-    def test_empty_history_has_no_controls(self):
+    def test_empty_history_has_no_controls(self) -> None:
         self.card.options = ()
         self.assertNotIn("select_static", json.dumps(cards.build_history_card(self.card)))
 
-    def test_identity_scope_expiry_and_replay(self):
+    def test_identity_scope_expiry_and_replay(self) -> None:
         self.assertIs(self.store.resolve(callback(self.card)), self.card)
         for data in (callback(self.card, user="other"), callback(self.card, user=None),
                      callback(self.card, context={"open_chat_id": "group", "open_message_id": "message-1"}),
@@ -82,7 +84,7 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             self.store.resolve(callback(self.card))
 
-    def test_only_confirmed_visible_form_option_is_accepted(self):
+    def test_only_confirmed_visible_form_option_is_accepted(self) -> None:
         self.assertEqual(cards.confirmed_thread_id(callback(self.card), self.card), "thread-1")
         for selected in (None, [], "foreign", f"thread-{cards.PAGE_SIZE + 1}"):
             with self.assertRaises(ValueError):
@@ -93,7 +95,7 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             cards.confirmed_thread_id(data, self.card)
 
-    async def test_send_and_update_use_real_sdk_requests(self):
+    async def test_send_and_update_use_real_sdk_requests(self) -> None:
         client = NS(im=NS(v1=NS(message=NS(create=Mock(), patch=Mock()))))
         stub = ModuleType("fersk_codex.services.lark.lark_client")
         stub.client = client
@@ -113,7 +115,7 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         helpers.StopTests.setUp(self)
         self.send = self.enterContext(patch.object(cards, "send_interactive_card", AsyncMock(return_value="message-1")))
         self.update = self.enterContext(patch.object(cards, "update_interactive_card", AsyncMock()))
@@ -125,7 +127,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.card = self.commands.history_cards.create("user-1", "chat-1", options())
         self.card.message_id = "message-1"
 
-    async def test_private_command_bypasses_model_and_group_unchanged(self):
+    async def test_private_command_bypasses_model_and_group_unchanged(self) -> None:
         await self.router.processing(helpers.event(" /HISTORY "))
         self.listing.assert_awaited_once_with("user-1")
         self.send.assert_awaited_once()
@@ -142,7 +144,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         route.assert_awaited_once()
         self.send.assert_not_awaited()
 
-    async def test_confirm_activates_once_with_trusted_context(self):
+    async def test_confirm_activates_once_with_trusted_context(self) -> None:
         data = callback(self.card)
         await self.commands.processing_history_action(data)
         await self.commands.processing_history_action(data)
@@ -155,7 +157,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.update.assert_awaited_once()
         self.assertIn("已激活", json.dumps(self.update.call_args.args[1], ensure_ascii=False))
 
-    async def test_cancel_unknown_select_and_foreign_callbacks_do_not_restore(self):
+    async def test_cancel_unknown_select_and_foreign_callbacks_do_not_restore(self) -> None:
         dispatcher = Mock()
         reply = self.commands.dispatch_history_action(dispatcher, callback(self.card, action="cancel"))
         self.assertIn("未执行", reply.toast.content)
@@ -168,7 +170,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.restore.assert_not_awaited()
         self.assertFalse(self.card.finished)
 
-    async def test_failure_consumes_confirmation_and_delivery_failure_does_not_restore_twice(self):
+    async def test_failure_consumes_confirmation_and_delivery_failure_does_not_restore_twice(self) -> None:
         self.restore.return_value = {"ok": False}
         self.update.side_effect = RuntimeError("network")
         data = callback(self.card)
@@ -179,7 +181,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.card.finished)
         self.assertFalse(self.card.busy)
 
-    async def test_concurrent_confirmation_is_not_replayed(self):
+    async def test_concurrent_confirmation_is_not_replayed(self) -> None:
         started, release = asyncio.Event(), asyncio.Event()
         async def restore(*args):
             started.set()
@@ -193,7 +195,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.restore.assert_awaited_once()
 
-    async def test_pagination_rejects_old_revision_and_does_not_restore(self):
+    async def test_pagination_rejects_old_revision_and_does_not_restore(self) -> None:
         self.card.options = tuple(options(cards.PAGE_SIZE + 1))
         data = callback(self.card, action="history_page")
         data.event.action.value["page"] = 1
@@ -205,14 +207,14 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.update.assert_awaited_once()
         self.restore.assert_not_awaited()
 
-    async def test_query_error_not_reported_as_empty_history(self):
+    async def test_query_error_not_reported_as_empty_history(self) -> None:
         self.listing.side_effect = RuntimeError("database")
         await self.commands.processing_history(helpers.event("/history"))
         text = json.dumps(self.send.call_args.args[1], ensure_ascii=False)
         self.assertIn("失败", text)
         self.assertNotIn("暂无", text)
 
-    async def test_history_card_limits_sorted_database_records_without_deleting_history(self):
+    async def test_history_card_limits_sorted_database_records_without_deleting_history(self) -> None:
         directory = self.enterContext(TemporaryDirectory())
         self.enterContext(patch.object(session_history, "DB_PATH", Path(directory) / "state.sqlite"))
         self.enterContext(patch.object(gateway_commands, "list_sessions", session_history.list_sessions))
@@ -242,7 +244,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.send.call_args.args[1]["body"]["elements"][1]["elements"][0]["options"]), 30)
         self.assertEqual(len(await session_history.list_sessions("user-1")), 36)
 
-    async def test_confirm_to_real_database_and_unarchive_failure_preserves_binding(self):
+    async def test_confirm_to_real_database_and_unarchive_failure_preserves_binding(self) -> None:
         directory = self.enterContext(TemporaryDirectory())
         db_path = Path(directory) / "state.sqlite"
         self.enterContext(patch.object(session_history, "DB_PATH", db_path))
@@ -275,7 +277,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
                 text = json.dumps(self.update.call_args.args[1], ensure_ascii=False)
                 self.assertIn("激活失败" if failure else "已激活", text)
 
-    def test_callback_capacity_and_expiry_return_error_toast(self):
+    def test_callback_capacity_and_expiry_return_error_toast(self) -> None:
         dispatcher = Mock()
         dispatcher.submit.return_value = False
         self.assertEqual(self.commands.dispatch_history_action(dispatcher, callback(self.card)).toast.type, "error")
@@ -286,7 +288,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HistoryCommandTests(unittest.TestCase):
-    def test_exact_command_and_private_history_boundary(self):
+    def test_exact_command_and_private_history_boundary(self) -> None:
         self.assertTrue(is_history_command("text", '{"text":" /HISTORY "}'))
         for raw in ("[]", "null", "bad", '{"text":"please /history"}'):
             self.assertFalse(is_history_command("text", raw))

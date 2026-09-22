@@ -8,6 +8,8 @@ services:
         APP_UID: ${LOCAL_UID:-1000}
         APP_GID: ${LOCAL_GID:-1000}
         PYTHON_PACKAGE_INDEX: ${PYTHON_PACKAGE_INDEX:-https://pypi.org/simple}
+    security_opt:
+      - seccomp=unconfined
     init: true
     restart: unless-stopped
     stop_grace_period: 30s

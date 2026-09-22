@@ -1,11 +1,11 @@
-"""Parse Lark payloads and assemble Codex turn input items."""
+"""解析飞书消息并组装 Codex turn 输入。"""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Union
+from typing import Literal
 
 from openai_codex import LocalImageInput, MentionInput, TextInput
 
@@ -20,8 +20,8 @@ from fersk_codex.middleware.message_collector import MessageBatch
 from fersk_codex.middleware.resource_validator import ResourceValidationError
 
 
-CodexInputItem = Union[TextInput, LocalImageInput, MentionInput]
-CodexRunInput = Union[str, list[CodexInputItem]]
+CodexInputItem = TextInput | LocalImageInput | MentionInput
+CodexRunInput = str | list[CodexInputItem]
 
 SUPPORTED_IMAGE_EXTENSIONS = frozenset(CONFIG["resources"]["acceptedExtensions"]["image"])
 SUPPORTED_FILE_EXTENSIONS = frozenset(CONFIG["resources"]["acceptedExtensions"]["document"])
@@ -29,7 +29,7 @@ AUDIO_EXTENSIONS = frozenset(CONFIG["resources"]["acceptedExtensions"]["audio"])
 
 
 class InputAssemblyError(Exception):
-    """An input error that is safe to show directly to the Lark user."""
+    """可直接向飞书用户展示的输入错误。"""
 
     def __init__(self, user_message: str) -> None:
         super().__init__(user_message)
@@ -55,7 +55,7 @@ class _ResourcePart:
     display_name: str
 
 
-_InputPart = Union[_TextPart, _ResourcePart]
+_InputPart = _TextPart | _ResourcePart
 
 
 async def assemble_codex_input(batch: MessageBatch) -> AssemblyResult:
@@ -134,9 +134,7 @@ async def assemble_codex_input(batch: MessageBatch) -> AssemblyResult:
     return AssemblyResult(codex_input=items, notices=notices)
 
 
-def _normalize_messages(
-    batch: MessageBatch,
-) -> tuple[list[_InputPart], list[str]]:
+def _normalize_messages(batch: MessageBatch) -> tuple[list[_InputPart], list[str]]:
     parts: list[_InputPart] = []
     rejected: list[str] = []
 
@@ -205,7 +203,10 @@ def _normalize_messages(
 
 
 def _append_post_files(
-    parts: list[_InputPart], rejected: list[str], message_id: str, files: object,
+    parts: list[_InputPart],
+    rejected: list[str],
+    message_id: str,
+    files: object,
 ) -> None:
 
     if files is None:
@@ -245,7 +246,7 @@ def _append_resource(
     parts: list[_InputPart],
     rejected: list[str],
     *,
-    kind: Literal["image", "file", "audio"],
+    kind: Literal['image', 'file', 'audio'],
     message_id: str,
     resource_key: object,
     display_name: str,

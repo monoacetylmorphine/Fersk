@@ -1,10 +1,16 @@
 """限制同步请求数量；调用方取消后，名额由真实线程完成回调归还。"""
 
+from __future__ import annotations
+
 import asyncio
+import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from functools import partial
-import threading
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 
 class RequestCapacityError(RuntimeError):
@@ -12,12 +18,18 @@ class RequestCapacityError(RuntimeError):
 
 
 class BoundedExecutor:
-    def __init__(self, capacity=8):
+    def __init__(self, capacity: int = 8) -> None:
         # 来源：内部最多 5 个任务并发的初始容量策略，尚非压测结论。
         self._slots = threading.BoundedSemaphore(capacity)
         self._pool = ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="lark-http")
 
-    async def call(self, operation, *args, timeout, **kwargs):
+    async def call(
+        self,
+        operation: Callable[..., T],
+        *args: Any,
+        timeout: float,
+        **kwargs: Any,
+    ) -> T:
         if not self._slots.acquire(blocking=False):
             raise RequestCapacityError("飞书请求繁忙，实际在途请求已达上限，请稍后重试")
         try:
@@ -38,6 +50,6 @@ class BoundedExecutor:
             future.cancel()
             raise
 
-    def close(self):
+    def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
 

@@ -1,12 +1,15 @@
 """模型路由、重试、事件流转换以及用量记录。"""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import random
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, NotRequired, TYPE_CHECKING, TypeVar, TypedDict
 from uuid import uuid4
 
 from openai_codex import (
@@ -21,17 +24,49 @@ from . import thread_manager
 from fersk_codex.session import session_codex, session_history
 from .codex_runtime import CodexRuntime, LiveTurn
 from fersk_codex.session.session_codex import CodexSession
-from .thread_watchdog import probes, should_log_event, summarize_event
+from .thread_watchdog import RunProbe, probes, should_log_event, summarize_event
 from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from .thread_watchdog import settings
+
+if TYPE_CHECKING:
+    from openai_codex import InputItem
+
+    from fersk_codex.services.lark.lark_message_card import CardSteer
+
+T = TypeVar("T")
+
 
 __all__ = ["FerskCodex", "LiveTurn"]
 
 logger = get_logger("Codex")
 
 
-T = TypeVar("T")
+class RunEvent(TypedDict):
+    """SDK 与网关之间的字典事件；可选字段保持原有缺省语义。"""
+
+    type: str
+    content: NotRequired[str]
+    code: NotRequired[str]
+    item_id: NotRequired[str]
+    thread_id: NotRequired[str]
+    turn_id: NotRequired[str]
+    phase: NotRequired[str | None]
+    control: NotRequired[CardSteer]
+
+
+def _resolve_model(prompt: str | list[InputItem]) -> tuple[str, str]:
+    """保留文本、附件与图片路由优先级，空列表沿用多模态路由。"""
+    if isinstance(prompt, str):
+        route = "text"
+    elif isinstance(prompt, list):
+        route = "text" if prompt and all(isinstance(item, TextInput) for item in prompt) else "multimodal"
+        if any(isinstance(item, LocalImageInput) for item in prompt):
+            route = "image"
+    else:
+        raise TypeError(f"Not Supported Prompt Type: {type(prompt).__name__}")
+    selection = CONFIG["codex"]["models"][route]
+    return selection["model"], selection["provider"]
 
 
 def _sandbox_from_config() -> Sandbox:
@@ -39,7 +74,7 @@ def _sandbox_from_config() -> Sandbox:
     try:
         return getattr(Sandbox, attribute)
     except AttributeError as exc:
-        raise RuntimeError(f"不支持的 Codex sandbox: {CONFIG['codex']['sandbox']}") from exc
+        raise RuntimeError(f"Not Supported Codex Sandbox: {CONFIG['codex']['sandbox']}") from exc
 
 
 async def _retry_on_overload_async(
@@ -73,7 +108,7 @@ async def _retry_on_overload_async(
             jitter = delay * jitter_ratio
             sleep_for = min(max_delay_s, delay) + random.uniform(-jitter, jitter)
             logger.warning(
-                "Codex 瞬态错误，准备重试: operation=%s, attempt=%s/%s, error=%s",
+                "Codex Transient Error, to Retry: operation=%s, attempt=%s/%s, error=%s",
                 operation_name, attempt, max_attempts, exc,
             )
             if sleep_for > 0:
@@ -83,7 +118,7 @@ async def _retry_on_overload_async(
     raise RuntimeError("unreachable")
 
 
-def _error_event(exc: Exception, *, operation: str) -> dict[str, str]:
+def _error_event(exc: Exception, *, operation: str) -> RunEvent:
     """Convert SDK failures into the generator's user-facing event format."""
     if is_retryable_error(exc):
         code = "retry_exhausted"
@@ -98,13 +133,18 @@ def _error_event(exc: Exception, *, operation: str) -> dict[str, str]:
         code = "codex_error"
         content = CONFIG["messages"]["codexFailure"]
 
-    logger.error("Codex 操作失败: operation=%s, code=%s, error=%s", operation, code, exc)
+    logger.error("Codex Execute Failure: operation=%s, code=%s, error=%s", operation, code, exc)
     return {"type": "error", "code": code, "content": content}
 
 
-async def _save_turn_usage(log: dict, *, duration_ms: int | None = None, finalize: bool = False) -> None:
+async def _save_turn_usage(
+    log: dict[str, Any],
+    *,
+    duration_ms: int | None = None,
+    finalize: bool = False,
+) -> None:
     """在有限时间内完成单条写入或耗时回填，抵御调用方重复取消。"""
-    async def save():
+    async def save() -> None:
         try:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
                 if finalize:
@@ -113,7 +153,7 @@ async def _save_turn_usage(log: dict, *, duration_ms: int | None = None, finaliz
                     await SavingLog(log=log)
         except Exception:
             # A commit may already have succeeded; do not retry and duplicate it.
-            logger.exception("Token usage 日志保存失败: user_id=%s, thread_id=%s",
+            logger.exception("Token Usage Logs Saving Failure: user_id=%s, thread_id=%s",
                              log["userId"], log["threadId"])
 
     saving = asyncio.create_task(save())
@@ -132,40 +172,21 @@ class FerskCodex(CodexSession, CodexRuntime):
     """执行请求，并复用会话管理和运行控制的共享状态。"""
 
     @classmethod
-    async def running(cls, user_id:str, prompt:str | list, run_id: str | None = None,
-                      *, notify_started: bool = False):
+    async def running(
+        cls,
+        user_id: str,
+        prompt: str | list[InputItem],
+        run_id: str | None = None,
+        *,
+        notify_started: bool = False,
+    ) -> AsyncGenerator[RunEvent, None]:
         try:
             thread_id = await thread_manager.get_user_thread(user_id)
         except Exception as error:
             yield _error_event(error, operation="thread_binding_read")
             return
 
-        if isinstance(prompt, str):
-            selection = CONFIG["codex"]["models"]["text"]
-            model = selection["model"]
-            model_provider = selection["provider"]
-
-        elif isinstance(prompt, list):
-            # Assembly preserves multiple text fragments as a list, including
-            # rich-text nodes and audio transcripts; these still use text routing.
-            route = "text" if prompt and all(isinstance(item, TextInput) for item in prompt) else "multimodal"
-            selection = CONFIG["codex"]["models"][route]
-            model = selection["model"]
-            model_provider = selection["provider"]
-            image = any(
-                isinstance(item, LocalImageInput)
-                for item in prompt
-            )
-
-            if image:
-                selection = CONFIG["codex"]["models"]["image"]
-                model = selection["model"]
-                model_provider = selection["provider"]
-
-        else:
-            raise TypeError(
-                f"不支持的 prompt 类型: {type(prompt).__name__}"
-            )
+        model, model_provider = _resolve_model(prompt)
 
         workspace = Path(CONFIG["storage"]["workspaceRoot"]).expanduser() / user_id
         try:
@@ -192,7 +213,7 @@ class FerskCodex(CodexSession, CodexRuntime):
             if run_id in cls._pending_interrupts:
                 yield {"type": "interrupted"}
                 return
-            runningTimestamp = datetime.now(timezone(timedelta(hours=CONFIG["runtime"]["timezoneOffsetHours"])))
+            running_timestamp = datetime.now(timezone(timedelta(hours=CONFIG["runtime"]["timezoneOffsetHours"])))
             thread = None
             if thread_id:
                 try:
@@ -210,7 +231,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                         yield _error_event(e, operation="thread_resume")
                         return
 
-                    logger.warning("恢复线程失败 (%s), 将尝试从归档恢复线程", e)
+                    logger.warning("Restoring the thread (%s) failure, try to restore the thread from the archive.", e)
 
                     try:
                         thread = await _retry_on_overload_async(
@@ -228,7 +249,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                         ):
                             yield _error_event(error, operation="thread_unarchive")
                             return
-                        logger.warning("恢复线程失败 (%s), 从归档恢复线程失败, 创建新线程", error)
+                        logger.warning("Restoring the thread (%s) failure from the archive, try to create a new thread", error)
                         thread = None
 
             if thread_id is None or thread is None:
@@ -279,148 +300,166 @@ class FerskCodex(CodexSession, CodexRuntime):
                 probe.turn_id = handle.id
                 probe.last_activity = asyncio.get_running_loop().time()
                 probe.stage("running")
-            usage_run_id = run_id or uuid4().hex
-            usage_received = False
-            duration_ms = None
-            completed = False
-            interrupted = False
-            message_phases = {}
-            tool_output = {}
+            async with aclosing(cls._stream_turn(
+                live, user_id, run_id, notify_started, running_timestamp, probe,
+            )) as events:
+                async for event in events:
+                    yield event
+
+    @classmethod
+    async def _stream_turn(
+        cls,
+        live: LiveTurn,
+        user_id: str,
+        run_id: str | None,
+        notify_started: bool,
+        running_timestamp: datetime,
+        probe: RunProbe | None,
+    ) -> AsyncGenerator[RunEvent, None]:
+        """转换单个 turn 的事件；由调用方在 SDK 会话关闭前完成收尾。"""
+        thread, handle, model = live.thread, live.handle, live.model
+        usage_run_id = run_id or uuid4().hex
+        usage_received = False
+        duration_ms = None
+        completed = False
+        interrupted = False
+        message_phases = {}
+        tool_output = {}
+        try:
+            if run_id is not None:
+                async with cls._turns_guard:
+                    cls._active_turns[run_id] = handle
+                    cls._live_turns[run_id] = live
+                    should_interrupt = run_id in cls._pending_interrupts
+                if should_interrupt:
+                    await handle.interrupt()
+
+            if notify_started:
+                yield {"type": "started", "thread_id": thread.id, "turn_id": handle.id}
+
             try:
-                if run_id is not None:
-                    async with cls._turns_guard:
-                        cls._active_turns[run_id] = handle
-                        cls._live_turns[run_id] = live
-                        should_interrupt = run_id in cls._pending_interrupts
-                    if should_interrupt:
-                        await handle.interrupt()
-
-                if notify_started:
-                    yield {"type": "started", "thread_id": thread.id, "turn_id": handle.id}
-
-                try:
-                    async with aclosing(handle.stream()) as stream:
-                        async for event in stream:
-                            if should_log_event(event.method):
-                                logger.info("Codex event: run_id=%s, event=%s", run_id, summarize_event(event))
-                            if probe:
-                                probe.activity(event)
-
-                            if event.method in {"item/started", "item/completed"}:
-                                item = event.payload.item.root
-                                if item.type == "agentMessage":
-                                    phase = getattr(item, "phase", None)
-                                    if event.method == "item/started":
-                                        message_phases[item.id] = getattr(phase, "value", phase)
-                                    else:
-                                        message_phases.pop(item.id, None)
-                                elif item.type not in {"userMessage", "reasoning"}:
-                                    # 工具参数、状态和结果均展示；已流出的命令输出不重复追加。
-                                    data = (item.model_dump(mode="json", exclude_none=True)
-                                            if hasattr(item, "model_dump") else vars(item).copy())
-                                    output = data.pop("aggregated_output", data.pop("aggregatedOutput", None))
-                                    if event.method == "item/completed":
-                                        streamed = tool_output.pop(item.id, "")
-                                        if output and output.startswith(streamed):
-                                            output = output[len(streamed):]
-                                    if output:
-                                        data["output"] = output
-                                    label = "Tool Call Starting" if event.method == "item/started" else "Tool Call Ending"
-                                    yield {"type": "progress", "item_id": item.id,
-                                           "content": "\n" + label + "：" + item.type + "\n"
-                                           + json.dumps(data, ensure_ascii=False, default=str) + "\n"}
-
-                            elif event.method == "item/commandExecution/outputDelta":
-                                item_id = event.payload.item_id
-                                delta = event.payload.delta
-                                tool_output[item_id] = tool_output.get(item_id, "") + delta
-                                yield {"type": "progress", "item_id": item_id, "content": delta}
-
-                            elif event.method in {
-                                "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
-                            }:
-                                yield {"type": "reasoning", "content": event.payload.delta,
-                                       "item_id": event.payload.item_id}
-
-                            elif event.method == "item/agentMessage/delta":
-                                yield {"type": "answer", "content": event.payload.delta,
-                                       "item_id": event.payload.item_id,
-                                       "phase": message_phases.get(event.payload.item_id)}
-
-                            elif event.method == "thread/tokenUsage/updated":
-                                if hasattr(event.payload.token_usage.last, "model_dump"):
-                                    usage = event.payload.token_usage.last.model_dump()
-                                    usage_received = True
-                                    await _save_turn_usage({
-                                        "timeStamp": datetime.now(runningTimestamp.tzinfo).strftime(
-                                            CONFIG["logging"]["timestampFormat"]),
-                                        "userId": user_id,
-                                        "threadId": thread.id,
-                                        "runId": usage_run_id,
-                                        "model": model,
-                                        # 收到完成事件后回填；0 表示尚未获得任务总耗时。
-                                        "taskDuration_ms": 0,
-                                        **usage,
-                                    })
-                                    yield {"type": "usage", "content": str(usage)}
-
-                            elif event.method not in {"turn/completed", "turn/started"}:
-                                # 其他运行时输出（例如 hook、工具进度、plan）保留原事件类型。
-                                payload = event.payload
-                                data = (payload.model_dump(mode="json", exclude_none=True)
-                                        if hasattr(payload, "model_dump") else vars(payload))
-                                yield {"type": "progress", "item_id": event.method,
-                                       "content": event.method + "\n" + json.dumps(
-                                           data, ensure_ascii=False, default=str) + "\n"}
-
-                            elif event.method == "turn/completed":
-                                completed = True
-                                duration_ms = event.payload.turn.duration_ms
-                                turn = event.payload.turn
-                                if turn.status == TurnStatus.failed:
-                                    message = (
-                                        turn.error.message
-                                        if turn.error is not None
-                                        else "turn failed"
-                                    )
-                                    yield _error_event(
-                                        RuntimeError(message),
-                                        operation="turn_stream",
-                                    )
-                                    return
-                                interrupted = turn.status == TurnStatus.interrupted
-                                break
-                    if not completed:
+                async with aclosing(handle.stream()) as stream:
+                    async for event in stream:
+                        if should_log_event(event.method):
+                            logger.info("Codex event: run_id=%s, event=%s", run_id, summarize_event(event))
                         if probe:
-                            probe.finish("failed")
-                        yield _error_event(RuntimeError("事件流结束但未收到 turn/completed"),
-                                           operation="turn_stream")
-                        return
-                except Exception as error:
-                    # A started/streaming turn must not be submitted again: it
-                    # may already have produced output or external side effects.
-                    yield _error_event(error, operation="turn_stream")
-                    return
-            finally:
-                # Keep the process alive until an in-flight status/steer RPC
-                # finishes, even when turn/completed arrives concurrently.
-                try:
-                    async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]), live.lock:
-                        live.closed = True
-                        if run_id is not None:
-                            async with cls._turns_guard:
-                                cls._live_turns.pop(run_id, None)
-                                cls._active_turns.pop(run_id, None)
-                                cls._pending_interrupts.discard(run_id)
-                    if completed:
-                        await session_codex._sync_session_time(user_id, thread)
-                finally:
-                    # 所有退出路径仅收尾一次；已知耗时时回填，不重复插入用量。
-                    if usage_received:
-                        await _save_turn_usage({
-                            "userId": user_id,
-                            "threadId": thread.id,
-                            "runId": usage_run_id,
-                        }, duration_ms=duration_ms, finalize=True)
+                            probe.activity(event)
 
-            yield {"type": "interrupted" if interrupted else "done"}
+                        if event.method in {"item/started", "item/completed"}:
+                            item = event.payload.item.root
+                            if item.type == "agentMessage":
+                                phase = getattr(item, "phase", None)
+                                if event.method == "item/started":
+                                    message_phases[item.id] = getattr(phase, "value", phase)
+                                else:
+                                    message_phases.pop(item.id, None)
+                            elif item.type not in {"userMessage", "reasoning"}:
+                                # 工具参数、状态和结果均展示；已流出的命令输出不重复追加。
+                                data = (item.model_dump(mode="json", exclude_none=True)
+                                        if hasattr(item, "model_dump") else vars(item).copy())
+                                output = data.pop("aggregated_output", data.pop("aggregatedOutput", None))
+                                if event.method == "item/completed":
+                                    streamed = tool_output.pop(item.id, "")
+                                    if output and output.startswith(streamed):
+                                        output = output[len(streamed):]
+                                if output:
+                                    data["output"] = output
+                                label = "Tool Call Starting" if event.method == "item/started" else "Tool Call Ending"
+                                yield {"type": "progress", "item_id": item.id,
+                                       "content": "\n" + label + ": " + item.type + "\n"
+                                       + json.dumps(data, ensure_ascii=False, default=str) + "\n"}
+
+                        elif event.method == "item/commandExecution/outputDelta":
+                            item_id = event.payload.item_id
+                            delta = event.payload.delta
+                            tool_output[item_id] = tool_output.get(item_id, "") + delta
+                            yield {"type": "progress", "item_id": item_id, "content": delta}
+
+                        elif event.method in {
+                            "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
+                        }:
+                            yield {"type": "reasoning", "content": event.payload.delta,
+                                   "item_id": event.payload.item_id}
+
+                        elif event.method == "item/agentMessage/delta":
+                            yield {"type": "answer", "content": event.payload.delta,
+                                   "item_id": event.payload.item_id,
+                                   "phase": message_phases.get(event.payload.item_id)}
+
+                        elif event.method == "thread/tokenUsage/updated":
+                            if hasattr(event.payload.token_usage.last, "model_dump"):
+                                usage = event.payload.token_usage.last.model_dump()
+                                usage_received = True
+                                await _save_turn_usage({
+                                    "timeStamp": datetime.now(running_timestamp.tzinfo).strftime(
+                                        CONFIG["logging"]["timestampFormat"]),
+                                    "userId": user_id,
+                                    "threadId": thread.id,
+                                    "runId": usage_run_id,
+                                    "model": model,
+                                    # 收到完成事件后回填；0 表示尚未获得任务总耗时。
+                                    "taskDuration_ms": 0,
+                                    **usage,
+                                })
+                                yield {"type": "usage", "content": str(usage)}
+
+                        elif event.method not in {"turn/completed", "turn/started"}:
+                            # 其他运行时输出（例如 hook、工具进度、plan）保留原事件类型。
+                            payload = event.payload
+                            data = (payload.model_dump(mode="json", exclude_none=True)
+                                    if hasattr(payload, "model_dump") else vars(payload))
+                            yield {"type": "progress", "item_id": event.method,
+                                   "content": event.method + "\n" + json.dumps(
+                                       data, ensure_ascii=False, default=str) + "\n"}
+
+                        elif event.method == "turn/completed":
+                            completed = True
+                            duration_ms = event.payload.turn.duration_ms
+                            turn = event.payload.turn
+                            if turn.status == TurnStatus.failed:
+                                message = (
+                                    turn.error.message
+                                    if turn.error is not None
+                                    else "turn failed"
+                                )
+                                yield _error_event(
+                                    RuntimeError(message),
+                                    operation="turn_stream",
+                                )
+                                return
+                            interrupted = turn.status == TurnStatus.interrupted
+                            break
+                if not completed:
+                    if probe:
+                        probe.finish("failed")
+                    yield _error_event(RuntimeError("The streaming events is turn/completed, but not received"),
+                                       operation="turn_stream")
+                    return
+            except Exception as error:
+                # A started/streaming turn must not be submitted again: it
+                # may already have produced output or external side effects.
+                yield _error_event(error, operation="turn_stream")
+                return
+        finally:
+            # Keep the process alive until an in-flight status/steer RPC
+            # finishes, even when turn/completed arrives concurrently.
+            try:
+                async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]), live.lock:
+                    live.closed = True
+                    if run_id is not None:
+                        async with cls._turns_guard:
+                            cls._live_turns.pop(run_id, None)
+                            cls._active_turns.pop(run_id, None)
+                            cls._pending_interrupts.discard(run_id)
+                if completed:
+                    await session_codex._sync_session_time(user_id, thread)
+            finally:
+                # 所有退出路径仅收尾一次；已知耗时时回填，不重复插入用量。
+                if usage_received:
+                    await _save_turn_usage({
+                        "userId": user_id,
+                        "threadId": thread.id,
+                        "runId": usage_run_id,
+                    }, duration_ms=duration_ms, finalize=True)
+
+        yield {"type": "interrupted" if interrupted else "done"}

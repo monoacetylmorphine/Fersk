@@ -1,26 +1,30 @@
 """按用户初始化 Git 和 Office 环境，保留已有文件并回收超时子进程。"""
 
+from __future__ import annotations
+
 import asyncio
-from contextlib import asynccontextmanager
 import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
 from weakref import WeakValueDictionary
 
 
 # 来源：四份参考技能的常用工作流；首次安装由包管理器解析兼容的最新版本。
-PYTHON_PACKAGES = (
+PYTHON_PACKAGES: tuple[str, ...] = (
     "defusedxml", "lxml", "Pillow", "openpyxl", "pandas", "pypdf", "pdfplumber",
     "pdf2image", "reportlab", "markitdown[pptx,xlsx]", "pytesseract",
 )
-NODE_PACKAGE = {
+NODE_PACKAGE: dict[str, Any] = {
     "name": "fersk-office-workspace", "private": True, "version": "1.0.0",
     "engines": {"node": ">=22"},
     "dependencies": {
@@ -29,9 +33,9 @@ NODE_PACKAGE = {
 }
 # 来源：项目首次下载依赖的等待策略；Git 仍使用已有配置超时。
 ENVIRONMENT_TIMEOUT = 600
-_locks = WeakValueDictionary()
-_MANIFESTS = ("package.json", "pnpm-lock.yaml")
-_PYTHON_MODULES = ("defusedxml", "lxml", "PIL", "openpyxl", "pandas", "pypdf", "pdfplumber",
+_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+_MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml")
+_PYTHON_MODULES: tuple[str, ...] = ("defusedxml", "lxml", "PIL", "openpyxl", "pandas", "pypdf", "pdfplumber",
                    "pdf2image", "reportlab", "markitdown", "pytesseract")
 _PYTHON_IMPORTS = "import " + ",".join(_PYTHON_MODULES)
 
@@ -47,7 +51,7 @@ def workspace_environment(workspace: Path) -> dict[str, str]:
 
 
 @asynccontextmanager
-async def _workspace_lock(workspace: Path):
+async def _workspace_lock(workspace: Path) -> AsyncIterator[None]:
     # 弱引用避免用户数量增长时永久保留 asyncio.Lock；flock 处理多个服务进程。
     lock = _locks.setdefault(str(workspace), asyncio.Lock())
     async with lock:
@@ -64,7 +68,7 @@ async def _workspace_lock(workspace: Path):
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-async def _reap(process):
+async def _reap(process: asyncio.subprocess.Process) -> None:
     # 子进程独立会话：uv/pnpm 启动的后代也必须收到终止信号。
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -85,11 +89,17 @@ async def _reap(process):
             pass
 
 
-async def _initialize_git(workspace: Path, timeout: float):
+async def _initialize_git(workspace: Path, timeout: float) -> None:
     await _run(["git", "init", "-q", "-b", "main"], workspace, timeout)
 
 
-async def _run(command, workspace: Path, timeout: float, *, env=None):
+async def _run(
+    command: list[str],
+    workspace: Path,
+    timeout: float,
+    *,
+    env: dict[str, str] | None = None,
+) -> bytes:
     creating = None
     process = None
     try:
@@ -105,7 +115,7 @@ async def _run(command, workspace: Path, timeout: float, *, env=None):
                 raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
             return stdout
     except BaseException:
-        async def cleanup():
+        async def cleanup() -> None:
             child = process
             if child is None and creating is not None:
                 try:
@@ -124,35 +134,18 @@ async def _run(command, workspace: Path, timeout: float, *, env=None):
         raise
 
 
-def _write_state(workspace: Path, state: dict):
+def _write_state(workspace: Path, state: dict[str, Any]) -> None:
     temporary = workspace / ".office-env.json.tmp"
     temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(workspace / ".office-env.json")
 
 
-async def _initialize_environment(workspace: Path):
-    manifests = {"package.json": (json.dumps(NODE_PACKAGE, indent=2) + "\n").encode()}
-    requirements = "\n".join(PYTHON_PACKAGES).encode()
-    node_version = (await _run(["node", "--version"], workspace, 30)).decode().strip()
-    fingerprint = hashlib.sha256(requirements + b"".join(manifests.values()) + node_version.encode() +
-                                 str((sys.version, platform.system(), platform.machine())).encode()).hexdigest()
-    state_path = workspace / ".office-env.json"
-    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else None
-    packages = json.loads(manifests["package.json"])["dependencies"]
-    python = workspace / ".venv/bin/python"
-    site_packages = workspace / f".venv/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-    if (state and state.get("owner") == "fersk-office" and state.get("status") == "ready"
-            and state.get("fingerprint") == fingerprint
-            and python.is_file() and (workspace / ".venv/pyvenv.cfg").is_file()
-            and all((site_packages / name).exists() for name in _PYTHON_MODULES)
-            and all((workspace / "node_modules" / package).exists() for package in packages)
-            and (workspace / "pnpm-lock.yaml").is_file()
-            and hashlib.sha256((workspace / "pnpm-lock.yaml").read_bytes()).hexdigest()
-                == state.get("manifests", {}).get("pnpm-lock.yaml")
-            and all((workspace / name).is_file() and (workspace / name).read_bytes() == content
-                    for name, content in manifests.items())):
-        return
-
+def _check_environment_conflicts(
+    workspace: Path,
+    state: dict[str, Any] | None,
+    manifests: dict[str, bytes],
+) -> None:
+    """只校验受管状态和用户修改，不写入或覆盖工作区。"""
     if state is None:
         conflicts = [name for name in (".venv", "node_modules", *_MANIFESTS, "package-lock.json",
                                        "yarn.lock", "pnpm-workspace.yaml", ".npmrc")
@@ -175,6 +168,32 @@ async def _initialize_environment(workspace: Path):
             recorded = (state or {}).get("manifests", {}).get(name)
             if hashlib.sha256(target.read_bytes()).hexdigest() != recorded:
                 raise RuntimeError(f"工作区 {name} 已被修改，未覆盖")
+
+async def _initialize_environment(workspace: Path) -> None:
+    manifests = {"package.json": (json.dumps(NODE_PACKAGE, indent=2) + "\n").encode()}
+    requirements = "\n".join(PYTHON_PACKAGES).encode()
+    node_version = (await _run(["node", "--version"], workspace, 30)).decode().strip()
+    fingerprint = hashlib.sha256(requirements + b"".join(manifests.values()) + node_version.encode() +
+                                 str((sys.version, platform.system(), platform.machine())).encode()).hexdigest()
+    state_path = workspace / ".office-env.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else None
+    packages = json.loads(manifests["package.json"])["dependencies"]
+    python = workspace / ".venv/bin/python"
+    site_packages = workspace / f".venv/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+    if (state and state.get("owner") == "fersk-office" and state.get("status") == "ready"
+            and state.get("fingerprint") == fingerprint
+            and python.is_file() and (workspace / ".venv/pyvenv.cfg").is_file()
+            and all((site_packages / name).exists() for name in _PYTHON_MODULES)
+            and all((workspace / "node_modules" / package).exists() for package in packages)
+            and (workspace / "pnpm-lock.yaml").is_file()
+            and hashlib.sha256((workspace / "pnpm-lock.yaml").read_bytes()).hexdigest()
+                == state.get("manifests", {}).get("pnpm-lock.yaml")
+            and all((workspace / name).is_file() and (workspace / name).read_bytes() == content
+                    for name, content in manifests.items())):
+        return
+
+    _check_environment_conflicts(workspace, state, manifests)
+    lockfile = workspace / "pnpm-lock.yaml"
     if python.exists():
         actual = await _run([str(python), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
                             workspace, 30)
@@ -229,9 +248,9 @@ require('sharp')(Buffer.from('<svg width="8" height="8"><rect width="8" height="
     _write_state(workspace, state)
 
 
-async def prepare_workspace(workspace: Path, timeout: float):
+async def prepare_workspace(workspace: Path, timeout: float) -> None:
     workspace = workspace.resolve()
-    def prepare():
+    def prepare() -> None:
         workspace.mkdir(parents=True, exist_ok=True)
         try:
             (workspace / "AGENTS.md").touch(exist_ok=False)

@@ -1,8 +1,12 @@
 """网关共享状态、提交锁、运行监督、停止确认和后台资源清理。"""
 
+from __future__ import annotations
+
 import asyncio
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from fersk_codex.codex.thread_watchdog import probes, settings
@@ -11,20 +15,30 @@ from fersk_codex.utils.logger import get_logger
 from .message_collector import MessageBatch
 from fersk_codex.session.session_gateway import ActiveCodexRun, SessionCache
 
+if TYPE_CHECKING:
+    from fersk_codex.codex.codex_execution import FerskCodex
+
 logger = get_logger("Message")
 
 
 class GatewayRuntime:
     """所有网关组件共享同一缓存和外部服务依赖。"""
 
-    def __init__(self, cache: SessionCache, *, codex, send_card, delete_reaction):
+    def __init__(
+        self,
+        cache: SessionCache,
+        *,
+        codex: type[FerskCodex],
+        send_card: Callable[..., Awaitable[str | None]],
+        delete_reaction: Callable[..., Awaitable[bool]],
+    ) -> None:
         self.cache = cache
         self.codex = codex
         self.send_card = send_card
         self.delete_reaction = delete_reaction
-        self.detached_tasks = set()
+        self.detached_tasks: set[asyncio.Task[Any]] = set()
 
-    async def maintain(self, operation):
+    async def maintain(self, operation: Callable[[], Awaitable[None]]) -> None:
         """按既有检查间隔重试清理，单轮失败不终止维护任务。"""
         while True:
             await asyncio.sleep(settings()["checkIntervalSeconds"])
@@ -33,18 +47,18 @@ class GatewayRuntime:
             except Exception:
                 logger.exception("后台清理失败")
 
-    def _observe_detached(self, task):
+    def _observe_detached(self, task: asyncio.Task[Any]) -> None:
         """保留残留任务引用并消费异常；不等待不配合取消的协程。"""
         if task in self.detached_tasks:
             return
         self.detached_tasks.add(task)
-        def done(completed):
+        def done(completed: asyncio.Task[Any]) -> None:
             self.detached_tasks.discard(completed)
             if not completed.cancelled() and completed.exception() is not None:
                 logger.error("后台收尾任务失败", exc_info=completed.exception())
         task.add_done_callback(done)
 
-    def _release_run(self, state):
+    def _release_run(self, state: ActiveCodexRun) -> None:
         """事件循环内无 await 的幂等释放，不能依赖网络或异步锁。"""
         if state.released:
             return
@@ -68,7 +82,7 @@ class GatewayRuntime:
         else:
             state.task.add_done_callback(lambda _: self.cache.finish_run(state))
 
-    async def _cleanup_timeout(self, state):
+    async def _cleanup_timeout(self, state: ActiveCodexRun) -> None:
         """收尾期限耗尽后，有界尝试关闭进程并唤醒等待者。"""
         if state.released:
             return
@@ -105,10 +119,19 @@ class GatewayRuntime:
             self._release_run(state)
         await self._notify_terminal(state, "cleanupTimeout")
 
-    def _remember_message(self, journal, chat_id, message_id):
+    def _remember_message(
+        self,
+        journal: dict[str, dict[str, float | None]],
+        chat_id: str,
+        message_id: str,
+    ) -> None:
         self.cache.remember(journal, chat_id, message_id)
 
-    async def _register_active_run(self, batch: MessageBatch, state=None) -> ActiveCodexRun:
+    async def _register_active_run(
+        self,
+        batch: MessageBatch,
+        state: ActiveCodexRun | None = None,
+    ) -> ActiveCodexRun:
         state = state or ActiveCodexRun(
             run_id=uuid4().hex,
             chat_id=batch.chat_id,
@@ -145,7 +168,7 @@ class GatewayRuntime:
             return self.cache.codex_locks.setdefault(chat_id, asyncio.Lock())
 
     @asynccontextmanager
-    async def _submission_lock(self, chat_id):
+    async def _submission_lock(self, chat_id: str) -> AsyncIterator[None]:
         with self.cache.hold(chat_id):
             lock = await self._get_codex_lock(chat_id)
             while True:
@@ -161,7 +184,7 @@ class GatewayRuntime:
             finally:
                 lock.release()
 
-    async def _notify_terminal(self, state, key):
+    async def _notify_terminal(self, state: ActiveCodexRun, key: str) -> None:
         if state.notified:
             return
         state.notified = True
@@ -178,8 +201,8 @@ class GatewayRuntime:
             if state.probe:
                 state.probe.record("notification_uncertain", messageKey=key)
 
-    async def _watch_run(self, state):
-        async def stop_and_notify():
+    async def _watch_run(self, state: ActiveCodexRun) -> None:
+        async def stop_and_notify() -> None:
             confirmed = await self._interrupt_run(state)
             await self._notify_terminal(state, "taskTimeout" if confirmed else "taskTimeoutUnconfirmed")
 
@@ -210,7 +233,8 @@ class GatewayRuntime:
         if state.timeout_task is not None:
             await asyncio.wait({state.timeout_task}, timeout=settings()["cardRequestTimeoutSeconds"])
 
-    async def _clear_reaction(self,
+    async def _clear_reaction(
+        self,
         chat_id: str,
         message_ids: frozenset[str] | set[str] | None = None,
     ) -> None:
@@ -229,7 +253,7 @@ class GatewayRuntime:
         for key in keys:
             await self._delete_pending_reaction(key)
 
-    async def _delete_pending_reaction(self, key):
+    async def _delete_pending_reaction(self, key: tuple[str, str, str]) -> None:
         pending = self.cache.pending_reactions.get(key)
         if pending is None or key in self.cache.reactions_being_cleared:
             return
@@ -257,7 +281,7 @@ class GatewayRuntime:
                 pending.due = time.monotonic() + delays[min(pending.attempts, len(delays) - 1)]
                 pending.attempts += 1
 
-    async def _retry_reactions(self):
+    async def _retry_reactions(self) -> None:
         # 每轮最多处理一个，避免失败重试挤占正常消息请求。
         for key, pending in list(self.cache.pending_reactions.items()):
             if pending.due <= time.monotonic():
@@ -268,7 +292,7 @@ class GatewayRuntime:
         """One stop operation per run. A failed confirmation can be retried by /stop."""
         caller = asyncio.current_task()
 
-        async def stop():
+        async def stop() -> bool:
             confirmed = not state.codex_started
             if state.probe:
                 state.probe.begin_cleanup()
@@ -300,7 +324,7 @@ class GatewayRuntime:
             state.stop_task = asyncio.create_task(stop())
         return await asyncio.shield(state.stop_task)
 
-    async def _expire_session_cache(self):
+    async def _expire_session_cache(self) -> None:
         for state in self.cache.prune():
             state.expired = True
             state.interrupted = True

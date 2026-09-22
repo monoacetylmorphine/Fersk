@@ -1,5 +1,7 @@
 """离线验证用户环境初始化、恢复、冲突保护和任务环境隔离。"""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -15,7 +17,7 @@ from fersk_codex.codex import codex_workspace as module
 
 
 class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         self.workspace = self.root / "user-a"
         self.workspace.mkdir()
@@ -48,7 +50,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             return f"{sys.version_info.major}.{sys.version_info.minor}\n".encode()
         return b""
 
-    async def test_initializes_only_user_directory_and_reuses_environment(self):
+    async def test_initializes_only_user_directory_and_reuses_environment(self) -> None:
         await module.prepare_workspace(self.workspace, 5)
         state = json.loads((self.workspace / ".office-env.json").read_text())
         self.assertEqual(state["status"], "ready")
@@ -67,7 +69,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         await module.prepare_workspace(self.workspace, 5)
         self.assertEqual([args for args, _, _ in self.calls], [["node", "--version"]])
 
-    async def test_existing_git_and_agents_still_get_environment(self):
+    async def test_existing_git_and_agents_still_get_environment(self) -> None:
         (self.workspace / ".git").write_text("gitdir: /synthetic/worktree")
         (self.workspace / "AGENTS.md").write_text("保留用户约定")
         await module.prepare_workspace(self.workspace, 5)
@@ -75,7 +77,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.workspace / ".venv/bin/python").exists())
         self.assertFalse(any(args[:2] == ["git", "init"] for args, _, _ in self.calls))
 
-    async def test_unmanaged_manifest_and_venv_are_not_overwritten(self):
+    async def test_unmanaged_manifest_and_venv_are_not_overwritten(self) -> None:
         for name in ("package.json", ".venv"):
             workspace = self.root / name.replace(".", "")
             workspace.mkdir()
@@ -86,7 +88,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(target.read_text(), "用户文件")
             self.assertFalse((workspace / ".office-env.json").exists())
 
-    async def test_failed_install_is_not_ready_and_can_retry(self):
+    async def test_failed_install_is_not_ready_and_can_retry(self) -> None:
         async def fail(command, *args, **kwargs):
             if command[:2] == ["pnpm", "install"]:
                 raise subprocess.CalledProcessError(1, command, stderr=b"offline")
@@ -98,7 +100,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         await module.prepare_workspace(self.workspace, 5)
         self.assertEqual(json.loads((self.workspace / ".office-env.json").read_text())["status"], "ready")
 
-    async def test_modified_managed_manifest_is_preserved(self):
+    async def test_modified_managed_manifest_is_preserved(self) -> None:
         await module.prepare_workspace(self.workspace, 5)
         manifest = self.workspace / "package.json"
         content = manifest.read_text() + "\n"
@@ -107,7 +109,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             await module.prepare_workspace(self.workspace, 5)
         self.assertEqual(manifest.read_text(), content)
 
-    async def test_node_install_failure_after_lock_update_can_retry(self):
+    async def test_node_install_failure_after_lock_update_can_retry(self) -> None:
         await module.prepare_workspace(self.workspace, 5)
         (self.workspace / 'node_modules/docx').rmdir()
         async def fail(command, *args, **kwargs):
@@ -121,7 +123,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         await module.prepare_workspace(self.workspace, 5)
         self.assertTrue((self.workspace / 'node_modules/docx').exists())
 
-    async def test_upgrade_download_failure_preserves_manifest_ownership_for_retry(self):
+    async def test_upgrade_download_failure_preserves_manifest_ownership_for_retry(self) -> None:
         await module.prepare_workspace(self.workspace, 5)
         manifest = self.workspace / "package.json"
         old = json.loads(manifest.read_text())
@@ -142,7 +144,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         await module.prepare_workspace(self.workspace, 5)
         self.assertEqual(json.loads(manifest.read_text()), module.NODE_PACKAGE)
 
-    async def test_environment_total_timeout_releases_lock(self):
+    async def test_environment_total_timeout_releases_lock(self) -> None:
         async def slow(command, *args, **kwargs):
             if command[:2] == ["pnpm", "install"]:
                 await asyncio.Event().wait()
@@ -153,7 +155,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(json.loads((self.workspace / ".office-env.json").read_text())["status"], "ready")
         await asyncio.wait_for(module.prepare_workspace(self.workspace, 5), 2)
 
-    async def test_missing_node_dependency_is_restored(self):
+    async def test_missing_node_dependency_is_restored(self) -> None:
         await module.prepare_workspace(self.workspace, 5)
         (self.workspace / "node_modules/docx").rmdir()
         self.calls.clear()
@@ -161,7 +163,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.workspace / "node_modules/docx").exists())
         self.assertTrue(any(args[:2] == ["pnpm", "install"] for args, _, _ in self.calls))
 
-    async def test_same_user_serializes_but_other_user_can_proceed(self):
+    async def test_same_user_serializes_but_other_user_can_proceed(self) -> None:
         started, release = asyncio.Event(), asyncio.Event()
         async def slow(command, workspace, timeout, **kwargs):
             if workspace == self.workspace and command[:2] == ["uv", "venv"]:
@@ -182,7 +184,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
                     if workspace == self.workspace and args[:2] == ["uv", "venv"]]
         self.assertEqual(len(installs), 1)
 
-    async def test_cancellation_does_not_mark_ready_and_releases_lock(self):
+    async def test_cancellation_does_not_mark_ready_and_releases_lock(self) -> None:
         started = asyncio.Event()
         async def slow(command, *args, **kwargs):
             if command[:2] == ["pnpm", "install"]:
@@ -198,7 +200,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads((self.workspace / ".office-env.json").read_text())["status"], "installing")
         await asyncio.wait_for(module.prepare_workspace(self.workspace, 5), 2)
 
-    def test_environment_paths_are_per_user_without_global_mutation(self):
+    def test_environment_paths_are_per_user_without_global_mutation(self) -> None:
         before = dict(os.environ)
         first = module.workspace_environment(self.workspace)
         second = module.workspace_environment(self.root / "user-b")

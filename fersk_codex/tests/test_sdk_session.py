@@ -1,4 +1,6 @@
 """验证 SDK 会话直接采用用户配置。"""
+
+from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -8,7 +10,7 @@ from fersk_codex.codex import codex_execution as codex
 
 
 class SdkSessionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_session_preserves_user_configuration(self):
+    async def test_session_preserves_user_configuration(self) -> None:
         manager = AsyncMock()
         manager._client = None
         with patch.object(codex_runtime, "AsyncCodex", return_value=manager) as factory:
@@ -19,7 +21,7 @@ class SdkSessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         import asyncio
         from types import SimpleNamespace
         self.asyncio = asyncio
@@ -34,7 +36,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.dict(codex_runtime.settings(), cleanupTimeoutSeconds=0.05))
         self.enterContext(patch.object(codex_runtime.logger, 'exception'))
 
-    async def test_control_sessions_have_distinct_ids_and_release_indexes(self):
+    async def test_control_sessions_have_distinct_ids_and_release_indexes(self) -> None:
         async with self.cls._session(None):
             first = next(iter(self.cls._clients))
             async with self.cls._session(None):
@@ -43,7 +45,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         for name in ('_clients', '_processes', '_initializers', '_closed_runs', '_control_cleanup'):
             self.assertFalse(getattr(self.cls, name), name)
 
-    async def test_force_close_success_allows_reset_without_replaying_archive(self):
+    async def test_force_close_success_allows_reset_without_replaying_archive(self) -> None:
         self.manager.__aexit__.side_effect = RuntimeError('close failed')
         with patch.object(self.cls, 'force_close', AsyncMock(return_value=True)) as close, \
                 patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value='old')), \
@@ -55,7 +57,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.cls._clients)
         self.assertFalse(self.cls._control_cleanup)
 
-    async def test_unconfirmed_close_prevents_reset_and_restore_binding_writes(self):
+    async def test_unconfirmed_close_prevents_reset_and_restore_binding_writes(self) -> None:
         self.manager.__aexit__.side_effect = RuntimeError('close failed')
         with patch.object(self.cls, 'force_close', AsyncMock(return_value=False)), \
                 patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value='old')), \
@@ -70,7 +72,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
             update.assert_not_awaited()
         self.assertEqual(len(self.cls._control_cleanup), 2)
 
-    async def test_repeat_cancellation_during_close_does_not_swallow_cancel(self):
+    async def test_repeat_cancellation_during_close_does_not_swallow_cancel(self) -> None:
         entered, release = self.asyncio.Event(), self.asyncio.Event()
         async def close(*args):
             entered.set()
@@ -92,7 +94,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         saved.assert_not_awaited()
         self.assertFalse(self.cls._clients)
 
-    async def test_cancelled_initialization_is_reaped_by_background_retry(self):
+    async def test_cancelled_initialization_is_reaped_by_background_retry(self) -> None:
         from unittest.mock import Mock
         entered, release = self.asyncio.Event(), self.asyncio.Event()
         proc = Mock()
@@ -118,7 +120,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.cls._control_cleanup)
         self.assertFalse(self.cls._clients)
 
-    async def test_failed_background_cleanup_backs_off_and_expires(self):
+    async def test_failed_background_cleanup_backs_off_and_expires(self) -> None:
         from fersk_codex.session.session_gateway import RETENTION_SECONDS
         self.cls._control_cleanup['control'] = (100, 100)
         with patch.object(codex_runtime.time, 'monotonic', return_value=100), \
@@ -132,7 +134,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
             discard.assert_awaited_once_with('control')
         self.assertFalse(self.cls._control_cleanup)
 
-    async def test_control_close_failure_reaps_real_owned_process(self):
+    async def test_control_close_failure_reaps_real_owned_process(self) -> None:
         import subprocess
         import sys
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])

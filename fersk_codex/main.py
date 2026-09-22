@@ -1,5 +1,7 @@
 """飞书网关启动入口：组装职责实例、注册事件并管理后台任务。"""
 
+from __future__ import annotations
+
 import asyncio
 import sys
 from pathlib import Path
@@ -56,7 +58,7 @@ async def main() -> None:
     dispatcher = EventDispatcher(loop, CONFIG["messaging"].get("maxPendingEvents", 32))
     notices = EventDispatcher(loop, capacity=1)
 
-    async def busy(data):
+    async def busy(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         await sending_card(data.event.message.chat_id, "当前任务繁忙，请稍后重试。")
 
     def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
@@ -81,7 +83,9 @@ async def main() -> None:
     def do_p2_im_message_reaction_deleted_v1(data: lark.im.v1.P2ImMessageReactionDeletedV1) -> None:
         pass
 
-    def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChatAccessEventBotP2pChatEnteredV1) -> None:
+    def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
+        data: lark.im.v1.P2ImChatAccessEventBotP2pChatEnteredV1,
+    ) -> None:
         pass
 
     event_handler = (

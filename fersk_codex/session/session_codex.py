@@ -1,16 +1,26 @@
 """会话恢复、重置以及历史名称和时间同步。"""
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 from fersk_codex.codex import thread_manager
 from fersk_codex.codex.thread_watchdog import settings
 from fersk_codex.session import session_history
 from fersk_codex.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from openai_codex import AsyncThread, InputItem
+
 logger = get_logger("Codex")
 
 
-async def _initialize_session_name(user_id: str, thread, prompt: str | list) -> None:
+async def _initialize_session_name(
+    user_id: str,
+    thread: AsyncThread,
+    prompt: str | list[InputItem],
+) -> None:
     """仅初始化已登记的新线程；旧版本线程不拿当前输入补造首次名称。"""
     record = await session_history.get_session(user_id, thread.id)
     if record is None:
@@ -28,7 +38,7 @@ async def _initialize_session_name(user_id: str, thread, prompt: str | list) -> 
     await session_history.update_session_time(user_id, thread.id, metadata.updated_at)
 
 
-async def _sync_session_time(user_id: str, thread) -> None:
+async def _sync_session_time(user_id: str, thread: AsyncThread) -> None:
     """元数据同步失败单独记录，不把已完成的模型任务改判为执行失败。"""
     try:
         async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):

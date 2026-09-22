@@ -1,6 +1,9 @@
-import aiosqlite
-from typing import Dict, Any
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
+
+import aiosqlite
 
 from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
@@ -12,7 +15,7 @@ DB_PATH = CONFIG["storage"]["databasePath"]
 TABLE_NAME = CONFIG["logging"]["tokenUsageTable"]
 
 
-DEFAULT_VALUES = {
+DEFAULT_VALUES: dict[str, str | int] = {
     "timeStamp": "",
     "userId": "",
     "threadId": "",
@@ -28,7 +31,7 @@ DEFAULT_VALUES = {
 }
 
 
-REQUIRED_KEYS = tuple(DEFAULT_VALUES)
+REQUIRED_KEYS: tuple[str, ...] = tuple(DEFAULT_VALUES)
 
 
 CREATE_TABLE_SQL = f"""
@@ -69,7 +72,7 @@ INSERT INTO {TABLE_NAME} (
 """
 
 
-def ensure_keys(log: Dict[str, Any]) -> Dict[str, Any]:
+def ensure_keys(log: dict[str, Any]) -> dict[str, Any]:
     """校验日志字段，并为缺失字段填充默认值。"""
     fixed_log = log.copy()
 
@@ -81,7 +84,7 @@ def ensure_keys(log: Dict[str, Any]) -> Dict[str, Any]:
     return fixed_log
 
 
-async def SavingLog(log: Dict[str, Any]) -> None:
+async def SavingLog(log: dict[str, Any]) -> None:
     """异步写入日志。"""
     fixed_log = ensure_keys(log)
 

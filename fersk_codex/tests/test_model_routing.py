@@ -1,5 +1,7 @@
 """Verify model routing at thread submission without model or network calls."""
 
+from __future__ import annotations
+
 from types import SimpleNamespace as NS
 from pathlib import Path
 import unittest
@@ -15,12 +17,12 @@ from fersk_codex.configs.loader import CONFIG
 
 
 class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
 
-    async def test_unarchived_thread_reapplies_workspace_environment(self):
+    async def test_unarchived_thread_reapplies_workspace_environment(self) -> None:
         async def stream():
             yield NS(method="turn/completed", payload=NS(turn=NS(status=TurnStatus.completed, duration_ms=1)))
         thread = NS(id="archived", turn=AsyncMock(return_value=NS(id="turn", stream=stream)))
@@ -39,7 +41,7 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
                              client.thread_resume.await_args_list[1].kwargs["config"])
             client.thread_start.assert_not_awaited()
 
-    async def test_text_and_attachment_routes_for_new_and_resumed_threads(self):
+    async def test_text_and_attachment_routes_for_new_and_resumed_threads(self) -> None:
         routes = {
             key: {"model": key + "-model", "provider": key + "-provider"}
             for key in ("text", "image", "multimodal")
@@ -49,6 +51,10 @@ class ModelRoutingTests(unittest.IsolatedAsyncioTestCase):
         document = MentionInput(name="report.pdf", path="/tmp/report.pdf")
         cases = [
             ("hello", "text"),
+            ("", "text"),
+            ([], "multimodal"),
+            ([image], "image"),
+            ([document], "multimodal"),
             ([texts[0]], "text"),
             (texts, "text"),
             ([*texts, image], "image"),

@@ -1,5 +1,7 @@
 """Daily rotation, retries and flush without wall-clock midnight waits."""
 
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -31,7 +33,7 @@ class DailyLogTests(unittest.IsolatedAsyncioTestCase):
     def read(self, root, day):
         return [json.loads(line) for line in (root / f'{day}_logs.jsonl').read_text().splitlines()]
 
-    async def test_midnight_batch_uses_enqueue_dates_and_flush_waits(self):
+    async def test_midnight_batch_uses_enqueue_dates_and_flush_waits(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory) / 'nested'
             journal = self.journal(root)
@@ -44,7 +46,7 @@ class DailyLogTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.read(root, '2026-09-08'), [{'event': 'before'}])
             self.assertEqual(self.read(root, '2026-09-09'), [{'event': 'after'}])
 
-    async def test_later_file_failure_does_not_replay_successful_day(self):
+    async def test_later_file_failure_does_not_replay_successful_day(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             journal = self.journal(root)
@@ -67,7 +69,7 @@ class DailyLogTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.read(root, '2026-09-08'), [{'event': 'before'}])
             self.assertEqual(self.read(root, '2026-09-09'), [{'event': 'after'}])
 
-    async def test_partial_write_rolls_back_before_retry(self):
+    async def test_partial_write_rolls_back_before_retry(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             journal = self.journal(root)
@@ -95,7 +97,7 @@ class DailyLogTests(unittest.IsolatedAsyncioTestCase):
                              [{'event': 'existing'}, {'event': 'before'}])
             self.assertEqual(self.read(root, '2026-09-09'), [{'event': 'after'}])
 
-    async def test_failed_records_expire_but_fresh_records_are_written(self):
+    async def test_failed_records_expire_but_fresh_records_are_written(self) -> None:
         with TemporaryDirectory() as directory:
             journal = self.journal(directory)
             with patch.object(watchdog.time, 'monotonic', return_value=100):

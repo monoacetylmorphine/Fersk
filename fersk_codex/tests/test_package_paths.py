@@ -1,5 +1,7 @@
 """Regression coverage for package relocation and mounted storage paths."""
 
+from __future__ import annotations
+
 import copy
 import json
 from pathlib import Path
@@ -13,11 +15,11 @@ from fersk_codex.configs.loader import CONFIG, _load_config
 
 
 class PackagePathTests(unittest.TestCase):
-    def test_public_exports_preserve_class_identity(self):
+    def test_public_exports_preserve_class_identity(self) -> None:
         self.assertIs(FerskCodex, codex.FerskCodex)
         self.assertIs(LiveTurn, codex.LiveTurn)
 
-    def test_string_config_path_and_relative_storage(self):
+    def test_string_config_path_and_relative_storage(self) -> None:
         with TemporaryDirectory() as directory:
             config = copy.deepcopy(CONFIG)
             paths = {"runLogPath": "logs", "databasePath": "state.sqlite",
@@ -29,7 +31,7 @@ class PackagePathTests(unittest.TestCase):
             for key, relative in paths.items():
                 self.assertEqual(Path(loaded["storage"][key]), file_path.parent.resolve() / relative)
 
-    def test_old_csv_setting_is_accepted_but_no_default_is_added(self):
+    def test_old_csv_setting_is_accepted_but_no_default_is_added(self) -> None:
         with TemporaryDirectory() as directory:
             config = copy.deepcopy(CONFIG)
             config['storage'].pop('tokenUsagePath', None)
@@ -40,7 +42,7 @@ class PackagePathTests(unittest.TestCase):
             path.write_text(json.dumps(config))
             self.assertEqual(_load_config(path)['storage']['tokenUsagePath'], 'unused.csv')
 
-    def test_storage_paths_expand_current_home(self):
+    def test_storage_paths_expand_current_home(self) -> None:
         with TemporaryDirectory() as directory:
             config = copy.deepcopy(CONFIG)
             paths = {"runLogPath": "~/.fersk/logs", "databasePath": "~/.fersk/state.sqlite",

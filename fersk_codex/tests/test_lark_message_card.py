@@ -1,4 +1,6 @@
 """验证卡片请求及网关流式适配；不加载真实凭据、不访问飞书。"""
+
+from __future__ import annotations
 import ast
 import asyncio
 import importlib
@@ -17,7 +19,7 @@ def response(**data):
 
 
 class LarkCardTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.client = SimpleNamespace(
             im=SimpleNamespace(v1=SimpleNamespace(message=SimpleNamespace(
                 create=Mock(return_value=response(message_id="message-1")),
@@ -50,7 +52,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             return result
         self.enterContext(patch.object(self.card, "_call", side_effect=call))
 
-    async def test_static_card_and_recipient_routing(self):
+    async def test_static_card_and_recipient_routing(self) -> None:
         for recipient, kind in [("on_user", "union_id"), ("oc_group", "chat_id")]:
             self.assertEqual(await self.card.sending_card(recipient, "**你好**"), "message-1")
             request = self.client.im.v1.message.create.call_args.args[0]
@@ -63,7 +65,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["body"]["elements"][0]["content"], "**你好**")
         self.client.cardkit.v1.card.create.assert_not_called()
 
-    async def test_markdown_images_are_sent_as_bare_urls(self):
+    async def test_markdown_images_are_sent_as_bare_urls(self) -> None:
         content = (
             "已生成：![预览](https://example.com/image.jpeg?x=1&y=2)\n"
             "普通链接：[详情](https://example.com/detail)\n"
@@ -79,7 +81,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             r"转义语法：\![示例](https://example.com/example.png)",
         )
 
-    async def test_stream_converts_image_only_after_markdown_is_complete(self):
+    async def test_stream_converts_image_only_after_markdown_is_complete(self) -> None:
         async def chunks():
             yield "已生成：![预览](https://example.com/image.jpeg?x=1"
             yield "&y=2)"
@@ -98,7 +100,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             "已生成：https://example.com/image.jpeg?x=1&y=2",
         )
 
-    async def test_stream_sends_before_end_and_flushes_tail(self):
+    async def test_stream_sends_before_end_and_flushes_tail(self) -> None:
         async def chunks():
             yield "你"
             self.client.im.v1.message.create.assert_called_once()
@@ -115,7 +117,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(json.loads(close.settings)["config"]["streaming_mode"])
         self.assertEqual(len({c.args[0].request_body.uuid for c in writes} | {close.uuid}), 3)
 
-    async def test_coalescing_keeps_final_text(self):
+    async def test_coalescing_keeps_final_text(self) -> None:
         async def chunks():
             for chunk in ["a", "b", "c"]:
                 yield chunk
@@ -125,7 +127,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         write.assert_called_once()
         self.assertEqual(write.call_args.args[0].request_body.content, "abc")
 
-    async def test_empty_stream_creates_no_message(self):
+    async def test_empty_stream_creates_no_message(self) -> None:
         async def chunks():
             yield ""
         self.assertIsNone(await self.card.sending_card("on_user", chunks()))
@@ -133,7 +135,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.create.assert_not_called()
         self.client.im.v1.message.create.assert_not_called()
 
-    async def test_recall_discards_pending_text(self):
+    async def test_recall_discards_pending_text(self) -> None:
         async def chunks():
             yield "已显示"
             yield "不得显示"
@@ -143,7 +145,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card_element.content.assert_not_called()
         self.client.cardkit.v1.card.settings.assert_called_once()
 
-    async def test_producer_failure_closes_stream(self):
+    async def test_producer_failure_closes_stream(self) -> None:
         async def chunks():
             yield "部分结果"
             raise ValueError("producer failed")
@@ -151,7 +153,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             await self.card.sending_card("on_user", chunks())
         self.client.cardkit.v1.card.settings.assert_called_once()
 
-    async def test_api_failure_is_reported_and_stream_closed(self):
+    async def test_api_failure_is_reported_and_stream_closed(self) -> None:
         self.client.cardkit.v1.card_element.content.return_value = SimpleNamespace(
             success=lambda: False, code=999, msg="denied", get_log_id=lambda: "log-1",
         )
@@ -162,7 +164,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             await self.card.sending_card("on_user", chunks())
         self.client.cardkit.v1.card.settings.assert_called_once()
 
-    async def test_cancellation_closes_stream(self):
+    async def test_cancellation_closes_stream(self) -> None:
         async def chunks():
             yield "a"
             raise asyncio.CancelledError()
@@ -170,7 +172,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             await self.card.sending_card("on_user", chunks())
         self.client.cardkit.v1.card.settings.assert_called_once()
 
-    async def test_http_wait_has_a_deadline(self):
+    async def test_http_wait_has_a_deadline(self) -> None:
         from fersk_codex.configs.loader import CONFIG
         release = threading.Event()
         def blocked(request):
@@ -184,7 +186,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
 
-    async def test_reasoning_is_replaced_by_answer_in_same_card(self):
+    async def test_reasoning_is_replaced_by_answer_in_same_card(self) -> None:
         source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
         fn = next(n for n in ast.walk(source) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         async def recalled(state):
@@ -229,7 +231,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(close.settings)["config"]["summary"]["content"], "答案一答案二")
         self.assertEqual([c.args[0].request_body.sequence for c in writes] + [close.sequence], [1, 2, 3, 4])
 
-    async def test_gateway_adapter_streams_errors_and_stops_on_recall(self):
+    async def test_gateway_adapter_streams_errors_and_stops_on_recall(self) -> None:
         source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
         fn = next(n for n in ast.walk(source) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         state = SimpleNamespace(interrupted=False, run_id="run-1")
@@ -260,7 +262,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             await anext(stream)
         self.assertEqual(len(closed), 2)
 
-    async def test_tail_flushes_during_silence_without_cancelling_source(self):
+    async def test_tail_flushes_during_silence_without_cancelling_source(self) -> None:
         flushed, finish = asyncio.Event(), asyncio.Event()
         cancelled = []
         def after(operation, request):
@@ -287,7 +289,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                 finish.set()
                 await asyncio.wait_for(task, 1)
 
-    async def test_nine_minute_rotation_closes_while_silent_and_continues_on_demand(self):
+    async def test_nine_minute_rotation_closes_while_silent_and_continues_on_demand(self) -> None:
         self.assertEqual(self.card.STREAM_LIFETIME, 540)
         closed, resume, second, finish = (asyncio.Event() for _ in range(4))
         def after(operation, request):
@@ -329,7 +331,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c.args[0].card_id for c in closes], ["first", "second"])
         self.assertEqual([c.args[0].request_body.sequence for c in closes], [2, 1])
 
-    async def test_expiry_without_further_text_does_not_create_empty_card(self):
+    async def test_expiry_without_further_text_does_not_create_empty_card(self) -> None:
         closed = asyncio.Event()
         self.use_async_api(lambda op, req: closed.set()
                            if op is self.client.cardkit.v1.card.settings else None)
@@ -341,7 +343,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.create.assert_called_once()
         self.client.cardkit.v1.card.settings.assert_called_once()
 
-    async def test_closed_stream_recovers_unsent_suffix_and_full_replacement(self):
+    async def test_closed_stream_recovers_unsent_suffix_and_full_replacement(self) -> None:
         self.use_async_api()
         for chunk, expected in [("续写", "续写"), (self.card.CardReplace("旧文答案"), "旧文答案")]:
             with self.subTest(chunk=chunk):
@@ -356,7 +358,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                 body = json.loads(self.client.cardkit.v1.card.create.call_args.args[0].request_body.data)
                 self.assertEqual(body["body"]["elements"][0]["content"], expected)
 
-    async def test_delivery_failure_drains_upstream_before_reporting(self):
+    async def test_delivery_failure_drains_upstream_before_reporting(self) -> None:
         self.use_async_api()
         self.client.cardkit.v1.card_element.content.return_value = SimpleNamespace(
             success=lambda: False, code=999, msg="unavailable")
@@ -373,7 +375,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card_element.content.assert_called_once()
         self.client.im.v1.message.create.assert_called_once()
 
-    async def test_cancellation_cleans_pending_read_and_closes_card(self):
+    async def test_cancellation_cleans_pending_read_and_closes_card(self) -> None:
         waiting, cleaned = asyncio.Event(), asyncio.Event()
         self.use_async_api()
         async def chunks():
@@ -391,7 +393,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cleaned.is_set())
         self.client.cardkit.v1.card.settings.assert_called_once()
 
-    async def test_commentary_and_tools_do_not_hide_following_reasoning(self):
+    async def test_commentary_and_tools_do_not_hide_following_reasoning(self) -> None:
         source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
         fn = next(n for n in ast.walk(source) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
         async def recalled(state):
@@ -459,7 +461,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(opened.wait(), 1)
         return session, queue, task, CONFIG["messages"]["steerAccepted"]
 
-    async def test_steer_barrier_pauses_timer_and_discards_old_buffer(self):
+    async def test_steer_barrier_pauses_timer_and_discards_old_buffer(self) -> None:
         with patch.object(self.card, "UPDATE_INTERVAL", .04):
             session, queue, task, text = await self.start_controlled()
             await queue.put("unsent")
@@ -477,7 +479,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
         writes = self.client.cardkit.v1.card_element.content.call_args_list
         self.assertEqual([(c.args[0].card_id, c.args[0].request_body.content) for c in writes], [("c2", "new")])
 
-    async def test_failed_steer_preserves_old_buffer(self):
+    async def test_failed_steer_preserves_old_buffer(self) -> None:
         with patch.object(self.card, "UPDATE_INTERVAL", 999):
             session, queue, task, text = await self.start_controlled()
             await queue.put("tail")
@@ -488,7 +490,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.create.assert_called_once()
         self.assertEqual(self.client.cardkit.v1.card_element.content.call_args.args[0].request_body.content, "oldtail")
 
-    async def test_accepted_steer_with_eof_closes_placeholder_as_finished(self):
+    async def test_accepted_steer_with_eof_closes_placeholder_as_finished(self) -> None:
         from fersk_codex.configs.loader import CONFIG
         session, queue, task, text = await self.start_controlled()
         async with session.steering(text) as barrier:
@@ -501,7 +503,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.cardkit.v1.card_element.content.call_args.args[0].request_body.content,
                          CONFIG["messages"]["steerCompleted"])
 
-    async def test_closed_session_never_waits_for_missing_writer(self):
+    async def test_closed_session_never_waits_for_missing_writer(self) -> None:
         session, queue, task, text = await self.start_controlled()
         await queue.put(None)
         await task
@@ -509,7 +511,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await barrier.ready)
             self.assertFalse(await barrier.applied)
 
-    async def test_sender_cancellation_releases_pending_steer(self):
+    async def test_sender_cancellation_releases_pending_steer(self) -> None:
         session, queue, task, text = await self.start_controlled()
         async with session.steering(text) as barrier:
             task.cancel()
@@ -517,7 +519,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await asyncio.wait_for(barrier.applied, 1))
         self.assertTrue(session.closed)
 
-    async def test_steer_after_card_expired_creates_immediate_new_card(self):
+    async def test_steer_after_card_expired_creates_immediate_new_card(self) -> None:
         with patch.object(self.card, "STREAM_LIFETIME", .03):
             session, queue, task, text = await self.start_controlled()
             async with asyncio.timeout(1):
@@ -531,7 +533,7 @@ class CardSteerTests(unittest.IsolatedAsyncioTestCase):
             await queue.put(None)
             await task
 
-    async def test_delivery_failure_still_releases_later_steer_barrier(self):
+    async def test_delivery_failure_still_releases_later_steer_barrier(self) -> None:
         session, queue, task, text = await self.start_controlled()
         self.client.cardkit.v1.card.create.side_effect = self.card.CardRequestError("offline")
         for _ in range(2):

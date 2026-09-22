@@ -1,33 +1,40 @@
-"""Run probes and an append-only JSONL journal; no IM or SDK dependencies."""
+"""运行探针与追加式 JSONL 日志，不依赖 IM 客户端或 SDK。"""
+
+from __future__ import annotations
 
 import asyncio
-from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import json
-from itertools import groupby
-from pathlib import Path
 import threading
 import time
+from collections import deque
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from itertools import groupby
+from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from fersk_codex.session.session_gateway import RETENTION_SECONDS
 
+if TYPE_CHECKING:
+    from openai_codex.models import Notification
+
 logger = get_logger("Watchdog")
 
 
-def settings():
+def settings() -> dict[str, Any]:
     return CONFIG["codex"]["watchdog"]
 
 
 def should_log_event(method: str) -> bool:
-    """Keep lifecycle notifications and final items, not streaming fragments."""
+    """保留生命周期和最终条目摘要，不记录流式片段。"""
     return (not method.lower().endswith("delta")
             and (not method.startswith("item/") or method == "item/completed"))
 
 
-def _summary_fields(source, fields):
+def _summary_fields(source: object, fields: Iterable[tuple[str, str]]) -> dict[str, Any]:
     """只取白名单标量；500 字符上限是本项目的日志策略。"""
     result = {}
     for attribute, key in fields:
@@ -41,7 +48,7 @@ def _summary_fields(source, fields):
     return result
 
 
-def summarize_item(item):
+def summarize_item(item: Any) -> dict[str, Any]:
     """终端与 JSONL 共用摘要，不序列化命令输出、工具结果或图片数据。"""
     result = _summary_fields(item, (
         ("id", "id"), ("type", "type"), ("status", "status"),
@@ -57,7 +64,7 @@ def summarize_item(item):
     return result
 
 
-def summarize_event(event):
+def summarize_event(event: Notification) -> dict[str, Any]:
     """事件仅输出定位及状态字段；包括 turn 内嵌 items 在内均不展开。"""
     payload = event.payload
     result = {"method": event.method, **_summary_fields(payload, (
@@ -86,17 +93,17 @@ class RunJournal:
     their original daily file.
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._timezone = timezone(timedelta(hours=CONFIG["runtime"]["timezoneOffsetHours"]))
         self._lock = threading.Lock()
-        self._records = deque()
+        self._records: deque[tuple[Path, dict[str, Any], float]] = deque()
         self._revision = 0
         self._saved = 0
         self._discarded = 0
-        self._thread = None
+        self._thread: threading.Thread | None = None
 
-    def record(self, record):
+    def record(self, record: dict[str, Any]) -> None:
         with self._lock:
             day = datetime.now(self._timezone).strftime("%Y-%m-%d")
             self._records.append((self.path / f"{day}_logs.jsonl", record, time.monotonic()))
@@ -105,7 +112,7 @@ class RunJournal:
                 self._thread = threading.Thread(target=self._write, daemon=True)
                 self._thread.start()
 
-    def _write_pending(self):
+    def _write_pending(self) -> None:
         with self._lock:
             expired = 0
             now = time.monotonic()
@@ -122,21 +129,25 @@ class RunJournal:
             batch = list(group)
             payload = "".join(json.dumps(record, ensure_ascii=False) + "\n"
                               for _, record, _ in batch).encode("utf-8")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "ab") as file:
-                offset = file.tell()
-                try:
-                    file.write(payload)
-                    file.flush()
-                except Exception:
-                    file.truncate(offset)
-                    raise
+            self._append_payload(path, payload)
             with self._lock:
                 for _ in batch:
                     self._records.popleft()
                 self._saved += len(batch)
 
-    def _write(self):
+    @staticmethod
+    def _append_payload(path: Path, payload: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as file:
+            offset = file.tell()
+            try:
+                file.write(payload)
+                file.flush()
+            except Exception:
+                file.truncate(offset)
+                raise
+
+    def _write(self) -> None:
         while True:
             time.sleep(0.1)
             try:
@@ -145,7 +156,7 @@ class RunJournal:
                 logger.exception("写入运行日志失败: %s", self.path)
                 time.sleep(1)
 
-    async def flush(self):
+    async def flush(self) -> None:
         with self._lock:
             target = self._revision
         async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
@@ -158,7 +169,7 @@ class RunJournal:
                 await asyncio.sleep(0.05)
 
 journal = RunJournal(CONFIG["storage"]["runLogPath"])
-probes = {}
+probes: dict[str, RunProbe] = {}
 
 
 @dataclass
@@ -181,7 +192,7 @@ class RunProbe:
     tools: set[str] = field(default_factory=set)
     event_count: int = 0
 
-    def record(self, event, **details):
+    def record(self, event: str, **details: Any) -> None:
         journal.record({
             "time": datetime.now(timezone.utc).isoformat(),
             "runId": self.run_id, "chatId": self.chat_id,
@@ -195,25 +206,25 @@ class RunProbe:
             "tools": sorted(self.tools), "event": event, **details,
         })
 
-    def stage(self, phase):
+    def stage(self, phase: str) -> None:
         if self.phase == phase:
             return
         self.phase = phase
         self.phase_at = time.monotonic()
         self.record("stage")
 
-    def finish(self, result):
+    def finish(self, result: str) -> None:
         if self.terminal is None:
             self.terminal = result
             self.begin_cleanup()
             self.record("terminal")
 
-    def begin_cleanup(self):
+    def begin_cleanup(self) -> None:
         """模型结束或收到停止请求后，开始独立的收尾计时。"""
         if self.cleanup_at is None:
             self.cleanup_at = time.monotonic()
 
-    def activity(self, event):
+    def activity(self, event: Notification) -> None:
         self.last_activity = time.monotonic()
         if should_log_event(event.method):
             self.last_event = event.method
@@ -231,7 +242,7 @@ class RunProbe:
             status = event.payload.turn.status
             self.finish(self.stop_reason or getattr(status, "value", status))
 
-    def expired(self, now=None):
+    def expired(self, now: float | None = None) -> str | None:
         now = time.monotonic() if now is None else now
         if self.terminal or self.stop_reason:
             self.begin_cleanup()

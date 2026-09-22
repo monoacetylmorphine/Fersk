@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import tempfile
@@ -15,10 +17,10 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps(value))
             return _load_config(path)
 
-    def test_current_config(self):
+    def test_current_config(self) -> None:
         self.assertEqual(self.load(CONFIG), CONFIG)
 
-    def test_session_history_limit_default_and_validation(self):
+    def test_session_history_limit_default_and_validation(self) -> None:
         self.assertEqual(CONFIG['messaging']['sessionHistoryLimit'], 30)
         config = copy.deepcopy(CONFIG)
         for value in (1, 30, 60):
@@ -32,7 +34,7 @@ class ConfigTests(unittest.TestCase):
         config['messaging'].pop('sessionHistoryLimit')
         self.load(config)  # 兼容旧运行配置；消费处应用默认值。
 
-    def test_shared_mcp_section_is_required_and_validated(self):
+    def test_shared_mcp_section_is_required_and_validated(self) -> None:
         config = copy.deepcopy(CONFIG)
         config.pop('mcp')
         with self.assertRaises(RuntimeError):
@@ -41,7 +43,7 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.load(config)
 
-    def test_bot_identity_requires_at_least_one_environment_field(self):
+    def test_bot_identity_requires_at_least_one_environment_field(self) -> None:
         for fields in (("robotUnionIdEnv",), ("robotNameEnv",),
                        ("robotUnionIdEnv", "robotNameEnv"), ()):
             with self.subTest(fields=fields):
@@ -62,7 +64,7 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "lark.credentials"):
             self.load(config)
 
-    def test_full_schema_and_finite_numbers(self):
+    def test_full_schema_and_finite_numbers(self) -> None:
         cases = [('messaging', 'historyPageSize', '10'), ('audio', 'limits', {}),
                  ('messaging', 'historyPageSize', 70000), ('runtime', 'timezoneOffsetHours', float('nan'))]
         for section, key, value in cases:
@@ -76,7 +78,7 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.load(config)
 
-    def test_route_partition_and_distinct_commands(self):
+    def test_route_partition_and_distinct_commands(self) -> None:
         for key, value in [('directTypes', ['text', 'image']), ('directTypes', ['text']),
                            ('newThreadCommand', '/STOP')]:
             config = copy.deepcopy(CONFIG)
@@ -84,7 +86,7 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.load(config)
 
-    def test_errors_do_not_echo_sensitive_values(self):
+    def test_errors_do_not_echo_sensitive_values(self) -> None:
         config = copy.deepcopy(CONFIG)
         config['messaging']['historyPageSize'] = 'private-secret-value'
         with self.assertRaises(RuntimeError) as error:
@@ -92,7 +94,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn('messaging.historyPageSize', str(error.exception))
         self.assertNotIn('private-secret-value', str(error.exception))
 
-    def test_missing_and_malformed_config_report_cause(self):
+    def test_missing_and_malformed_config_report_cause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'config.json'
             with self.assertRaisesRegex(RuntimeError, '配置文件不存在') as caught:
@@ -103,7 +105,7 @@ class ConfigTests(unittest.TestCase):
                 _load_config(path)
             self.assertIsInstance(caught.exception.__cause__, json.JSONDecodeError)
 
-    def test_missing_malformed_and_invalid_schema_are_reported(self):
+    def test_missing_malformed_and_invalid_schema_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'schema.json'
             with patch.object(config_loader, 'SCHEMA_FILE', path):
@@ -115,7 +117,7 @@ class ConfigTests(unittest.TestCase):
                             self.load(CONFIG)
                         self.assertIsNotNone(caught.exception.__cause__)
 
-    def test_unknown_keys_and_missing_required_sections_are_rejected(self):
+    def test_unknown_keys_and_missing_required_sections_are_rejected(self) -> None:
         for section in ('storage', 'messaging', 'audio', 'codex', 'lark'):
             for operation in ('missing', 'unknown'):
                 with self.subTest(section=section, operation=operation):
@@ -127,7 +129,7 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         self.load(config)
 
-    def test_boolean_numbers_and_out_of_range_values_are_rejected(self):
+    def test_boolean_numbers_and_out_of_range_values_are_rejected(self) -> None:
         for section, key, value in [
             ('messaging', 'historyPageSize', True), ('messaging', 'historyPageSize', 0),
             ('messaging', 'historyPageSize', 0),
@@ -140,7 +142,7 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.load(config)
 
-    def test_commands_with_whitespace_are_rejected(self):
+    def test_commands_with_whitespace_are_rejected(self) -> None:
         for key in ('newThreadCommand', 'stopThreadCommand'):
             for value in (' /command', '/command ', '/com mand', '/command\n', '/com\tmand'):
                 with self.subTest(key=key, value=value):
@@ -149,7 +151,7 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         self.load(config)
 
-    def test_reliability_settings_are_optional_and_validated(self):
+    def test_reliability_settings_are_optional_and_validated(self) -> None:
         config = copy.deepcopy(CONFIG)
         for parent, key in ((config['messaging'], 'maxPendingEvents'),
                             (config['lark'], 'requestConcurrency'),
@@ -170,7 +172,7 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.load(invalid)
 
-    def test_extension_env_name_url_and_sql_identifier_constraints(self):
+    def test_extension_env_name_url_and_sql_identifier_constraints(self) -> None:
         cases = [(('resources', 'acceptedExtensions', 'image'), ['PNG']),
                  (('resources', 'acceptedExtensions', 'image'), ['.png', '.png']),
                  (('audio', 'asr', 'baseUrl'), 'http://example.com'),
@@ -186,7 +188,7 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.load(config)
 
-    def test_loading_does_not_mutate_source_file_or_global_config(self):
+    def test_loading_does_not_mutate_source_file_or_global_config(self) -> None:
         before = copy.deepcopy(CONFIG)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'config.json'
@@ -199,7 +201,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding='utf-8'), raw)
         self.assertEqual(CONFIG, before)
 
-    def test_deprecated_fields_are_rejected(self):
+    def test_deprecated_fields_are_rejected(self) -> None:
         for keys, value in [(('storage', 'logdatabasePath'), 'unused.sqlite'),
                             (('codex', 'models', 'file'), {'model': 'unused', 'provider': 'unused'})]:
             config = copy.deepcopy(CONFIG)
@@ -210,7 +212,7 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.load(config)
 
-    def test_shared_upload_is_validated_without_initializing_mcp(self):
+    def test_shared_upload_is_validated_without_initializing_mcp(self) -> None:
         config = copy.deepcopy(CONFIG)
         config['lark'].pop('upload')
         with self.assertRaises(RuntimeError):

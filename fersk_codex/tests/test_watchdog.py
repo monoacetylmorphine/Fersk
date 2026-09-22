@@ -1,5 +1,7 @@
 """Offline deadline, stop confirmation, process shutdown and journal tests."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
@@ -22,10 +24,10 @@ import test_stop_command as helpers
 
 
 class ProbeTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.enterContext(patch("fersk_codex.codex.thread_watchdog.journal.record"))
 
-    def test_hard_deadline_survives_activity_tools_and_steer(self):
+    def test_hard_deadline_survives_activity_tools_and_steer(self) -> None:
         probe = RunProbe("run", "chat", frozenset({"m"}), received_at=0)
         probe.phase = "running"
         probe.last_activity = 899
@@ -33,7 +35,7 @@ class ProbeTests(unittest.TestCase):
         probe.message_ids |= {"steered-message"}
         self.assertEqual(probe.expired(900), "run_timeout")
 
-    def test_stream_activity_stays_live_but_only_final_item_is_recorded(self):
+    def test_stream_activity_stays_live_but_only_final_item_is_recorded(self) -> None:
         probe = RunProbe("run", "chat", frozenset({"m"}), last_activity=0)
         item_data = {"id": "tool", "type": "commandExecution", "aggregatedOutput": "完成\n"}
         item = NS(id="tool", type="commandExecution", model_dump=Mock(return_value=item_data))
@@ -58,7 +60,7 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(entry["item"], {"id": "tool", "type": "commandExecution"})
             item.model_dump.assert_not_called()
 
-    def test_large_payloads_are_absent_from_console_and_journal_summaries(self):
+    def test_large_payloads_are_absent_from_console_and_journal_summaries(self) -> None:
         content = "PRIVATE_PAYLOAD" * 100000
         items = [
             NS(id="cmd", type="commandExecution", status="completed", exit_code=0,
@@ -82,7 +84,7 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(summarize_event(NS(method="item/completed",
                          payload=NS(item=NS(root=items[1]))))["item"]["savedPath"], "/tmp/image.png")
 
-    def test_turn_summary_omits_nested_items_and_preserves_retry_error(self):
+    def test_turn_summary_omits_nested_items_and_preserves_retry_error(self) -> None:
         error = NS(message="Reconnecting... 2/5", additional_details="request timed out")
         event = NS(method="error", payload=NS(error=error, will_retry=True))
         summary = summarize_event(event)
@@ -96,7 +98,7 @@ class ProbeTests(unittest.TestCase):
         error.additional_details = "x" * 10000
         self.assertEqual(len(summarize_event(event)["error"]["additionalDetails"]), 501)
 
-    def test_startup_idle_and_terminal_rules(self):
+    def test_startup_idle_and_terminal_rules(self) -> None:
         with patch.dict(settings(), maxRunSeconds=1000, startupTimeoutSeconds=10, idleTimeoutSeconds=5):
             probe = RunProbe("r", "c", frozenset(), received_at=0, phase_at=0)
             probe.phase = "starting"
@@ -111,7 +113,7 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(probe.terminal, "completed")
             self.assertIsNone(probe.expired(2000))
 
-    def test_schema_and_invalid_deadlines(self):
+    def test_schema_and_invalid_deadlines(self) -> None:
         import jsonschema
         jsonschema.validate(CONFIG, json.loads((Path(__file__).resolve().parents[1] / "configs/config_schema.json").read_text()))
         with tempfile.TemporaryDirectory() as directory:
@@ -125,14 +127,14 @@ class ProbeTests(unittest.TestCase):
 
 
 class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         for name in ("_active_turns", "_live_turns", "_clients", "_processes", "_initializers"):
             self.enterContext(patch.object(FerskCodex, name, {}))
         self.enterContext(patch.object(FerskCodex, "_pending_interrupts", set()))
         self.enterContext(patch.object(FerskCodex, "_closed_runs", set()))
         self.enterContext(patch.dict(settings(), interruptGraceSeconds=0.03, cleanupTimeoutSeconds=0.3))
 
-    async def test_expiry_discards_indexes_after_failed_close_and_handles_late_init(self):
+    async def test_expiry_discards_indexes_after_failed_close_and_handles_late_init(self) -> None:
         release = asyncio.Event()
         proc = NS(poll=lambda: None, kill=Mock())
         manager = NS(_client=NS(_sync=NS(_proc=None)))
@@ -153,7 +155,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         proc.kill.assert_called_once()
 
-    async def test_interrupt_ack_is_not_stop_confirmation(self):
+    async def test_interrupt_ack_is_not_stop_confirmation(self) -> None:
         idle = asyncio.Event()
         order = []
         async def interrupt():
@@ -171,7 +173,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
         idle.set()
         self.assertTrue(await task)
 
-    async def test_stuck_status_and_stuck_interrupt_escalate(self):
+    async def test_stuck_status_and_stuck_interrupt_escalate(self) -> None:
         async def stuck():
             await asyncio.Event().wait()
         for stuck_rpc in ("read", "interrupt"):
@@ -182,7 +184,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(await FerskCodex.interrupt_and_confirm("r"))
                 close.assert_awaited_once_with("r")
 
-    async def test_real_sdk_close_terminates_only_owned_process(self):
+    async def test_real_sdk_close_terminates_only_owned_process(self) -> None:
         from openai_codex import AsyncCodex
         # Real SDK close path, but harmless local Python workers instead of Codex/API calls.
         owned = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdin=subprocess.PIPE)
@@ -202,7 +204,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
                 if proc.stdin:
                     proc.stdin.close()
 
-    async def test_close_hang_kills_captured_process(self):
+    async def test_close_hang_kills_captured_process(self) -> None:
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         async def close():
             await asyncio.Event().wait()
@@ -215,7 +217,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
                 proc.kill()
             proc.wait(timeout=2)
 
-    async def test_cancelled_initialization_retains_late_process_for_stop_retry(self):
+    async def test_cancelled_initialization_retains_late_process_for_stop_retry(self) -> None:
         entered, release = asyncio.Event(), asyncio.Event()
         process = Mock()
         process.poll.return_value = 0
@@ -248,7 +250,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await FerskCodex.force_close("late"))
             process.terminate.assert_called_once()
 
-    async def test_interrupted_and_unexpected_eof_never_emit_done(self):
+    async def test_interrupted_and_unexpected_eof_never_emit_done(self) -> None:
         from fersk_codex.codex import codex_execution as codex
         from openai_codex.types import TurnStatus
         for final_status in (TurnStatus.interrupted, None):
@@ -273,7 +275,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         helpers.StopTests.setUp(self)
         self.enterContext(patch.dict(settings(), maxRunSeconds=0.06, startupTimeoutSeconds=0.04,
                                      checkIntervalSeconds=0.005, cleanupTimeoutSeconds=0.1))
@@ -293,7 +295,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
     def batch(self):
         return helpers.batch_from_chat_history(helpers.event("hello", message_id="m1"), [])
 
-    async def test_terminal_stream_hang_releases_without_changing_model_result(self):
+    async def test_terminal_stream_hang_releases_without_changing_model_result(self) -> None:
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
         captured = []
         async def running(**kwargs):
@@ -321,7 +323,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.execution._handle_message_batch(following, 0), 1)
         self.assertFalse(self.runtime.cache.all_runs)
 
-    async def test_cancel_resistant_delivery_is_quarantined_and_waiters_wake(self):
+    async def test_cancel_resistant_delivery_is_quarantined_and_waiters_wake(self) -> None:
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
         release = asyncio.Event()
         captured = []
@@ -353,7 +355,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
             if worker is not None:
                 await asyncio.wait_for(worker, 1)
 
-    async def test_stop_confirmation_hang_cannot_disable_cleanup_deadline(self):
+    async def test_stop_confirmation_hang_cannot_disable_cleanup_deadline(self) -> None:
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.03))
         async def running(**kwargs):
             yield {"type": "started"}
@@ -366,7 +368,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.cache.active_runs_by_chat)
         self.assertFalse(self.runtime.cache.all_runs)
 
-    async def test_force_close_hang_is_bounded_and_release_is_idempotent(self):
+    async def test_force_close_hang_is_bounded_and_release_is_idempotent(self) -> None:
         self.enterContext(patch.dict(settings(), finalizationTimeoutSeconds=0.02, cleanupTimeoutSeconds=0.02))
         captured = []
         async def running(**kwargs):
@@ -387,7 +389,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.runtime.cache.blocked_chats[state.chat_id], state)
         self.assertEqual(sum(call.args[0]["event"] == "released" for call in record.call_args_list), 1)
 
-    async def test_silent_start_and_silent_stream_are_stopped_and_released(self):
+    async def test_silent_start_and_silent_stream_are_stopped_and_released(self) -> None:
         for started in (False, True):
             self.runtime.cache.processed_message_ids.clear()
             self.cards.clear()
@@ -404,7 +406,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.runtime.cache.codex_locks)
             self.assertFalse(self.runtime.cache.received_at)
 
-    async def test_card_wait_does_not_disable_watchdog(self):
+    async def test_card_wait_does_not_disable_watchdog(self) -> None:
         entered = asyncio.Event()
         original = self.runtime.send_card.side_effect
         async def card(union_id, content, *, session=None):
@@ -418,7 +420,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(entered.is_set())
         self.assertEqual(self.cards, [CONFIG["messages"]["taskTimeout"]])
 
-    async def test_stop_card_waits_for_confirmation_and_deduplicates(self):
+    async def test_stop_card_waits_for_confirmation_and_deduplicates(self) -> None:
         state = helpers.StopTests.state(self)
         release = asyncio.Event()
         async def confirm(run_id):
@@ -434,7 +436,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.cards, [CONFIG["messages"]["stopRequested"]])
         self.runtime.codex.interrupt_and_confirm.assert_awaited_once_with(state.run_id)
 
-    async def test_unconfirmed_stop_blocks_new_work_and_allows_stop_retry(self):
+    async def test_unconfirmed_stop_blocks_new_work_and_allows_stop_retry(self) -> None:
         state = helpers.StopTests.state(self)
         self.runtime.codex.interrupt_and_confirm.return_value = False
         await self.commands.processing_stop(helpers.event())
@@ -445,7 +447,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         await self.commands.processing_stop(helpers.event(message_id="retry"))
         self.assertFalse(self.runtime.cache.blocked_chats)
 
-    async def test_completed_run_during_card_drain_is_not_failed(self):
+    async def test_completed_run_during_card_drain_is_not_failed(self) -> None:
         self.runtime.codex.completed_status.return_value = "completed"
         async def card(union_id, content, *, session=None):
             if not isinstance(content, str):
@@ -455,7 +457,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.runtime.codex.interrupt_and_confirm.assert_not_awaited()
         self.assertFalse(self.cards)
 
-    async def test_delivery_failure_does_not_mark_model_failed_or_interrupt_it(self):
+    async def test_delivery_failure_does_not_mark_model_failed_or_interrupt_it(self) -> None:
         async def card(union_id, content, *, session=None):
             async for chunk in content:
                 pass
@@ -469,7 +471,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r["terminal"] for r in records if r["event"] == "terminal"], ["completed"])
         self.assertTrue(any(r["event"] == "delivery_failed" for r in records))
 
-    async def test_old_history_does_not_backdate_new_run(self):
+    async def test_old_history_does_not_backdate_new_run(self) -> None:
         self.runtime.cache.processed_message_ids["chat-1"] = {"old": None}
         self.runtime.cache.received_at["old"] = 0
         batch = helpers.batch_from_chat_history(helpers.event("hello", message_id="m1"),
@@ -480,7 +482,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
 
 
 class JournalTests(unittest.IsolatedAsyncioTestCase):
-    async def test_jsonl_appends_batches_and_preserves_prior_records(self):
+    async def test_jsonl_appends_batches_and_preserves_prior_records(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             from datetime import datetime, timedelta, timezone
             day = datetime.now(timezone(timedelta(hours=CONFIG["runtime"]["timezoneOffsetHours"]))).strftime("%Y-%m-%d")

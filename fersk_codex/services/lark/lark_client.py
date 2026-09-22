@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 import lark_oapi as lark
@@ -30,9 +32,7 @@ client = (
 )
 
 
-def create_websocket_client(
-    event_handler: lark.EventDispatcherHandler,
-) -> lark.ws.Client:
+def create_websocket_client(event_handler: lark.EventDispatcherHandler) -> lark.ws.Client:
     """Build the event transport with the same app credentials."""
     return lark.ws.Client(
         LARK_APP_ID,

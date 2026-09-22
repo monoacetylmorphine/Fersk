@@ -1,5 +1,7 @@
 """验证真实 Git 初始化、慢初始化隔离和超时/取消进程回收。"""
 
+from __future__ import annotations
+
 import asyncio
 from pathlib import Path
 import subprocess
@@ -17,7 +19,7 @@ from fersk_codex.codex import codex_workspace as module
 
 
 class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.enterContext(patch.object(module, '_initialize_environment', AsyncMock()))
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
@@ -33,13 +35,13 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.started.set()
         return child
 
-    async def asyncTearDown(self):
+    async def asyncTearDown(self) -> None:
         for child in self.children:
             if child.returncode is None:
                 child.kill()
                 await child.communicate()
 
-    async def test_initializes_once_and_preserves_agents(self):
+    async def test_initializes_once_and_preserves_agents(self) -> None:
         await module.prepare_workspace(self.root, 5)
         self.assertTrue((self.root / '.git').is_dir())
         (self.root / 'AGENTS.md').write_text('保留原指令')
@@ -48,13 +50,13 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         init.assert_not_awaited()
         self.assertEqual((self.root / 'AGENTS.md').read_text(), '保留原指令')
 
-    async def test_git_worktree_file_is_already_initialized(self):
+    async def test_git_worktree_file_is_already_initialized(self) -> None:
         (self.root / '.git').write_text('gitdir: /synthetic/worktree')
         with patch.object(module, '_initialize_git', AsyncMock()) as init:
             await module.prepare_workspace(self.root, 5)
         init.assert_not_awaited()
 
-    async def test_slow_initialization_does_not_block_another_session(self):
+    async def test_slow_initialization_does_not_block_another_session(self) -> None:
         fast = self.root / 'fast'
         fast.mkdir()
         (fast / '.git').mkdir()
@@ -82,13 +84,13 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(slow, return_exceptions=True)
         self.assertIsNotNone(self.children[0].returncode)
 
-    async def test_timeout_reaps_child(self):
+    async def test_timeout_reaps_child(self) -> None:
         with patch.object(module.asyncio, 'create_subprocess_exec', self.sleeping_git):
             with self.assertRaises(TimeoutError):
                 await module.prepare_workspace(self.root, 0.1)
         self.assertIsNotNone(self.children[0].returncode)
 
-    async def test_cancel_during_late_creation_reaps_child(self):
+    async def test_cancel_during_late_creation_reaps_child(self) -> None:
         release = asyncio.Event()
         async def delayed(*args, **kwargs):
             child = await self.sleeping_git(*args, **kwargs)
@@ -105,7 +107,7 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(task, 2)
         self.assertIsNotNone(self.children[0].returncode)
 
-    async def test_init_failure_prevents_model_submission(self):
+    async def test_init_failure_prevents_model_submission(self) -> None:
         with patch.object(thread_manager, 'get_user_thread', AsyncMock(return_value=None)), \
              patch.object(codex_execution, 'prepare_workspace', AsyncMock(side_effect=TimeoutError)), \
              patch.object(codex_runtime, 'AsyncCodex') as factory:
@@ -113,7 +115,7 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0]['type'], 'error')
         factory.assert_not_called()
 
-    async def test_nonzero_git_exit_is_reported(self):
+    async def test_nonzero_git_exit_is_reported(self) -> None:
         async def failing(*args, **kwargs):
             return await self.real_create(sys.executable, '-c', 'raise SystemExit(7)', **kwargs)
         with patch.object(module.asyncio, 'create_subprocess_exec', failing):

@@ -1,5 +1,7 @@
 """Validate resource bytes and untrusted metadata without network or disk I/O."""
 
+from __future__ import annotations
+
 import io
 import zipfile
 from pathlib import Path
@@ -35,7 +37,7 @@ class ResourceValidatorTests(unittest.TestCase):
         options.update(kwargs)
         return validate_downloaded_resource(data=data, **options)
 
-    def test_supported_signatures_supply_canonical_extensions(self):
+    def test_supported_signatures_supply_canonical_extensions(self) -> None:
         cases = [
             (b"\xff\xd8\xff", "jpeg", ".jpg"),
             (b"\x89PNG\r\n\x1a\n", "png", ".png"),
@@ -56,37 +58,37 @@ class ResourceValidatorTests(unittest.TestCase):
                 self.assertEqual(result.extension, extension)
                 self.assertEqual(result.file_name, "image-key" + extension)
 
-    def test_signature_repairs_misleading_extension(self):
+    def test_signature_repairs_misleading_extension(self) -> None:
         self.assertEqual(self.validate(file_name="photo.exe").file_name, "photo.png")
 
-    def test_matching_office_and_jpeg_extensions_are_preserved(self):
+    def test_matching_office_and_jpeg_extensions_are_preserved(self) -> None:
         for suffix, data in [(s, office_bytes(s)) for s in (".docx", ".xlsx", ".pptx")] + [
             (".doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"), (".jpeg", b"\xff\xd8\xff")
         ]:
             with self.subTest(suffix=suffix):
                 self.assertEqual(self.validate(data, file_name="report" + suffix).extension, suffix)
 
-    def test_headers_are_case_insensitive_and_mime_parameters_are_removed(self):
+    def test_headers_are_case_insensitive_and_mime_parameters_are_removed(self) -> None:
         result = self.validate(headers={"CONTENT-TYPE": " Image/PNG ; charset=binary", "Content-Length": 8})
         self.assertEqual(result.mime_type, "image/png")
 
-    def test_content_length_must_be_valid_and_complete(self):
+    def test_content_length_must_be_valid_and_complete(self) -> None:
         for value in ("bad", "7", "9", "-1", "0"):
             with self.subTest(value=value), self.assertRaises(ResourceValidationError):
                 self.validate(headers={"Content-Length": value})
 
-    def test_mime_conflict_and_nonimage_payload_are_rejected(self):
+    def test_mime_conflict_and_nonimage_payload_are_rejected(self) -> None:
         for options in ({"headers": {"Content-Type": "application/pdf"}},
                         {"data": b"%PDF-1.7", "resource_type": "image"}):
             with self.subTest(options=options), self.assertRaises(ResourceValidationError):
                 self.validate(**options)
 
-    def test_generic_mime_allows_signature_detection(self):
+    def test_generic_mime_allows_signature_detection(self) -> None:
         for mime in ("", "application/octet-stream", "binary/octet-stream"):
             with self.subTest(mime=mime):
                 self.assertEqual(self.validate(headers={"Content-Type": mime}).detected_format, "png")
 
-    def test_audio_container_metadata_selects_profile(self):
+    def test_audio_container_metadata_selects_profile(self) -> None:
         for data, mime, name, expected in [
             (b"OggS", "audio/opus", None, "opus"),
             (b"0000ftypisom", "audio/mp4", None, "m4a"),
@@ -95,7 +97,7 @@ class ResourceValidatorTests(unittest.TestCase):
             with self.subTest(expected=expected, mime=mime):
                 self.assertEqual(self.validate(data, file_name=name, headers={"Content-Type": mime}).detected_format, expected)
 
-    def test_json_and_text_validate_actual_content(self):
+    def test_json_and_text_validate_actual_content(self) -> None:
         for data, name, expected in [(b'\xef\xbb\xbf{"ok":true}', "a.json", "json"),
                                      ("你好\n".encode(), "a.txt", "text")]:
             with self.subTest(name=name):
@@ -105,22 +107,22 @@ class ResourceValidatorTests(unittest.TestCase):
             with self.subTest(data=data, name=name), self.assertRaises(ResourceValidationError):
                 self.validate(data, file_name=name)
 
-    def test_known_binary_claim_requires_signature(self):
+    def test_known_binary_claim_requires_signature(self) -> None:
         for suffix in (".png", ".pdf", ".docx", ".mp4", ".wav", ".mp3"):
             with self.subTest(suffix=suffix), self.assertRaises(ResourceValidationError):
                 self.validate(b"renamed payload", file_name="fake" + suffix)
 
-    def test_unknown_file_extension_is_preserved_for_assembly_filter(self):
+    def test_unknown_file_extension_is_preserved_for_assembly_filter(self) -> None:
         result = self.validate(b"custom bytes", file_name="data.custom")
         self.assertEqual((result.detected_format, result.extension), ("custom", ".custom"))
 
-    def test_invalid_type_empty_and_unidentified_payloads_are_rejected(self):
+    def test_invalid_type_empty_and_unidentified_payloads_are_rejected(self) -> None:
         for options in ({"resource_type": "video"}, {"data": b""}, {"data": "text"},
                         {"data": b"unknown"}, {"data": b"RIFF1234"}, {"data": b"\xff"}):
             with self.subTest(options=options), self.assertRaises(ResourceValidationError):
                 self.validate(**options)
 
-    def test_filenames_cannot_escape_destination(self):
+    def test_filenames_cannot_escape_destination(self) -> None:
         for name in ("../../照片.png", "/tmp/a b.png", r"..\..\photo.png", "...", None):
             with self.subTest(name=name):
                 result = self.validate(file_name=name, resource_key="../../unsafe/key")
@@ -131,19 +133,19 @@ class ResourceValidatorTests(unittest.TestCase):
         self.assertEqual(self.validate(resource_key=".../").file_name,
                          CONFIG["resources"]["fileName"]["fallbackStem"] + ".png")
 
-    def test_bytesio_is_read_in_full_even_when_cursor_is_at_end(self):
+    def test_bytesio_is_read_in_full_even_when_cursor_is_at_end(self) -> None:
         stream = io.BytesIO(b"image")
         stream.seek(0, io.SEEK_END)
         self.assertEqual(read_resource_bytes(stream), b"image")
 
-    def test_regular_stream_and_nonbinary_response(self):
+    def test_regular_stream_and_nonbinary_response(self) -> None:
         stream = Mock(spec=["read"], read=Mock(return_value=b"file"))
         self.assertEqual(read_resource_bytes(stream), b"file")
         stream.read.assert_called_once_with()
         with self.assertRaises(ResourceValidationError):
             read_resource_bytes(io.StringIO("not binary"))
 
-    def test_text_extensions_survive_generic_mime_and_reject_binary_content(self):
+    def test_text_extensions_survive_generic_mime_and_reject_binary_content(self) -> None:
         for suffix in ('.md', '.csv', '.jsonl', '.py', '.js', '.ts', '.html', '.xml', '.yml', '.yaml', '.toml', '.sh'):
             for mime in ('text/plain', 'application/octet-stream'):
                 with self.subTest(suffix=suffix, mime=mime):
@@ -154,7 +156,7 @@ class ResourceValidatorTests(unittest.TestCase):
                         with self.assertRaises(ResourceValidationError):
                             self.validate(payload, file_name='sample' + suffix, headers={'content-type': mime})
 
-    def test_json_plain_mime_cannot_bypass_validation_and_jsonl_is_text(self):
+    def test_json_plain_mime_cannot_bypass_validation_and_jsonl_is_text(self) -> None:
         result = self.validate(b'{"a":1}', file_name='data.json', headers={'content-type': 'text/plain'})
         self.assertEqual(result.file_name, 'data.json')
         with self.assertRaises(ResourceValidationError):
@@ -163,7 +165,7 @@ class ResourceValidatorTests(unittest.TestCase):
                                headers={'content-type': 'application/x-ndjson'})
         self.assertEqual(result.extension, '.jsonl')
 
-    def test_office_rejects_fake_zip_missing_parts_wrong_type_and_external_target(self):
+    def test_office_rejects_fake_zip_missing_parts_wrong_type_and_external_target(self) -> None:
         samples = [b'PK\x03\x04fake', office_bytes('.xlsx'),
                    office_bytes('.docx', overrides={'[Content_Types].xml': '<Types/>'}),
                    office_bytes('.docx', target='../outside.xml'),
@@ -178,14 +180,14 @@ class ResourceValidatorTests(unittest.TestCase):
         with self.assertRaises(ResourceValidationError):
             self.validate(empty.getvalue(), file_name='report.docx')
 
-    def test_office_metadata_limits_and_entities_are_rejected(self):
+    def test_office_metadata_limits_and_entities_are_rejected(self) -> None:
         for metadata in (' ' * (MAX_OFFICE_METADATA_BYTES + 1),
                          '<!DOCTYPE x [<!ENTITY e "expanded">]><x>&e;</x>'):
             with self.assertRaises(ResourceValidationError):
                 self.validate(office_bytes('.docx', overrides={'[Content_Types].xml': metadata}),
                               file_name='report.docx')
 
-    def test_office_default_content_types_and_override_precedence(self):
+    def test_office_default_content_types_and_override_precedence(self) -> None:
         # 来源：用户 WPS 样例的 BOM、根相对关系和 Default 声明；不包含业务内容。
         for extension, expected_type in OFFICE_TYPES.items():
             for part_extension in ('xml', 'XML'):
@@ -223,7 +225,7 @@ class ResourceValidatorTests(unittest.TestCase):
                             with self.assertRaisesRegex(ResourceValidationError, 'Office 主文档类型与扩展名不匹配'):
                                 self.validate(payload, file_name='report' + extension)
 
-    def test_office_mime_supplies_extension_without_filename(self):
+    def test_office_mime_supplies_extension_without_filename(self) -> None:
         payload = office_bytes('.docx')
         result = self.validate(payload, headers={'content-type':
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})

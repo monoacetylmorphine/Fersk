@@ -1,12 +1,15 @@
 """使用参考项目的 Card 2.0 样式发送普通通知和流式回复。"""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import re
 import time
-from collections.abc import AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any, TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
 from lark_oapi.api.cardkit.v1 import (
@@ -25,6 +28,14 @@ from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from fersk_codex.codex.thread_watchdog import settings
 
+if TYPE_CHECKING:
+    from fersk_codex.codex.codex_execution import RunEvent
+
+    from lark_oapi.core.model import BaseResponse
+
+RequestT = TypeVar("RequestT")
+ResponseT = TypeVar("ResponseT", bound="BaseResponse")
+
 logger = get_logger("Card")
 UPDATE_INTERVAL = 0.25
 STREAM_LIFETIME = 9 * 60
@@ -39,7 +50,7 @@ class CardDeliveryError(RuntimeError):
 
 
 class CardRequestError(CardDeliveryError):
-    def __init__(self, message, *, code=None):
+    def __init__(self, message: str, *, code: int | None = None) -> None:
         super().__init__(message)
         self.code = code
 
@@ -58,20 +69,20 @@ class CardReplace:
 class CardSteer:
     """A writer barrier: pause before the RPC, rotate only on confirmed acceptance."""
 
-    def __init__(self, content):
+    def __init__(self, content: str) -> None:
         loop = asyncio.get_running_loop()
         self.content = content
-        self.ready = loop.create_future()
-        self.decision = loop.create_future()
-        self.applied = loop.create_future()
+        self.ready: asyncio.Future[bool] = loop.create_future()
+        self.decision: asyncio.Future[bool] = loop.create_future()
+        self.applied: asyncio.Future[bool] = loop.create_future()
         self.accepted = False
 
-    def decide(self, accepted):
+    def decide(self, accepted: bool) -> None:
         if not self.decision.done():
             self.accepted = accepted
             self.decision.set_result(accepted)
 
-    def release(self):
+    def release(self) -> None:
         for future in (self.ready, self.applied):
             if not future.done():
                 future.set_result(False)
@@ -89,13 +100,13 @@ class CardStreamSession:
     The gateway serializes steer RPCs with its existing owner.controls lock.
     """
 
-    def __init__(self, *, cancelled=lambda: False):
+    def __init__(self, *, cancelled: Callable[[], bool] = lambda: False) -> None:
         self.cancelled = cancelled
-        self.controls = asyncio.Queue()
+        self.controls: asyncio.Queue[CardSteer] = asyncio.Queue()
         self.closed = False
-        self.barriers = set()
-        self.card_id = None
-        self.message_id = None
+        self.barriers: set[CardSteer] = set()
+        self.card_id: str | None = None
+        self.message_id: str | None = None
         self.sequence = 0
         self.accumulated = ""
         self.sent = ""
@@ -106,7 +117,7 @@ class CardStreamSession:
         self.placeholder = False
 
     @asynccontextmanager
-    async def steering(self, content):
+    async def steering(self, content: str) -> AsyncIterator[CardSteer]:
         barrier = CardSteer(content)
         self.barriers.add(barrier)
         try:
@@ -120,13 +131,16 @@ class CardStreamSession:
             barrier.decide(False)
             self.barriers.discard(barrier)
 
-    def close(self):
+    def close(self) -> None:
         self.closed = True
         for barrier in self.barriers:
             barrier.decide(False)
             barrier.release()
 
-    async def events(self, source):
+    async def events(
+        self,
+        source: AsyncGenerator[RunEvent, None],
+    ) -> AsyncGenerator[RunEvent, None]:
         pending = control = None
         try:
             while True:
@@ -157,106 +171,120 @@ class CardStreamSession:
             await source.aclose()
 
 
-def _card(content: str, streaming: bool) -> dict:
+def _card(content: str, streaming: bool) -> dict[str, Any]:
     # 来源：project-reference/skills/lark-im/references/card/card-2.0-schema.md。
     return {
         "schema": "2.0",
-        "config": {
-            "update_multi": True,
-            "width_mode": "fill",
-            "streaming_mode": streaming,
-            "summary": {"content": "小脑袋已经开始转动啦，稍等哦~" if streaming else content[:100]},
-            "style": {"text_size": {
-                "body": {"default": "normal", "pc": "normal", "mobile": "normal"},
-            }},
-        },
+        "config": _card_config(content, streaming),
         "header": {
-            "title": {"tag": "plain_text", "content": "Codex"},
+            "title": {
+                "tag": "plain_text",
+                "content": "Codex",
+            },
             "template": "blue",
-            "icon": {"tag": "standard_icon", "token": "lark-logo_colorful"},
+            "icon": {
+                "tag": "standard_icon",
+                "token": "lark-logo_colorful",
+            },
         },
-        # "body": {
-        #     "direction": "vertical",
-        #     "padding": "12px 12px 20px 12px",
-        #     "elements": [{
-        #         "tag": "markdown", "element_id": ELEMENT_ID,
-        #         "content": _replace_markdown_images(content), "text_size": "body",
-        #     }],
-        # },
-        "body": {
-                "direction": "vertical",
-                "padding": "12px 12px 12px 12px",
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": _replace_markdown_images(content),
-                        "text_align": "left",
-                        "text_size": "normal",
-                        "margin": "0px 0px 0px 0px",
-                        "element_id": ELEMENT_ID,
-                    },
-                    {
-                        "tag": "hr",
-                        "margin": "0px 0px 0px 0px"
-                    },
-                    {
-                        "tag": "column_set",
-                        "horizontal_spacing": "12px",
-                        "horizontal_align": "right",
-                        "columns": [
-                            {
-                                "tag": "column",
-                                "width": "weighted",
-                                "elements": [
-                                    {
-                                        "tag": "markdown",
-                                        "content": "<font color=\"grey-600\">内容由 AI 生成, 请仔细甄别</font>",
-                                        "text_align": "center",
-                                        "text_size": "notation",
-                                        "margin": "4px 0px 0px 0px",
-                                        "element_id": "footnote_text"
-                                    }
-                                ],
-                                "padding": "0px 0px 0px 0px",
-                                "direction": "vertical",
-                                "horizontal_spacing": "8px",
-                                "vertical_spacing": "8px",
-                                "horizontal_align": "left",
-                                "vertical_align": "top",
-                                "margin": "0px 0px 0px 0px",
-                                "weight": 1
-                            },
-                            {
-                                "tag": "column",
-                                "width": "auto",
-                                "elements": [],
-                                "padding": "0px 0px 0px 0px",
-                                "direction": "vertical",
-                                "horizontal_spacing": "8px",
-                                "vertical_spacing": "8px",
-                                "horizontal_align": "left",
-                                "vertical_align": "top",
-                                "margin": "0px 0px 0px 0px"
-                            },
-                            {
-                                "tag": "column",
-                                "width": "auto",
-                                "elements": [],
-                                "padding": "0px 0px 0px 0px",
-                                "vertical_spacing": "8px",
-                                "horizontal_align": "left",
-                                "vertical_align": "top",
-                                "margin": "0px 0px 0px 0px"
-                            }
-                        ],
-                        "margin": "0px 0px 4px 0px"
-                    }
-                ]
-            }
+        "body": _card_body(content),
     }
 
 
-async def _call(operation, request):
+def _card_config(content: str, streaming: bool) -> dict[str, Any]:
+    return {
+        "update_multi": True,
+        "width_mode": "fill",
+        "streaming_mode": streaming,
+        "summary": {
+            "content": '小脑袋已经开始转动啦，稍等哦~' if streaming else content[:100],
+        },
+        "style": {
+            "text_size": {
+                "body": {
+                    "default": "normal",
+                    "pc": "normal",
+                    "mobile": "normal",
+                },
+            },
+        },
+    }
+
+
+def _card_body(content: str) -> dict[str, Any]:
+    return {
+        "direction": "vertical",
+        "padding": "12px 12px 12px 12px",
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": _replace_markdown_images(content),
+                "text_align": "left",
+                "text_size": "normal",
+                "margin": "0px 0px 0px 0px",
+                "element_id": ELEMENT_ID,
+            },
+            {
+                "tag": "hr",
+                "margin": "0px 0px 0px 0px",
+            },
+            {
+                "tag": "column_set",
+                "horizontal_spacing": "12px",
+                "horizontal_align": "right",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "<font color=\"grey-600\">内容由 AI 生成, 请仔细甄别</font>",
+                                "text_align": "center",
+                                "text_size": "notation",
+                                "margin": "4px 0px 0px 0px",
+                                "element_id": "footnote_text",
+                            },
+                        ],
+                        "padding": "0px 0px 0px 0px",
+                        "direction": "vertical",
+                        "horizontal_spacing": "8px",
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "margin": "0px 0px 0px 0px",
+                        "weight": 1,
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [],
+                        "padding": "0px 0px 0px 0px",
+                        "direction": "vertical",
+                        "horizontal_spacing": "8px",
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "margin": "0px 0px 0px 0px",
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [],
+                        "padding": "0px 0px 0px 0px",
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "margin": "0px 0px 0px 0px",
+                    },
+                ],
+                "margin": "0px 0px 4px 0px",
+            },
+        ],
+    }
+
+
+async def _call(operation: Callable[[RequestT], ResponseT], request: RequestT) -> ResponseT:
     try:
         async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
             response = await call_lark(operation, request)
@@ -270,7 +298,7 @@ async def _call(operation, request):
     return response
 
 
-async def _send(union_id: str, content: dict) -> str:
+async def _send(union_id: str, content: dict[str, Any]) -> str:
     request = (CreateMessageRequest.builder()
         .receive_id_type("chat_id" if union_id.startswith("oc_") else "union_id")
         .request_body(CreateMessageRequestBody.builder()
@@ -282,8 +310,10 @@ async def _send(union_id: str, content: dict) -> str:
 
 
 async def sending_card(
-    union_id: str, content: str | AsyncIterable[str | CardReplace | CardSteer],
-    *, session: CardStreamSession | None = None,
+    union_id: str,
+    content: str | AsyncIterable[str | CardReplace | CardSteer],
+    *,
+    session: CardStreamSession | None = None,
 ) -> str | None:
     """发送卡片并返回最后一张的 message_id；9 分钟关闭，按需续卡。
     union_id 来自消息批次，也兼容以 oc_ 开头的群 chat_id。
@@ -300,11 +330,11 @@ async def sending_card(
     pending = None
     no_chunk = object()
 
-    def reset_card():
+    def reset_card() -> None:
         session.card_id, session.sequence, session.accumulated, session.sent = None, 0, "", ""
         session.pending_replacement = False
 
-    async def create_card():
+    async def create_card() -> None:
         if session.cancelled():
             raise CardStreamStopped()
         session.card_number += 1
@@ -326,7 +356,7 @@ async def sending_card(
         session.last_update = time.monotonic()
         logger.info("流式卡片已发送: card_id=%s, part=%s", session.card_id, session.card_number)
 
-    async def flush():
+    async def flush() -> None:
         if session.cancelled():
             raise CardStreamStopped()
         if session.accumulated == session.sent:
@@ -359,7 +389,7 @@ async def sending_card(
         logger.debug("流式卡片已更新: card_id=%s, sequence=%s, chars=%s, age=%.3f",
                      session.card_id, session.sequence, len(session.sent), session.last_update - session.opened_at)
 
-    async def close_card():
+    async def close_card() -> None:
         if session.card_id is None:
             return
         session.sequence += 1
@@ -381,7 +411,7 @@ async def sending_card(
         finally:
             reset_card()
 
-    async def delivery_failed(exc):
+    async def delivery_failed(exc: CardDeliveryError) -> None:
         nonlocal delivery_error
         delivery_error = exc
         logger.exception("卡片交付失败，继续消费任务事件，不重发结果不确定的请求")

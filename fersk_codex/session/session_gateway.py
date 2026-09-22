@@ -1,12 +1,22 @@
 """任务状态与短期去重缓存；按所属任务释放，最长保留 24 小时。"""
 
+from __future__ import annotations
+
 import asyncio
+import time
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-import time
+from typing import TYPE_CHECKING
 
 from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
+
+    from fersk_codex.codex.thread_watchdog import RunProbe
+    from fersk_codex.services.lark.lark_message_card import CardStreamSession
 
 logger = get_logger("Reaction")
 
@@ -30,12 +40,12 @@ class ActiveCodexRun:
     controls: asyncio.Lock = field(default_factory=asyncio.Lock)
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     target_id: str = ""
-    probe: object | None = None
-    task: asyncio.Task | None = None
-    stop_task: asyncio.Task | None = None
-    timeout_task: asyncio.Task | None = None
+    probe: RunProbe | None = None
+    task: asyncio.Task[None] | None = None
+    stop_task: asyncio.Task[bool] | None = None
+    timeout_task: asyncio.Task[None] | None = None
     notified: bool = False
-    cards: object | None = None
+    cards: CardStreamSession | None = None
 
     created_at: float = field(default_factory=time.monotonic)
     expired: bool = False
@@ -44,27 +54,34 @@ class ActiveCodexRun:
 
 
 class SessionCache:
-    def __init__(self):
-        for name in (
-            "codex_locks", "reset_tasks", "buffered_events", "buffer_tasks",
-            "reaction_message_ids", "chat_generations", "pending_chat_requests",
-            "received_message_ids", "processed_message_ids", "received_at",
-            "active_runs_by_message_id", "active_runs_by_chat", "all_runs", "blocked_chats",
-        ):
-            setattr(self, name, {})
+    def __init__(self) -> None:
+        self.codex_locks: dict[str, asyncio.Lock] = {}
+        self.reset_tasks: dict[str, asyncio.Task[object]] = {}
+        self.buffered_events: dict[str, P2ImMessageReceiveV1] = {}
+        self.buffer_tasks: dict[str, asyncio.Task[None]] = {}
+        self.reaction_message_ids: dict[str, dict[str, str]] = {}
+        self.chat_generations: dict[str, int] = {}
+        self.pending_chat_requests: dict[str, int] = {}
+        self.received_message_ids: dict[str, dict[str, float | None]] = {}
+        self.processed_message_ids: dict[str, dict[str, float | None]] = {}
+        self.received_at: dict[str, float] = {}
+        self.active_runs_by_message_id: dict[str, ActiveCodexRun] = {}
+        self.active_runs_by_chat: dict[str, ActiveCodexRun] = {}
+        self.all_runs: dict[str, ActiveCodexRun] = {}
+        self.blocked_chats: dict[str, ActiveCodexRun] = {}
         self.codex_locks_guard = asyncio.Lock()
         self.buffer_guard = asyncio.Lock()
         self.active_runs_guard = asyncio.Lock()
-        self.reactions_being_cleared = set()
-        self.pending_reactions = {}
-        self.recalled_message_ids = set()
-        self._recall_times = {}
-        self._reaction_times = {}
-        self._users = {}
-        self._buffer_times = {}
+        self.reactions_being_cleared: set[tuple[str, str, str]] = set()
+        self.pending_reactions: dict[tuple[str, str, str], ReactionCleanup] = {}
+        self.recalled_message_ids: set[str] = set()
+        self._recall_times: dict[str, float] = {}
+        self._reaction_times: dict[tuple[str, str], float] = {}
+        self._users: dict[str, int] = {}
+        self._buffer_times: dict[str, float] = {}
 
     @contextmanager
-    def hold(self, chat_id):
+    def hold(self, chat_id: str) -> Iterator[None]:
         """在首次 await 前登记；包括等待锁、重置、历史请求的调用者。"""
         self._users[chat_id] = self._users.get(chat_id, 0) + 1
         try:
@@ -75,7 +92,12 @@ class SessionCache:
                 self._users.pop(chat_id)
             self.release_idle(chat_id)
 
-    def remember(self, mapping, chat_id, message_id):
+    def remember(
+        self,
+        mapping: dict[str, dict[str, float | None]],
+        chat_id: str,
+        message_id: str,
+    ) -> None:
         now = time.monotonic()
         entries = mapping.setdefault(chat_id, {})
         # 重复事件不会延长原消息的保留期限。
@@ -86,7 +108,7 @@ class SessionCache:
         while len(entries) > CONFIG["messaging"]["recallCacheMaxEntries"]:
             entries.pop(next(iter(entries)))
 
-    def recall(self, message_id):
+    def recall(self, message_id: str) -> None:
         self.recalled_message_ids.add(message_id)
         self._recall_times.setdefault(message_id, time.monotonic())
         while len(self.recalled_message_ids) > CONFIG["messaging"]["recallCacheMaxEntries"]:
@@ -94,10 +116,10 @@ class SessionCache:
             self.recalled_message_ids.discard(oldest)
             self._recall_times.pop(oldest, None)
 
-    def track_reaction(self, chat_id, message_id):
+    def track_reaction(self, chat_id: str, message_id: str) -> None:
         self._reaction_times.setdefault((chat_id, message_id), time.monotonic())
 
-    def queue_reaction(self, chat_id, message_id, reaction_id):
+    def queue_reaction(self, chat_id: str, message_id: str, reaction_id: str) -> None:
         key = (chat_id, message_id, reaction_id)
         if key not in self.pending_reactions:
             # 来源：复用现有短期消息缓存容量，失败删除记录独立于任务生命周期。
@@ -113,7 +135,12 @@ class SessionCache:
                 logger.error("reaction 清理队列已满，丢弃未确认记录: %s", oldest)
             self.pending_reactions[key] = ReactionCleanup()
 
-    def release_messages(self, chat_id, message_ids, owner=None):
+    def release_messages(
+        self,
+        chat_id: str,
+        message_ids: Iterable[str],
+        owner: ActiveCodexRun | None = None,
+    ) -> None:
         """只清理本任务的瞬态数据；已转交的消息由接收方任务清理。"""
         for mid in message_ids:
             current = self.active_runs_by_message_id.get(mid)
@@ -124,7 +151,7 @@ class SessionCache:
             self._recall_times.pop(mid, None)
             # reaction 由卡片收尾后的删除流程处理，不能随任务缓存丢弃。
 
-    def finish_run(self, state):
+    def finish_run(self, state: ActiveCodexRun) -> None:
         for mid in state.message_ids:
             if self.active_runs_by_message_id.get(mid) not in (None, state):
                 continue
@@ -139,7 +166,7 @@ class SessionCache:
         state.cards = None
         self.release_idle(state.chat_id)
 
-    def release_idle(self, chat_id):
+    def release_idle(self, chat_id: str) -> None:
         if (self._users.get(chat_id) or self.pending_chat_requests.get(chat_id)
                 or chat_id in self.reset_tasks or chat_id in self.buffer_tasks
                 or chat_id in self.buffered_events or chat_id in self.blocked_chats
@@ -157,7 +184,7 @@ class SessionCache:
         for mid, reaction_id in list(self.reaction_message_ids.get(chat_id, {}).items()):
             self.queue_reaction(chat_id, mid, reaction_id)
 
-    def prune(self, now=None):
+    def prune(self, now: float | None = None) -> list[ActiveCodexRun]:
         """定期清理无后续消息的会话；返回需要关闭的过期任务。"""
         now = time.monotonic() if now is None else now
         for key, pending in list(self.pending_reactions.items()):
@@ -205,7 +232,7 @@ class SessionCache:
         runs = {run.run_id: run for run in (*self.all_runs.values(), *self.blocked_chats.values())}
         return [run for run in runs.values() if now - run.created_at >= RETENTION_SECONDS]
 
-    def expire_run(self, state):
+    def expire_run(self, state: ActiveCodexRun) -> None:
         """关闭尝试结束后，即使失败也按用户要求解除过期缓存。"""
         for mid, owner in list(self.active_runs_by_message_id.items()):
             if owner is state:

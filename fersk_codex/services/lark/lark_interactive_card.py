@@ -1,11 +1,15 @@
 """私聊历史选择卡片；表单确认、发送和回调上下文独立于普通消息卡片。"""
 
-import json
+from __future__ import annotations
+
 import html
+import json
 import re
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any, NotRequired, TYPE_CHECKING, TypeVar, TypedDict
 from uuid import uuid4
 
 from lark_oapi.api.im.v1 import (
@@ -17,6 +21,14 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTr
 from fersk_codex.services.lark.lark_requests import call_lark
 from fersk_codex.configs.loader import CONFIG
 
+if TYPE_CHECKING:
+    from lark_oapi.core.model import BaseResponse
+    from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger
+
+RequestT = TypeVar("RequestT")
+ResponseT = TypeVar("ResponseT", bound="BaseResponse")
+
+
 # 来源：用户要求，默认展示最近 30 条；与网关的选项总数上限一致。
 PAGE_SIZE = CONFIG["messaging"].get("sessionHistoryLimit", 30)
 # 来源：本功能的初始交互/内存策略，非飞书平台上限。卡片失效后重新 /history。
@@ -25,12 +37,20 @@ MAX_CARDS = 1024
 SELECT_NAME = "history_thread"
 
 
+class HistoryOption(TypedDict):
+    """历史选择项仍以原字典形态传递，不改变卡片协议。"""
+
+    label: str
+    value: str
+    updated_at: NotRequired[int | None]
+
+
 @dataclass
 class HistoryCard:
     token: str
     user_id: str
     chat_id: str
-    options: tuple[dict, ...]
+    options: tuple[HistoryOption, ...]
     created_at: float
     message_id: str = ""
     page: int = 0
@@ -39,10 +59,10 @@ class HistoryCard:
     finished: bool = False
 
     @property
-    def visible_options(self):
+    def visible_options(self) -> tuple[HistoryOption, ...]:
         return self.options[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]
 
-    def message_event(self):
+    def message_event(self) -> SimpleNamespace:
         """仅用服务端保存的私聊上下文适配现有恢复入口。"""
         return SimpleNamespace(event=SimpleNamespace(
             message=SimpleNamespace(chat_id=self.chat_id, chat_type="p2p"),
@@ -53,16 +73,16 @@ class HistoryCard:
 class HistoryCardStore:
     """仅主事件循环访问；限制存活时间和数量，重启后旧卡片失效。"""
 
-    def __init__(self):
-        self.cards = {}
+    def __init__(self) -> None:
+        self.cards: dict[str, HistoryCard] = {}
 
-    def prune(self):
+    def prune(self) -> None:
         now = time.monotonic()
         for token, card in list(self.cards.items()):
             if not card.busy and now - card.created_at >= CARD_TTL_SECONDS:
                 self.cards.pop(token, None)
 
-    def create(self, user_id, chat_id, options):
+    def create(self, user_id: str, chat_id: str, options: Iterable[HistoryOption]) -> HistoryCard:
         self.prune()
         if len(self.cards) >= MAX_CARDS:
             oldest = next((key for key, card in self.cards.items() if not card.busy), None)
@@ -73,7 +93,7 @@ class HistoryCardStore:
         self.cards[card.token] = card
         return card
 
-    def resolve(self, data):
+    def resolve(self, data: P2CardActionTrigger) -> HistoryCard:
         """卡片参数不是身份来源；同时验证操作者和原私聊消息，拒绝转发卡片。"""
         event = data.event
         action = event.action
@@ -93,11 +113,11 @@ class HistoryCardStore:
         return card
 
 
-def _plain(content):
+def _plain(content: str) -> dict[str, str]:
     return {"tag": "plain_text", "content": content}
 
 
-def _shell(elements):
+def _shell(elements: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "schema": "2.0",
         "config": {"update_multi": True, "width_mode": "fill"},
@@ -106,12 +126,12 @@ def _shell(elements):
     }
 
 
-def status_card(content):
+def status_card(content: str) -> dict[str, Any]:
     escaped = re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", html.escape(content))
     return _shell([{"tag": "markdown", "content": escaped}])
 
 
-def build_history_card(card):
+def build_history_card(card: HistoryCard) -> dict[str, Any]:
     """采用 form_action_type=submit 的 confirm：选中不回调，取消不提交表单。
 
     来源：用户提供的 confirm/表单字段说明；Card 2.0 form/button 官方文档。
@@ -146,7 +166,7 @@ def build_history_card(card):
     return _shell(elements)
 
 
-def confirmed_thread_id(data, card):
+def confirmed_thread_id(data: P2CardActionTrigger, card: HistoryCard) -> str:
     action = data.event.action
     # 不接受单纯 select_static、action.option 或未知按钮触发激活。
     if (action.tag != "button" or action.name != "activate_history"
@@ -160,18 +180,18 @@ def confirmed_thread_id(data, card):
     return selected
 
 
-def callback_response(content, *, error=False):
+def callback_response(content: str, *, error: bool = False) -> P2CardActionTriggerResponse:
     return P2CardActionTriggerResponse({"toast": {"type": "error" if error else "info", "content": content}})
 
 
-async def _request(operation, request):
+async def _request(operation: Callable[[RequestT], ResponseT], request: RequestT) -> ResponseT:
     response = await call_lark(operation, request)
     if not response.success():
         raise RuntimeError(f"交互卡片请求失败: code={response.code}, log_id={response.get_log_id()}")
     return response
 
 
-async def send_interactive_card(user_id, body):
+async def send_interactive_card(user_id: str, body: dict[str, Any]) -> str:
     # 延迟加载鉴权入口，纯卡片构建和离线回调测试无需凭据。
     from fersk_codex.services.lark.lark_client import client
     request = (CreateMessageRequest.builder().receive_id_type("union_id")
@@ -181,7 +201,7 @@ async def send_interactive_card(user_id, body):
     return response.data.message_id
 
 
-async def update_interactive_card(message_id, body):
+async def update_interactive_card(message_id: str, body: dict[str, Any]) -> None:
     from fersk_codex.services.lark.lark_client import client
     request = (PatchMessageRequest.builder().message_id(message_id)
         .request_body(PatchMessageRequestBody.builder()

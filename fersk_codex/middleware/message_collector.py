@@ -1,8 +1,9 @@
-"""Convert descending Lark chat history into a Codex message batch."""
+"""将飞书倒序历史整理为按时间排序的 Codex 消息批次。"""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,16 +68,7 @@ def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch
         # A history request can already include a later receive event. Anchor
         # this batch to its triggering message, so later input is routed only
         # after this submission has established its turn/status.
-        anchor = next((index for index, item in enumerate(history_items)
-                       if _field(item, "message_id") == current_id), None)
-        candidates = history_items[anchor:] if anchor is not None else history_items
-        current_time = getattr(event_message, "create_time", None)
-        for item in candidates:
-            item_time = _field(item, "create_time")
-            if (anchor is None and current_time and item_time
-                    and str(item_time).isdigit() and str(current_time).isdigit()
-                    and int(item_time) > int(current_time)):
-                continue
+        for item in _candidate_history_items(event_message, history_items):
             sender = _field(item, "sender")
             sender_type = _field(sender, "sender_type")
             if sender_type == "app":
@@ -107,6 +99,22 @@ def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch
         chat_type=event_message.chat_type,
         messages=messages,
     )
+
+
+def _candidate_history_items(event_message: Any, history_items: list[Any]) -> Iterator[Any]:
+    """以触发消息锚定历史，过滤尚未归属本次提交的较新输入。"""
+    current_id = event_message.message_id
+    anchor = next((index for index, item in enumerate(history_items)
+                   if _field(item, "message_id") == current_id), None)
+    candidates = history_items[anchor:] if anchor is not None else history_items
+    current_time = getattr(event_message, "create_time", None)
+    for item in candidates:
+        item_time = _field(item, "create_time")
+        if (anchor is None and current_time and item_time
+                and str(item_time).isdigit() and str(current_time).isdigit()
+                and int(item_time) > int(current_time)):
+            continue
+        yield item
 
 
 def _parse_history_message(item: Any, sequence: int) -> CollectedMessage:

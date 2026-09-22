@@ -1,5 +1,7 @@
 """离线注入阻塞请求，验证两个独立服务的真实线程容量与事件准入。"""
 
+from __future__ import annotations
+
 import asyncio
 from contextvars import ContextVar
 import importlib.util
@@ -21,7 +23,7 @@ def mcp_executor():
 
 
 class RequestLimitTests(unittest.IsolatedAsyncioTestCase):
-    async def test_timeout_keeps_slot_until_worker_really_finishes(self):
+    async def test_timeout_keeps_slot_until_worker_really_finishes(self) -> None:
         for module in (codex_executor, mcp_executor()):
             pool = module.BoundedExecutor(1)
             release = threading.Event()
@@ -50,7 +52,7 @@ class RequestLimitTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
                 pool.close()
 
-    async def test_cancellation_and_five_concurrent_workers(self):
+    async def test_cancellation_and_five_concurrent_workers(self) -> None:
         for module in (codex_executor, mcp_executor()):
             pool = module.BoundedExecutor(5)
             release = threading.Event()
@@ -80,7 +82,7 @@ class RequestLimitTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(*tasks, return_exceptions=True)
                 pool.close()
 
-    async def test_event_capacity_preserves_control_slot_and_observes_errors(self):
+    async def test_event_capacity_preserves_control_slot_and_observes_errors(self) -> None:
         dispatcher = EventDispatcher(asyncio.get_running_loop(), capacity=1, controls=1)
         release = asyncio.Event()
         entered = asyncio.Event()

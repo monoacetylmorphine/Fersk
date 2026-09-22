@@ -1,9 +1,13 @@
 """消息批次执行、steer 转交和流式卡片交付。"""
 
+from __future__ import annotations
+
 import asyncio
 import time
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import replace
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from fersk_codex.codex.thread_watchdog import RunProbe, probes, settings
@@ -17,16 +21,35 @@ from .message_collector import MessageBatch
 from fersk_codex.session.session_gateway import ActiveCodexRun
 from .gateway_runtime import GatewayRuntime
 
+if TYPE_CHECKING:
+    from fersk_codex.codex.codex_execution import RunEvent
+
+    from fersk_codex.middleware.message_assemble import AssemblyResult, CodexRunInput
+    from fersk_codex.services.lark.lark_message_card import CardSteer
+
 logger = get_logger("Message")
 
 
 class GatewayExecution:
     """通过共享 runtime 协调提交和收尾，输出阶段不占用提交锁。"""
 
-    def __init__(self, runtime: GatewayRuntime, *, assemble_input):
+    def __init__(
+        self,
+        runtime: GatewayRuntime,
+        *,
+        assemble_input: Callable[[MessageBatch], Awaitable[AssemblyResult]],
+    ) -> None:
         self.runtime = runtime
         self.cache = runtime.cache
         self.assemble_input = assemble_input
+
+    def _pending_batch(self, batch: MessageBatch) -> MessageBatch:
+        """在原有调用位置筛除已处理消息，不改变提交锁的边界。"""
+        return replace(batch, messages=tuple(
+            message for message in batch.messages
+            if message.message_id not in self.cache.processed_message_ids.get(batch.chat_id, {})
+            and message.message_id not in self.cache.active_runs_by_message_id
+        ))
 
     async def _handle_message_batch(self, batch: MessageBatch, generation: int) -> None:
         if len(self.cache.all_runs) + len(self.runtime.detached_tasks) >= CONFIG["messaging"].get("maxPendingEvents", 32):
@@ -36,11 +59,7 @@ class GatewayExecution:
                 await self.runtime._clear_reaction(batch.chat_id, {m.message_id for m in batch.messages})
             return
         # History may contain a completed/active run; it must not backdate this new run's deadline.
-        batch = replace(batch, messages=tuple(
-            message for message in batch.messages
-            if message.message_id not in self.cache.processed_message_ids.get(batch.chat_id, {})
-            and message.message_id not in self.cache.active_runs_by_message_id
-        ))
+        batch = self._pending_batch(batch)
         if not batch.messages:
             return
         state = ActiveCodexRun(uuid4().hex, batch.chat_id,
@@ -101,7 +120,12 @@ class GatewayExecution:
                 except Exception:
                     logger.exception("任务 reaction 清理未完成，交由后台重试: run_id=%s", state.run_id)
 
-    async def _execute_message_batch(self, batch: MessageBatch, generation: int, state) -> None:
+    async def _execute_message_batch(
+        self,
+        batch: MessageBatch,
+        generation: int,
+        state: ActiveCodexRun,
+    ) -> None:
         """Serialize input submission only; the original task owns the reply stream."""
         events = None
         transferred = False
@@ -109,11 +133,7 @@ class GatewayExecution:
             async with self.runtime._submission_lock(batch.chat_id):
                 if generation != self.cache.chat_generations.get(batch.chat_id, 0):
                     return
-                batch = replace(batch, messages=tuple(
-                    message for message in batch.messages
-                    if message.message_id not in self.cache.processed_message_ids.get(batch.chat_id, {})
-                    and message.message_id not in self.cache.active_runs_by_message_id
-                ))
+                batch = self._pending_batch(batch)
                 if not batch.messages:
                     return
                 for message in batch.messages:
@@ -209,16 +229,7 @@ class GatewayExecution:
                 state.probe.turn_id = first.get("turn_id")
                 state.probe.stage("running")
             # No submission lock is held during model output or CardKit updates.
-            async with aclosing(state.cards.events(events)) as output_events, aclosing(
-                self._reply_content(batch, assembly.codex_input, state, events=output_events)
-            ) as content:
-                try:
-                    await self.runtime.send_card(union_id=batch.union_id, content=content, session=state.cards)
-                except CardDeliveryError as exc:
-                    # The sender drains the model stream before reporting delivery failure.
-                    # A CardKit outage must not interrupt an otherwise healthy Codex turn.
-                    logger.error("卡片交付失败: run_id=%s, error_type=%s", state.run_id, type(exc).__name__)
-                    state.probe.record("delivery_failed", errorType=type(exc).__name__)
+            await self._deliver_reply(batch, assembly.codex_input, state, events)
         except Exception as exc:
             logger.exception("消息批次处理异常: chat_id=%s, error=%s", batch.chat_id, exc)
             state.probe.record("exception", errorType=type(exc).__name__)
@@ -263,7 +274,33 @@ class GatewayExecution:
                 finally:
                     state.finished.set()
 
-    async def _reply_content(self, batch, codex_input, state, *, events=None):
+    async def _deliver_reply(
+        self,
+        batch: MessageBatch,
+        codex_input: CodexRunInput,
+        state: ActiveCodexRun,
+        events: AsyncGenerator[RunEvent, None],
+    ) -> None:
+        """模型流由当前任务持有，卡片交付失败仍继续完成模型收尾。"""
+        async with aclosing(state.cards.events(events)) as output_events, aclosing(
+            self._reply_content(batch, codex_input, state, events=output_events)
+        ) as content:
+            try:
+                await self.runtime.send_card(union_id=batch.union_id, content=content, session=state.cards)
+            except CardDeliveryError as exc:
+                # The sender drains the model stream before reporting delivery failure.
+                # A CardKit outage must not interrupt an otherwise healthy Codex turn.
+                logger.error("卡片交付失败: run_id=%s, error_type=%s", state.run_id, type(exc).__name__)
+                state.probe.record("delivery_failed", errorType=type(exc).__name__)
+
+    async def _reply_content(
+        self,
+        batch: MessageBatch,
+        codex_input: CodexRunInput,
+        state: ActiveCodexRun,
+        *,
+        events: AsyncGenerator[RunEvent, None] | None = None,
+    ) -> AsyncGenerator[str | CardReplace | CardSteer, None]:
         """展示推理、工具及运行进度；最终答案替换正文并保持定格。"""
         answer_started = False
         last_text_item = None

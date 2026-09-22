@@ -1,7 +1,12 @@
 """撤回、停止、新会话以及历史选择和恢复命令。"""
 
+from __future__ import annotations
+
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from types import SimpleNamespace
+from typing import NotRequired, TYPE_CHECKING, TypedDict
 
 from fersk_codex.session.session_history import get_session, list_sessions
 from fersk_codex.codex.thread_manager import get_user_thread
@@ -11,23 +16,46 @@ from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from .gateway_runtime import GatewayRuntime
 
+if TYPE_CHECKING:
+    from lark_oapi.api.im.v1 import P2ImMessageReceiveV1, P2ImMessageRecalledV1
+    from lark_oapi.event.callback.model.p2_card_action_trigger import (
+        P2CardActionTrigger, P2CardActionTriggerResponse,
+    )
+
+    from fersk_codex.session.session_gateway import ActiveCodexRun
+    from fersk_codex.services.lark.lark_interactive_card import HistoryOption
+    from fersk_codex.utils.event_dispatcher import EventDispatcher
+
 logger = get_logger("Message")
+
+
+class HistoryRestoreResult(TypedDict):
+    """恢复结果保持原有字典协议，失败时不提供线程 ID。"""
+
+    ok: bool
+    content: str
+    thread_id: NotRequired[str]
 
 
 class GatewayCommands:
     """复用 runtime 的停止和提交门禁，独立管理历史卡片上下文。"""
 
-    def __init__(self, runtime: GatewayRuntime, *, cancel_buffer):
+    def __init__(
+        self,
+        runtime: GatewayRuntime,
+        *,
+        cancel_buffer: Callable[[str], Awaitable[None]],
+    ) -> None:
         self.runtime = runtime
         self.cache = runtime.cache
         self.cancel_buffer = cancel_buffer
         self.history_cards = interactive.HistoryCardStore()
 
-    async def prune_history(self):
+    async def prune_history(self) -> None:
         """供启动层调度历史卡片过期清理。"""
         self.history_cards.prune()
 
-    async def processing_recall(self, data) -> None:
+    async def processing_recall(self, data: P2ImMessageRecalledV1) -> None:
         """Interrupt the Codex run associated with an owner-recalled message."""
         event = data.event
         if event.recall_type != "message_owner":
@@ -69,7 +97,12 @@ class GatewayCommands:
         finally:
             self.cache.release_idle(chat_id)
 
-    async def _stop_chat(self, data, *, advance_generation=True):
+    async def _stop_chat(
+        self,
+        data: P2ImMessageReceiveV1 | SimpleNamespace,
+        *,
+        advance_generation: bool = True,
+    ) -> tuple[dict[str, ActiveCodexRun], bool, bool]:
         """停止本会话当前任务和已接收的待处理输入，保留 thread 绑定。"""
         message = data.event.message
         chat_id = message.chat_id
@@ -103,7 +136,7 @@ class GatewayCommands:
             logger.exception("停止后 reaction 清理失败: chat_id=%s", chat_id)
         return states, succeeded, had_work
 
-    async def processing_stop(self, data) -> None:
+    async def processing_stop(self, data: P2ImMessageReceiveV1 | SimpleNamespace) -> None:
         states, succeeded, had_work = await self._stop_chat(data)
         message = data.event.message
         chat_id = message.chat_id
@@ -122,7 +155,10 @@ class GatewayCommands:
         except Exception:
             logger.exception("停止卡片投递失败或结果不确定: chat_id=%s", chat_id)
 
-    async def history_options(self, data) -> list[dict]:
+    async def history_options(
+        self,
+        data: P2ImMessageReceiveV1 | SimpleNamespace,
+    ) -> list[HistoryOption]:
         """前端适配入口：data 必须来自已验证的事件，不能由客户端伪造身份。"""
         message = data.event.message
         target_id = message.chat_id if message.chat_type == "group" else data.event.sender.sender_id.union_id
@@ -132,7 +168,7 @@ class GatewayCommands:
             for record in await list_sessions(target_id)
         ]
 
-    async def processing_history(self, data):
+    async def processing_history(self, data: P2ImMessageReceiveV1 | SimpleNamespace) -> None:
         """仅私聊展示个人历史；不停止任务、不修改活跃绑定。"""
         if data.event.message.chat_type != "p2p":
             return
@@ -152,7 +188,7 @@ class GatewayCommands:
             logger.exception("历史卡片加载或发送失败")
             await interactive.send_interactive_card(user_id, interactive.status_card("历史会话加载或发送失败，请重新发送 /history。"))
 
-    async def processing_history_action(self, data):
+    async def processing_history_action(self, data: P2CardActionTrigger) -> None:
         """主事件循环内校验、去重并串行恢复；SDK 回调不等待恢复完成。"""
         try:
             card = self.history_cards.resolve(data)
@@ -199,7 +235,11 @@ class GatewayCommands:
         finally:
             card.busy = False
 
-    def dispatch_history_action(self, dispatcher, data):
+    def dispatch_history_action(
+        self,
+        dispatcher: EventDispatcher,
+        data: P2CardActionTrigger,
+    ) -> P2CardActionTriggerResponse:
         """同步 SDK 入口，只提交已知动作；不把入队成功报告为线程激活成功。"""
         action = getattr(getattr(data, "event", None), "action", None)
         value = getattr(action, "value", None)
@@ -216,13 +256,17 @@ class GatewayCommands:
             return interactive.callback_response("当前任务繁忙，请稍后重试", error=True)
         return interactive.callback_response("正在处理，请以卡片最终结果为准")
 
-    async def processing_history_restore(self, data, thread_id: str) -> dict:
+    async def processing_history_restore(
+        self,
+        data: P2ImMessageReceiveV1 | SimpleNamespace,
+        thread_id: str,
+    ) -> HistoryRestoreResult:
         """返回供前端展示的结果；复用 /new 的停止、等待及提交隔离流程。"""
         chat_id = data.event.message.chat_id
         target_id = chat_id if data.event.message.chat_type == "group" else data.event.sender.sender_id.union_id
         previous = self.cache.reset_tasks.get(chat_id)
 
-        async def restore():
+        async def restore() -> HistoryRestoreResult:
             try:
                 if previous is not None:
                     await asyncio.shield(previous)
@@ -256,14 +300,14 @@ class GatewayCommands:
         self.cache.reset_tasks[chat_id] = task
         return await asyncio.shield(task)
 
-    async def processing_new(self, data) -> None:
+    async def processing_new(self, data: P2ImMessageReceiveV1 | SimpleNamespace) -> None:
         """Gate subsequent submissions before the first await; stop then reset."""
         chat_id = data.event.message.chat_id
         target_id = chat_id if data.event.message.chat_type == "group" else data.event.sender.sender_id.union_id
         previous = self.cache.reset_tasks.get(chat_id)
         self.cache.chat_generations[chat_id] = self.cache.chat_generations.get(chat_id, 0) + 1
 
-        async def reset():
+        async def reset() -> None:
             try:
                 if previous is not None:
                     await asyncio.shield(previous)

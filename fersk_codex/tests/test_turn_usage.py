@@ -1,5 +1,7 @@
 """逐条持久化增量用量，异常退出不重复写入。"""
 
+from __future__ import annotations
+
 import asyncio
 from pathlib import Path
 import sqlite3
@@ -17,7 +19,7 @@ from fersk_codex.utils import logging as usage_log
 
 
 class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.enterContext(patch.object(session_history, "register_session", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_initialize_session_name", AsyncMock()))
         self.enterContext(patch.object(session_codex, "_sync_session_time", AsyncMock()))
@@ -68,14 +70,14 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
             rows = db.execute("SELECT userId, threadId, total_tokens, runId FROM token_usage ORDER BY id").fetchall()
         self.assertEqual(rows, [("user", "thread", 10, "run-1"), ("user", "thread", 25, "run-1")])
 
-    async def test_completed(self):
+    async def test_completed(self) -> None:
         events = [e async for e in self.events(TurnStatus.completed)]
         self.assertEqual(events[-1]["type"], "done")
         self.assert_saved_all()
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT SUM(total_tokens), MIN(taskDuration_ms), MAX(taskDuration_ms) FROM token_usage WHERE runId = 'run-1'").fetchone(), (35, 123, 123))
 
-    async def test_written_before_next_event(self):
+    async def test_written_before_next_event(self) -> None:
         events = self.events("wait")
         await anext(events)
         with sqlite3.connect(self.db) as db:
@@ -85,13 +87,13 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         self.save.assert_awaited_once()
         self.finalize.assert_awaited_once()
 
-    async def test_no_usage_does_not_insert_zero_row(self):
+    async def test_no_usage_does_not_insert_zero_row(self) -> None:
         await self.drain(self.events(TurnStatus.completed, totals=()))
         self.save.assert_not_awaited()
         self.assertFalse(self.db.exists())
         self.finalize.assert_not_awaited()
 
-    async def test_generated_run_id_is_shared_and_unique_per_run(self):
+    async def test_generated_run_id_is_shared_and_unique_per_run(self) -> None:
         for _ in range(2):
             await self.drain(self.events(TurnStatus.completed, run_id=None))
         with sqlite3.connect(self.db) as db:
@@ -99,27 +101,27 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(run and count == 2 and total == 35 for run, count, total in rows))
 
-    async def test_failed(self):
+    async def test_failed(self) -> None:
         events = [e async for e in self.events(TurnStatus.failed)]
         self.assertEqual(events[-1]["type"], "error")
         self.assert_saved_all()
 
-    async def test_interrupted(self):
+    async def test_interrupted(self) -> None:
         events = [e async for e in self.events(TurnStatus.interrupted)]
         self.assertEqual(events[-1]["type"], "interrupted")
         self.assert_saved_all()
 
-    async def test_stream_exception(self):
+    async def test_stream_exception(self) -> None:
         events = [e async for e in self.events("exception")]
         self.assertEqual(events[-1]["type"], "error")
         self.assert_saved_all()
 
-    async def test_unexpected_eof(self):
+    async def test_unexpected_eof(self) -> None:
         events = [e async for e in self.events("eof")]
         self.assertEqual(events[-1]["type"], "error")
         self.assert_saved_all()
 
-    async def test_generator_close(self):
+    async def test_generator_close(self) -> None:
         events = self.events("wait")
         await anext(events)
         await anext(events)
@@ -127,7 +129,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         await events.aclose()
         self.assert_saved_all()
 
-    async def test_cancel_during_stream(self):
+    async def test_cancel_during_stream(self) -> None:
         events = self.events("wait")
         await anext(events)
         await anext(events)
@@ -138,7 +140,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
             await task
         self.assert_saved_all()
 
-    async def test_timeout_during_stream(self):
+    async def test_timeout_during_stream(self) -> None:
         events = self.events("wait")
         await anext(events)
         await anext(events)
@@ -147,7 +149,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
                 await anext(events)
         self.assert_saved_all()
 
-    async def test_repeated_cancel_during_save_preserves_write(self):
+    async def test_repeated_cancel_during_save_preserves_write(self) -> None:
         entered, release = asyncio.Event(), asyncio.Event()
         async def save(**kwargs):
             entered.set()
@@ -168,7 +170,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT total_tokens FROM token_usage").fetchall(), [(10,)])
 
-    async def test_failed_save_does_not_hide_turn_failure_or_retry(self):
+    async def test_failed_save_does_not_hide_turn_failure_or_retry(self) -> None:
         self.save.side_effect = OSError("disk unavailable")
         with patch.object(codex_execution.logger, "exception") as logger:
             events = [e async for e in self.events(TurnStatus.failed)]
@@ -176,7 +178,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.save.await_count, 2)
         self.assertGreaterEqual(logger.call_count, 2)
 
-    async def test_client_cleanup_failure_keeps_usage_record(self):
+    async def test_client_cleanup_failure_keeps_usage_record(self) -> None:
         events = self.events(TurnStatus.completed)
         self.factory.return_value.__aexit__.side_effect = RuntimeError("close failed")
         with patch.object(codex.FerskCodex, "force_close", AsyncMock(return_value=False)):
@@ -184,7 +186,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
                 await self.drain(events)
         self.assert_saved_all()
 
-    async def test_save_has_bounded_deadline(self):
+    async def test_save_has_bounded_deadline(self) -> None:
         async def stuck(**kwargs):
             await asyncio.Event().wait()
         self.save.side_effect = stuck

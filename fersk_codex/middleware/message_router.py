@@ -1,8 +1,12 @@
 """飞书消息入口、固定窗口缓冲与历史收集，通过回调提交任务。"""
 
+from __future__ import annotations
+
 import asyncio
 import os
 import time
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from fersk_codex.configs.loader import CONFIG
@@ -11,12 +15,18 @@ from fersk_codex.codex.thread_watchdog import RunProbe, settings
 from fersk_codex.session.session_gateway import ActiveCodexRun, RETENTION_SECONDS
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_new_command, is_stop_command, is_history_command
 
+if TYPE_CHECKING:
+    from lark_oapi.api.im.v1 import Message, MentionEvent, P2ImMessageReceiveV1
+
+    from fersk_codex.middleware.message_collector import MessageBatch
+    from fersk_codex.session.session_gateway import SessionCache
+
 logger = get_logger("Message")
 
-def _bot_identity(*, required=False):
+def _bot_identity(*, required: bool = False) -> tuple[str, str]:
     """Resolve optional identity settings; reject an unusable startup config."""
     credentials = CONFIG["lark"]["credentials"]
-    def value(key):
+    def value(key: str) -> str:
         env_name = credentials.get(key)
         return (os.getenv(env_name, "").strip() if env_name else "")
     robot_union_id = value("robotUnionIdEnv")
@@ -25,7 +35,7 @@ def _bot_identity(*, required=False):
         raise RuntimeError("群聊机器人标识未配置：robotUnionIdEnv 或 robotNameEnv 对应的环境变量至少一个非空")
     return robot_union_id, robot_name
 
-def _is_bot_mentioned(mentions) -> bool:
+def _is_bot_mentioned(mentions: Iterable[MentionEvent] | None) -> bool:
     """Match a nonempty Union ID or name; Union ID survives bot renaming."""
     robot_union_id, robot_name = _bot_identity()
     for mention in mentions or []:
@@ -38,8 +48,21 @@ def _is_bot_mentioned(mentions) -> bool:
     return False
 
 class MessageRouter:
-    def __init__(self, cache, *, submit, stop, new, notify, fetch_history,
-                 add_reaction, clear_reactions, send_card, buffer_seconds, history=None):
+    def __init__(
+        self,
+        cache: SessionCache,
+        *,
+        submit: Callable[[MessageBatch, int], Awaitable[None]],
+        stop: Callable[[P2ImMessageReceiveV1], Awaitable[None]],
+        new: Callable[[P2ImMessageReceiveV1], Awaitable[None]],
+        notify: Callable[[ActiveCodexRun, str], Awaitable[None]],
+        fetch_history: Callable[..., Awaitable[list[Message]]],
+        add_reaction: Callable[..., Awaitable[str | None]],
+        clear_reactions: Callable[..., Awaitable[None]],
+        send_card: Callable[..., Awaitable[str | None]],
+        buffer_seconds: Callable[[], float],
+        history: Callable[[P2ImMessageReceiveV1], Awaitable[None]] | None = None,
+    ) -> None:
         self.cache = cache
         self.submit = submit
         self.stop = stop
@@ -52,12 +75,12 @@ class MessageRouter:
         self.buffer_seconds = buffer_seconds
         self.history = history
 
-    async def processing(self, data) -> None:
+    async def processing(self, data: P2ImMessageReceiveV1) -> None:
         """登记整个入站请求，避免旧任务回收新请求正在使用的会话锁。"""
         async with asyncio.timeout(RETENTION_SECONDS):
             await self._processing(data)
 
-    async def _processing(self, data):
+    async def _processing(self, data: P2ImMessageReceiveV1) -> None:
         with self.cache.hold(data.event.message.chat_id):
             self.cache.prune()
             try:
@@ -124,7 +147,7 @@ class MessageRouter:
                 if pending != message.message_id:
                     self.cache.release_messages(message.chat_id, {message.message_id})
 
-    async def _route_message(self, data, generation: int) -> None:
+    async def _route_message(self, data: P2ImMessageReceiveV1, generation: int) -> None:
         """Apply the configured direct/buffered behavior to one message."""
         message_type = data.event.message.message_type
         if message_type in CONFIG["messaging"]["bufferedTypes"]:
@@ -142,7 +165,7 @@ class MessageRouter:
         finally:
             await self.clear_reactions(message.chat_id, {message.message_id})
 
-    async def _buffer_message(self, data, generation: int) -> None:
+    async def _buffer_message(self, data: P2ImMessageReceiveV1, generation: int) -> None:
         """Start one fixed window per chat without extending it on new messages."""
         chat_id = data.event.message.chat_id
         async with self.cache.buffer_guard:
@@ -189,7 +212,7 @@ class MessageRouter:
                 self.cache.release_messages(chat_id, {data.event.message.message_id})
             self.cache.release_idle(chat_id)
 
-    async def _process_chat_history(self, data, generation: int) -> None:
+    async def _process_chat_history(self, data: P2ImMessageReceiveV1, generation: int) -> None:
         """Fetch the latest history and submit the current user turn to Codex."""
         with self.cache.hold(data.event.message.chat_id):
 
@@ -215,17 +238,26 @@ class MessageRouter:
                         messages_num=CONFIG["messaging"]["historyPageSize"],
                     )
             except Exception:
-                logger.exception("获取历史消息失败: message_id=%s", current_message_id)
-                state = ActiveCodexRun(uuid4().hex, data.event.message.chat_id,
-                                       frozenset({current_message_id}),
-                                       target_id=(data.event.message.chat_id if data.event.message.chat_type == "group"
-                                                  else data.event.sender.sender_id.union_id))
-                state.probe = RunProbe(state.run_id, state.chat_id, state.message_ids)
-                state.probe.finish("failed")
-                if generation == self.cache.chat_generations.get(state.chat_id, 0):
-                    await self.notify(state, "codexFailure")
-                await self.clear_reactions(state.chat_id, state.message_ids)
+                await self._history_failed(data, generation, current_message_id)
                 return
             batch = batch_from_chat_history(data, history_items)
             if batch.messages:
                 await self.submit(batch, generation)
+
+    async def _history_failed(
+        self,
+        data: P2ImMessageReceiveV1,
+        generation: int,
+        current_message_id: str,
+    ) -> None:
+        """历史请求失败时沿用当前通知和 reaction 清理顺序。"""
+        logger.exception("获取历史消息失败: message_id=%s", current_message_id)
+        state = ActiveCodexRun(uuid4().hex, data.event.message.chat_id,
+                               frozenset({current_message_id}),
+                               target_id=(data.event.message.chat_id if data.event.message.chat_type == "group"
+                                          else data.event.sender.sender_id.union_id))
+        state.probe = RunProbe(state.run_id, state.chat_id, state.message_ids)
+        state.probe.finish("failed")
+        if generation == self.cache.chat_generations.get(state.chat_id, 0):
+            await self.notify(state, "codexFailure")
+        await self.clear_reactions(state.chat_id, state.message_ids)

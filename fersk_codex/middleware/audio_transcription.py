@@ -1,4 +1,4 @@
-"""Normalize downloaded audio and transcribe it before it reaches Codex."""
+"""对下载音频进行格式处理和转写，再提交给 Codex。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-
-
+from typing import Any
 
 from openai import AsyncOpenAI
 from fersk_codex.configs.loader import CONFIG
@@ -21,7 +20,7 @@ from fersk_codex.utils.logger import get_logger
 logger = get_logger("Audio")
 
 
-AUDIO_CONFIG = CONFIG["audio"]
+AUDIO_CONFIG: dict[str, Any] = CONFIG["audio"]
 MAX_AUDIO_BYTES = AUDIO_CONFIG["limits"]["maxBytes"]
 MAX_AUDIO_DURATION_SECONDS = AUDIO_CONFIG["limits"]["maxDurationSeconds"]
 TARGET_AUDIO_BYTES = AUDIO_CONFIG["limits"]["targetBytes"]
@@ -29,11 +28,11 @@ TARGET_AUDIO_BITRATE = AUDIO_CONFIG["output"]["bitrateBps"]
 
 
 class AudioProcessingError(RuntimeError):
-    """Raised when an audio resource cannot be converted or transcribed."""
+    """音频转换或转写失败。"""
 
 
 class AudioConversionTimeout(AudioProcessingError):
-    """The complete conversion budget expired."""
+    """完整音频转换流程超时。"""
 
 
 class ASR:
@@ -43,7 +42,7 @@ class ASR:
             return base64.b64encode(read_file.read()).decode("utf-8")
 
     @staticmethod
-    async def _reap(process):
+    async def _reap(process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:
             return
         try:
@@ -70,15 +69,7 @@ class ASR:
             process = await asyncio.shield(creating)
             stdout, stderr = await process.communicate()
         except BaseException:
-            async def cleanup():
-                child = process
-                if child is None:
-                    try:
-                        child = await creating
-                    except Exception:
-                        return
-                await ASR._reap(child)
-            cleaning = asyncio.create_task(cleanup())
+            cleaning = asyncio.create_task(ASR._cleanup_process(process, creating))
             # Cleanup owns the process even if another stop arrives meanwhile.
             while not cleaning.done():
                 try:
@@ -93,6 +84,20 @@ class ASR:
             detail = result.stderr.strip().splitlines()[-1:] or ["未知错误"]
             raise AudioProcessingError(f"{action}失败: {detail[0]}")
         return result
+
+    @staticmethod
+    async def _cleanup_process(
+        process: asyncio.subprocess.Process | None,
+        creating: asyncio.Task[asyncio.subprocess.Process],
+    ) -> None:
+        """取消可能先于进程创建完成，清理任务必须接管迟到的子进程。"""
+        child = process
+        if child is None:
+            try:
+                child = await creating
+            except Exception:
+                return
+        await ASR._reap(child)
 
     @classmethod
     async def _probe_duration(cls, file_path: Path) -> float:

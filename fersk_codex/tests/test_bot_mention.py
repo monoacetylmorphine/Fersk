@@ -1,5 +1,7 @@
 """Group mention identity checks with no credentials or network access."""
 
+from __future__ import annotations
+
 from fersk_codex.middleware import message_router
 from types import SimpleNamespace as NS
 import os
@@ -11,28 +13,28 @@ import test_stop_command as helpers
 
 
 class BotMentionTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         helpers.StopTests.setUp(self)
         self.enterContext(patch.dict(os.environ, {}, clear=True))
 
     def configure(self, **fields):
         self.enterContext(patch.dict(CONFIG["lark"]["credentials"], fields, clear=True))
 
-    def test_union_id_only_survives_renaming(self):
+    def test_union_id_only_survives_renaming(self) -> None:
         self.configure(robotUnionIdEnv="TEST_BOT_ID")
         os.environ["TEST_BOT_ID"] = "on_bot"
         self.assertEqual(message_router._bot_identity(required=True), ("on_bot", ""))
         self.assertTrue(message_router._is_bot_mentioned([NS(id=NS(union_id="on_bot"), name="renamed")]))
         self.assertFalse(message_router._is_bot_mentioned([NS(id=NS(union_id="on_other"))]))
 
-    def test_name_only(self):
+    def test_name_only(self) -> None:
         self.configure(robotNameEnv="TEST_BOT_NAME")
         os.environ["TEST_BOT_NAME"] = "Bot"
         self.assertEqual(message_router._bot_identity(required=True), ("", "Bot"))
         self.assertTrue(message_router._is_bot_mentioned([NS(name="Bot")]))
         self.assertFalse(message_router._is_bot_mentioned([NS(name="Other")]))
 
-    def test_both_use_or_matching(self):
+    def test_both_use_or_matching(self) -> None:
         self.configure(robotUnionIdEnv="TEST_BOT_ID", robotNameEnv="TEST_BOT_NAME")
         os.environ.update(TEST_BOT_ID="on_bot", TEST_BOT_NAME="Bot")
         for mention in (NS(id=NS(union_id="on_bot"), name="Renamed"),
@@ -42,7 +44,7 @@ class BotMentionTests(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("TEST_BOT_NAME")
         self.assertEqual(message_router._bot_identity(required=True), ("on_bot", ""))
 
-    def test_missing_empty_and_whitespace_never_match(self):
+    def test_missing_empty_and_whitespace_never_match(self) -> None:
         self.configure(robotUnionIdEnv="TEST_BOT_ID", robotNameEnv="TEST_BOT_NAME")
         for value in (None, "", " \t "):
             if value is not None:
@@ -53,14 +55,14 @@ class BotMentionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "至少一个非空"):
                 message_router._bot_identity(required=True)
 
-    async def test_startup_rejects_missing_identity_before_connecting(self):
+    async def test_startup_rejects_missing_identity_before_connecting(self) -> None:
         self.configure(robotUnionIdEnv="TEST_BOT_ID")
         with patch.object(self.g, "create_websocket_client") as connect:
             with self.assertRaisesRegex(RuntimeError, "至少一个非空"):
                 await self.g.main()
         connect.assert_not_called()
 
-    async def test_group_without_bot_mention_is_ignored(self):
+    async def test_group_without_bot_mention_is_ignored(self) -> None:
         self.configure(robotUnionIdEnv="TEST_BOT_ID")
         os.environ["TEST_BOT_ID"] = "on_bot"
         data = helpers.event("hello")
@@ -73,7 +75,7 @@ class BotMentionTests(unittest.IsolatedAsyncioTestCase):
         await self.router.processing(data)
         self.router._route_message.assert_awaited_once()
 
-    def test_console_entry_runs_async_main(self):
+    def test_console_entry_runs_async_main(self) -> None:
         self.g.main = AsyncMock()
         self.g.cli()
         self.g.main.assert_awaited_once()

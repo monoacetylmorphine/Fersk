@@ -1,5 +1,7 @@
 """业务日志等级与 SDK DEBUG 独立，连接凭据不进入输出。"""
 
+from __future__ import annotations
+
 import importlib.util
 import io
 import logging
@@ -10,7 +12,7 @@ from fersk_codex.utils import logger as codex_logger
 
 
 class BusinessLoggerTests(unittest.TestCase):
-    def test_levels_traceback_redaction_and_sdk_debug(self):
+    def test_levels_traceback_redaction_and_sdk_debug(self) -> None:
         path = Path(__file__).resolve().parents[2] / "fersk_mcp/utils/logger.py"
         spec = importlib.util.spec_from_file_location("mcp_logger_test", path)
         mcp_logger = importlib.util.module_from_spec(spec)

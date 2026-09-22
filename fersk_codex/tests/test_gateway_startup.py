@@ -1,5 +1,7 @@
 """离线验证网关组件组装、事件路由和启动退出，不连接外部服务。"""
 
+from __future__ import annotations
+
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -11,10 +13,10 @@ import test_stop_command as helpers
 
 
 class GatewayStartupTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         helpers.StopTests.setUp(self)
 
-    async def test_instances_share_one_cache_without_cross_gateway_state(self):
+    async def test_instances_share_one_cache_without_cross_gateway_state(self) -> None:
         first = self.runtime, self.execution, self.commands, self.router
         second = self.g.create_gateway()
         for runtime, execution, commands, router in (first, second):
@@ -32,7 +34,7 @@ class GatewayStartupTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(second[2].history_cards.cards)
         self.assertIsNot(self.runtime.cache.codex_locks_guard, second[0].cache.codex_locks_guard)
 
-    async def test_main_routes_events_and_cancels_maintenance_on_disconnect(self):
+    async def test_main_routes_events_and_cancels_maintenance_on_disconnect(self) -> None:
         builder = Mock()
         callbacks = {}
         def registration(name):
@@ -94,14 +96,14 @@ class GatewayStartupTests(unittest.IsolatedAsyncioTestCase):
         stop.assert_awaited_once_with(state)
         flush.assert_awaited_once()
 
-    async def test_history_cards_are_pruned_by_commands_maintenance(self):
+    async def test_history_cards_are_pruned_by_commands_maintenance(self) -> None:
         card = self.commands.history_cards.create('user', 'chat', [])
         from fersk_codex.services.lark.lark_interactive_card import CARD_TTL_SECONDS
         card.created_at -= CARD_TTL_SECONDS
         await self.commands.prune_history()
         self.assertFalse(self.commands.history_cards.cards)
 
-    def test_console_and_docker_point_to_existing_main_module(self):
+    def test_console_and_docker_point_to_existing_main_module(self) -> None:
         root = Path(__file__).resolve().parents[1]
         project = tomllib.loads((root / 'pyproject.toml').read_text())
         self.assertEqual(project['project']['scripts']['fersk-codex'], 'fersk_codex.main:cli')

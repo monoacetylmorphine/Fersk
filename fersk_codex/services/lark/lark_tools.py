@@ -1,11 +1,24 @@
-import json
+from __future__ import annotations
+
 import asyncio
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from datetime import datetime, timezone, timedelta
-
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import *
+from lark_oapi.api.im.v1 import (
+    CreateMessageReactionRequest,
+    CreateMessageReactionRequestBody,
+    CreateMessageReactionResponse,
+    DeleteMessageReactionRequest,
+    DeleteMessageReactionResponse,
+    Emoji,
+    GetMessageResourceRequest,
+    GetMessageResourceResponse,
+    ListMessageRequest,
+    ListMessageResponse,
+    Message,
+)
 
 from fersk_codex.configs.loader import CONFIG
 
@@ -21,7 +34,7 @@ from fersk_codex.middleware.resource_validator import (
 )
 
 
-async def adding_reaction_emoji(message_id:str):
+async def adding_reaction_emoji(message_id: str) -> str | None:
 
     request: CreateMessageReactionRequest = CreateMessageReactionRequest.builder() \
             .message_id(message_id) \
@@ -32,42 +45,39 @@ async def adding_reaction_emoji(message_id:str):
                 .build()) \
             .build()
 
-    # 发起请求
     response: CreateMessageReactionResponse = await call_lark(client.im.v1.message_reaction.create, request)
 
-    # 处理失败返回
     if not response.success():
-        lark.logger.error(
-            f"client.im.v1.message_reaction.create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+        _log_lark_failure(response, "client.im.v1.message_reaction.create")
         return
 
-    # 处理业务结果
     lark.logger.info(lark.JSON.marshal(response.data, indent=4))
     return response.data.reaction_id
 
 
-async def delete_reaction_emoji(message_id:str, reaction_id:str) -> bool:
+async def delete_reaction_emoji(message_id: str, reaction_id: str) -> bool:
 
     request: DeleteMessageReactionRequest = DeleteMessageReactionRequest.builder() \
         .message_id(message_id) \
         .reaction_id(reaction_id) \
         .build()
 
-    # 发起请求
     response: DeleteMessageReactionResponse = await call_lark(client.im.v1.message_reaction.delete, request)
 
-    # 处理失败返回
     if not response.success():
-        lark.logger.error(
-            f"client.im.v1.message_reaction.delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+        _log_lark_failure(response, "client.im.v1.message_reaction.delete")
         return False
 
-    # 处理业务结果
     lark.logger.info(lark.JSON.marshal(response.data, indent=4))
     return True
 
 
-async def download_msg_resource(union_id:str, message_id:str, resource_key:str, resource_type:str):
+async def download_msg_resource(
+    union_id: str,
+    message_id: str,
+    resource_key: str,
+    resource_type: str,
+) -> str | None:
 
     logger.debug("获取消息资源: message_id=%s, type=%s", message_id, resource_type)
 
@@ -77,20 +87,23 @@ async def download_msg_resource(union_id:str, message_id:str, resource_key:str, 
         .type(resource_type) \
         .build()
 
-    # 发起请求
     response: GetMessageResourceResponse = await call_lark(client.im.v1.message_resource.get, request)
 
-    # 处理失败返回
     if not response.success():
-        lark.logger.error(
-            f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+        _log_lark_failure(response, "client.im.v1.message_resource.get")
         return
-    
+
     # 响应读取、校验和磁盘写入整体移出事件循环。
     return await asyncio.to_thread(_save_resource, response, union_id, message_id, resource_key, resource_type)
 
 
-def _save_resource(response, union_id, message_id, resource_key, resource_type):
+def _save_resource(
+    response: GetMessageResourceResponse,
+    union_id: str,
+    message_id: str,
+    resource_key: str,
+    resource_type: str,
+) -> str:
     saving_path = (
         Path(CONFIG["storage"]["workspaceRoot"])
         / union_id
@@ -126,7 +139,7 @@ def _save_resource(response, union_id, message_id, resource_key, resource_type):
     logger.debug("资源已保存: path=%s", file_path)
     return str(file_path)
 
-async def getting_chat_history(chat_id:str, messages_num:int):
+async def getting_chat_history(chat_id: str, messages_num: int) -> list[Message]:
 
     request: ListMessageRequest = ListMessageRequest.builder() \
             .container_id_type("chat") \
@@ -135,15 +148,22 @@ async def getting_chat_history(chat_id:str, messages_num:int):
             .page_size(messages_num) \
             .build()
 
-    # 发起请求
     response: ListMessageResponse = await call_lark(client.im.v1.message.list, request)
-    
-    # 处理失败返回
+
     if not response.success():
-        lark.logger.error(
-            f"client.im.v1.message.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+        _log_lark_failure(response, "client.im.v1.message.list")
         return []
 
-    # 处理业务结果
-    # lark.logger.info(lark.JSON.marshal(response.data, indent=4))
     return list(response.data.items or [])
+
+
+def _log_lark_failure(
+    response: CreateMessageReactionResponse | DeleteMessageReactionResponse | GetMessageResourceResponse | ListMessageResponse,
+    action: str,
+) -> None:
+    """复用同一失败日志格式，保留各调用方原有返回契约。"""
+    lark.logger.error(
+        f"{action} failed, code: {response.code}, msg: {response.msg}, "
+        f"log_id: {response.get_log_id()}, resp: \n"
+        f"{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
+    )

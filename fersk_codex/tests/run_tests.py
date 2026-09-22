@@ -4,6 +4,8 @@ Usage: python -B tests/run_tests.py [--pattern test_resource_validator.py] [--re
 Requires the project's Python >= 3.13 environment and pyproject.toml/uv.lock packages.
 """
 
+from __future__ import annotations
+
 import argparse
 import importlib.util
 import json
@@ -15,7 +17,7 @@ import unittest
 from unittest.mock import patch
 
 
-def reverse_suite(suite):
+def reverse_suite(suite: unittest.TestSuite) -> unittest.TestSuite:
     """Reverse both file/class order and method order to detect leaked state."""
     return unittest.TestSuite(
         reverse_suite(test) if isinstance(test, unittest.TestSuite) else test
@@ -23,7 +25,7 @@ def reverse_suite(suite):
     )
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pattern', default='test*.py')
     parser.add_argument('--reverse', action='store_true')

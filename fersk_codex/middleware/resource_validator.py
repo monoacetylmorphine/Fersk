@@ -1,36 +1,37 @@
-"""Validate downloaded Lark resources before they are written to disk."""
+"""在落盘前验证飞书下载资源。"""
 
 from __future__ import annotations
 
-import json
 import io
-import re
+import json
 import posixpath
-from urllib.parse import unquote
-import zipfile
+import re
 import xml.etree.ElementTree as ET
+import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Literal, Mapping
+from typing import BinaryIO, Literal
+from urllib.parse import unquote
 
 from fersk_codex.configs.loader import CONFIG
 
 
 ResourceType = Literal["image", "file"]
 
-GENERIC_MIME_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
-IMAGE_FORMATS = {"jpeg", "png", "gif", "webp", "bmp"}
+GENERIC_MIME_TYPES: set[str] = {"", "application/octet-stream", "binary/octet-stream"}
+IMAGE_FORMATS: set[str] = {"jpeg", "png", "gif", "webp", "bmp"}
 
-TEXT_EXTENSIONS = {
+TEXT_EXTENSIONS: set[str] = {
     ".txt", ".md", ".csv", ".jsonl", ".py", ".js", ".ts", ".html",
     ".xml", ".yml", ".yaml", ".toml", ".sh", ".rtf",
 }
-OFFICE_TYPES = {
+OFFICE_TYPES: dict[str, str] = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
 }
-OFFICE_MIMES = {
+OFFICE_MIMES: dict[str, str] = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
@@ -38,7 +39,7 @@ OFFICE_MIMES = {
 # 来源：本项目元数据校验的初始资源预算，不是 Office 格式或平台上限。
 MAX_OFFICE_METADATA_BYTES = 1024 * 1024
 
-FORMAT_EXTENSIONS = {
+FORMAT_EXTENSIONS: dict[str, str] = {
     "jpeg": ".jpg",
     "png": ".png",
     "gif": ".gif",
@@ -57,7 +58,7 @@ FORMAT_EXTENSIONS = {
     "mp3": ".mp3",
 }
 
-EXTENSION_FORMATS = {
+EXTENSION_FORMATS: dict[str, str] = {
     ".jpg": "jpeg",
     ".jpeg": "jpeg",
     ".png": "png",
@@ -83,7 +84,7 @@ EXTENSION_FORMATS = {
 }
 EXTENSION_FORMATS.update(dict.fromkeys(TEXT_EXTENSIONS, "text"))
 
-MIME_FORMATS = {
+MIME_FORMATS: dict[str, str] = {
     "image/jpeg": "jpeg",
     "image/jpg": "jpeg",
     "image/png": "png",
@@ -113,14 +114,14 @@ MIME_FORMATS.update(dict.fromkeys(("text/csv", "text/markdown", "text/html", "te
                                  "application/xml", "application/javascript",
                                  "application/x-ndjson", "application/jsonl"), "text"))
 
-STRICT_FORMATS = {
+STRICT_FORMATS: set[str] = {
     "jpeg", "png", "gif", "webp", "bmp", "pdf", "mp4", "m4a", "zip", "ole",
     "json", "text", "ogg", "opus", "wav", "mp3",
 }
 
 
 class ResourceValidationError(ValueError):
-    """Raised when downloaded bytes and their metadata are not trustworthy."""
+    """资源字节或元数据不可信时拒绝继续处理。"""
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,7 @@ class ValidatedResource:
 
 
 def read_resource_bytes(stream: BinaryIO) -> bytes:
-    """Read either an SDK BytesIO response or a regular binary stream."""
+    """读取 SDK BytesIO 响应或普通二进制流。"""
     getvalue = getattr(stream, "getvalue", None)
     data = getvalue() if callable(getvalue) else stream.read()
     if not isinstance(data, bytes):
@@ -149,7 +150,7 @@ def validate_downloaded_resource(
     file_name: str | None,
     headers: Mapping[str, object] | None = None,
 ) -> ValidatedResource:
-    """Validate response bytes and return a safe, format-correct file name."""
+    """校验响应字节并返回安全且与格式匹配的文件名。"""
     if resource_type not in {"image", "file"}:
         raise ResourceValidationError(f"非法资源类型: {resource_type}")
     if not isinstance(data, bytes) or not data:
@@ -321,11 +322,7 @@ def _validate_mime_consistency(
         )
 
 
-def _choose_extension(
-    detected_format: str,
-    mime_type: str,
-    original_extension: str,
-) -> str:
+def _choose_extension(detected_format: str, mime_type: str, original_extension: str) -> str:
     # Preserve the extension supplied by Lark whenever it agrees with the
     # validated content. Only repair the name when metadata and bytes disagree.
     if EXTENSION_FORMATS.get(original_extension) == detected_format:
@@ -357,7 +354,7 @@ def _validate_office(data: bytes, extension: str) -> None:
             if len(names) != len(set(names)):
                 raise ResourceValidationError("Office 容器存在重复部件")
 
-            def metadata(name):
+            def metadata(name: str) -> ET.Element:
                 info = archive.getinfo(name)
                 if info.file_size > MAX_OFFICE_METADATA_BYTES:
                     raise ResourceValidationError("Office 元数据超过校验大小限制")

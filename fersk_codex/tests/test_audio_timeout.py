@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import importlib.util
 from pathlib import Path
@@ -21,7 +23,7 @@ audio = load_audio()
 
 
 class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
-    async def test_cancel_reaps_real_child(self):
+    async def test_cancel_reaps_real_child(self) -> None:
         real_spawn = asyncio.create_subprocess_exec
         children = []
         spawned = asyncio.Event()
@@ -38,7 +40,7 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(task, 4)
         self.assertIsNotNone(children[0].returncode)
 
-    async def test_cancel_during_creation_reaps_late_child(self):
+    async def test_cancel_during_creation_reaps_late_child(self) -> None:
         real_spawn = asyncio.create_subprocess_exec
         creating, release = asyncio.Event(), asyncio.Event()
         children = []
@@ -57,7 +59,7 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(task, 4)
         self.assertIsNotNone(children[0].returncode)
 
-    async def test_uncooperative_child_is_killed(self):
+    async def test_uncooperative_child_is_killed(self) -> None:
         child = await asyncio.create_subprocess_exec(
             sys.executable, '-c',
             'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready",flush=True); time.sleep(60)',
@@ -72,7 +74,7 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 child.kill()
                 await child.communicate()
 
-    async def test_conversion_budget_is_shared_and_cleans_directory(self):
+    async def test_conversion_budget_is_shared_and_cleans_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'source.ogg'; source.write_bytes(b'audio')
             converted = Path(directory) / 'converted'; converted.mkdir()
@@ -96,13 +98,13 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(converted.exists())
                 self.assertFalse(source.exists())
 
-    async def test_success_and_nonzero_exit(self):
+    async def test_success_and_nonzero_exit(self) -> None:
         result = await audio.ASR._run([sys.executable, '-c', 'print("ok")'], 'test')
         self.assertEqual(result.stdout.strip(), 'ok')
         with self.assertRaises(audio.AudioProcessingError):
             await audio.ASR._run([sys.executable, '-c', 'raise SystemExit(2)'], 'test')
 
-    async def test_timeout_notice_is_not_model_input(self):
+    async def test_timeout_notice_is_not_model_input(self) -> None:
         from fersk_codex.middleware.message_collector import MessageBatch, CollectedMessage
         tools = ModuleType('fersk_codex.services.lark.lark_tools'); tools.download_msg_resource = AsyncMock(return_value='/tmp/voice.ogg')
         spec = importlib.util.spec_from_file_location('fersk_codex.middleware.assembly_audio_test', Path(__file__).resolve().parents[1] / 'middleware/message_assemble.py')

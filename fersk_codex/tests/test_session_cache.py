@@ -1,5 +1,7 @@
 """验证生命周期边界，不等待真实的 24 小时。"""
 
+from __future__ import annotations
+
 import asyncio
 from fersk_codex.configs.loader import CONFIG
 import time
@@ -11,7 +13,7 @@ import test_stop_command as helpers
 
 
 class SessionCacheTests(unittest.IsolatedAsyncioTestCase):
-    def test_idle_cleanup_preserves_new_waiter_and_deduplication(self):
+    def test_idle_cleanup_preserves_new_waiter_and_deduplication(self) -> None:
         cache = SessionCache()
         lock = cache.codex_locks['chat'] = asyncio.Lock()
         cache.chat_generations['chat'] = 7
@@ -24,7 +26,7 @@ class SessionCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(cache.chat_generations)
         self.assertIn('old', cache.received_message_ids['chat'])
 
-    def test_old_owner_cannot_release_steered_message_or_new_run(self):
+    def test_old_owner_cannot_release_steered_message_or_new_run(self) -> None:
         cache = SessionCache()
         old = ActiveCodexRun('old', 'chat', frozenset({'m'}))
         new = ActiveCodexRun('new', 'chat', frozenset({'m'}))
@@ -38,7 +40,7 @@ class SessionCacheTests(unittest.IsolatedAsyncioTestCase):
         cache.expire_run(new)
         self.assertFalse(cache.received_at)
 
-    def test_duplicate_does_not_extend_retention(self):
+    def test_duplicate_does_not_extend_retention(self) -> None:
         cache = SessionCache()
         with patch('fersk_codex.session.session_gateway.time.monotonic', return_value=100):
             cache.remember(cache.received_message_ids, 'chat', 'm')
@@ -56,7 +58,7 @@ class SessionCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(cache.recalled_message_ids)
         self.assertFalse(cache.reaction_message_ids)
 
-    async def test_expired_buffer_is_cancelled_without_new_events(self):
+    async def test_expired_buffer_is_cancelled_without_new_events(self) -> None:
         cache = SessionCache()
         cache.buffered_events['chat-1'] = helpers.event('image')
         task = cache.buffer_tasks['chat-1'] = asyncio.create_task(asyncio.sleep(100))
@@ -69,10 +71,10 @@ class SessionCacheTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GatewayCacheTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         helpers.StopTests.setUp(self)
 
-    async def test_finished_request_releases_runtime_but_rejects_duplicate(self):
+    async def test_finished_request_releases_runtime_but_rejects_duplicate(self) -> None:
         await self.router.processing(helpers.event('hello', message_id='next'))
         count = self.execution.assemble_input.await_count
         self.assertEqual(count, 1)
@@ -82,14 +84,14 @@ class GatewayCacheTests(unittest.IsolatedAsyncioTestCase):
         await self.router.processing(helpers.event('hello', message_id='next'))
         self.assertEqual(self.execution.assemble_input.await_count, count)
 
-    async def test_history_failure_and_card_failure_release_request(self):
+    async def test_history_failure_and_card_failure_release_request(self) -> None:
         self.router.fetch_history.side_effect = OSError('offline')
         self.runtime.send_card.side_effect = OSError('offline')
         await self.router.processing(helpers.event('hello'))
         for name in ('all_runs', 'codex_locks', 'received_at', 'pending_chat_requests'):
             self.assertFalse(getattr(self.runtime.cache, name), name)
 
-    async def test_unconfirmed_stop_expires_even_when_close_fails(self):
+    async def test_unconfirmed_stop_expires_even_when_close_fails(self) -> None:
         state = helpers.StopTests.state(self)
         state.created_at = time.monotonic() - RETENTION_SECONDS
         self.runtime.cache.blocked_chats[state.chat_id] = state
@@ -100,17 +102,17 @@ class GatewayCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.cache.blocked_chats)
         self.assertFalse(self.runtime.cache.active_runs_by_message_id)
 
-    async def test_history_page_size_uses_shared_setting(self):
+    async def test_history_page_size_uses_shared_setting(self) -> None:
         with patch.dict(CONFIG['messaging'], historyPageSize=3):
             await self.router.processing(helpers.event('hello'))
         self.router.fetch_history.assert_awaited_once_with(chat_id='chat-1', messages_num=3)
 
 
 class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         helpers.StopTests.setUp(self)
 
-    async def test_all_reactions_wait_for_card_completion_even_on_failure(self):
+    async def test_all_reactions_wait_for_card_completion_even_on_failure(self) -> None:
         for failure in (False, True):
             with self.subTest(failure=failure):
                 self.runtime.cache.received_message_ids.clear()
@@ -139,7 +141,7 @@ class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(self.runtime.cache.reaction_message_ids)
                 self.assertFalse(self.runtime.cache.pending_reactions)
 
-    async def test_failed_delete_survives_release_and_background_retries_without_input(self):
+    async def test_failed_delete_survives_release_and_background_retries_without_input(self) -> None:
         self.runtime.delete_reaction.return_value = False
         await self.router.processing(helpers.event('hello', message_id='m1'))
         self.assertFalse(self.runtime.cache.all_runs)
@@ -156,7 +158,7 @@ class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.cache.pending_reactions)
         self.assertFalse(self.runtime.cache.reaction_message_ids)
 
-    async def test_cancel_during_delete_keeps_all_snapshot_records(self):
+    async def test_cancel_during_delete_keeps_all_snapshot_records(self) -> None:
         entered = asyncio.Event()
         async def stuck(**kwargs):
             entered.set()
@@ -171,14 +173,14 @@ class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.runtime.cache.pending_reactions), 2)
         self.assertFalse(self.runtime.cache.reactions_being_cleared)
 
-    async def test_retry_old_id_cannot_remove_new_reaction(self):
+    async def test_retry_old_id_cannot_remove_new_reaction(self) -> None:
         self.runtime.cache.queue_reaction('chat-1', 'm1', 'old')
         self.runtime.cache.reaction_message_ids['chat-1'] = {'m1': 'new'}
         await self.runtime._retry_reactions()
         self.assertEqual(self.runtime.cache.reaction_message_ids['chat-1']['m1'], 'new')
         self.assertFalse(self.runtime.cache.pending_reactions)
 
-    async def test_running_owner_is_not_cleared_by_stop_snapshot(self):
+    async def test_running_owner_is_not_cleared_by_stop_snapshot(self) -> None:
         worker = asyncio.create_task(asyncio.Event().wait())
         state = ActiveCodexRun('run', 'chat-1', frozenset({'m1'}), task=worker)
         self.runtime.cache.active_runs_by_message_id['m1'] = state
@@ -191,7 +193,7 @@ class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
 
-    def test_pending_deletion_expiry_and_capacity_are_bounded(self):
+    def test_pending_deletion_expiry_and_capacity_are_bounded(self) -> None:
         from fersk_codex.configs.loader import CONFIG
         cache = self.runtime.cache
         with patch.dict(CONFIG['messaging'], recallCacheMaxEntries=1):
@@ -206,7 +208,7 @@ class ReactionLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(cache.pending_reactions)
             self.assertFalse(cache.reaction_message_ids)
 
-    async def test_stop_and_recall_wait_for_output_card_cleanup(self):
+    async def test_stop_and_recall_wait_for_output_card_cleanup(self) -> None:
         from types import SimpleNamespace as NS
         for action in ('stop', 'recall'):
             with self.subTest(action=action):

@@ -1,10 +1,13 @@
 """SDK 生命周期、运行状态以及停止和 steer 控制。"""
 
+from __future__ import annotations
+
 import asyncio
 import time
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from openai_codex import AsyncCodex, InvalidRequestError, LocalImageInput
@@ -15,13 +18,25 @@ from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.logger import get_logger
 from .thread_watchdog import settings
 
+if TYPE_CHECKING:
+    import subprocess
+
+    from openai_codex import AsyncThread, AsyncTurnHandle, InputItem
+
+    from .codex_execution import RunEvent
+
 logger = get_logger("Codex")
+
+
+def _sdk_process(manager: AsyncCodex | None) -> subprocess.Popen[bytes] | None:
+    """集中访问 SDK 私有进程路径"""
+    return getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
 
 
 @dataclass
 class LiveTurn:
-    thread: object
-    handle: object
+    thread: AsyncThread
+    handle: AsyncTurnHandle
     model: str
     provider: str
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -31,19 +46,19 @@ class LiveTurn:
 
 class CodexRuntime:
     """集中保存所有运行索引，供 FerskCodex 的执行和会话方法共享。"""
-    _active_turns = {}
+    _active_turns: dict[str, AsyncTurnHandle] = {}
     _live_turns: dict[str, LiveTurn] = {}
     _pending_interrupts: set[str] = set()
     _turns_guard = asyncio.Lock()
-    _clients: dict[str, object] = {}
-    _processes: dict[str, object] = {}
+    _clients: dict[str, AsyncCodex] = {}
+    _processes: dict[str, subprocess.Popen[bytes]] = {}
     _closed_runs: set[str] = set()
-    _initializers: dict[str, asyncio.Task] = {}
+    _initializers: dict[str, asyncio.Task[AsyncCodex]] = {}
     # 仅保存控制会话的失败清理，不重放归档/恢复等业务操作。
     _control_cleanup: dict[str, tuple[float, float]] = {}
 
     @classmethod
-    async def completed_status(cls, run_id):
+    async def completed_status(cls, run_id: str) -> str | None:
         """Resolve a completion buffered behind a slow card before timing out."""
         live = cls._live_turns.get(run_id)
         if live is None:
@@ -56,12 +71,12 @@ class CodexRuntime:
                     if turn.id == live.handle.id and status in {"completed", "failed", "interrupted"}:
                         return status
         except Exception:
-            logger.debug("无法读取最终状态: run_id=%s", run_id, exc_info=True)
+            logger.debug("Unable to read the final status: run_id=%s", run_id, exc_info=True)
         return None
 
     @classmethod
     @asynccontextmanager
-    async def _session(cls, run_id):
+    async def _session(cls, run_id: str | None) -> AsyncGenerator[AsyncCodex]:
         control = run_id is None
         run_id = run_id or f"control-{uuid4().hex}"
         manager = AsyncCodex()
@@ -70,43 +85,17 @@ class CodexRuntime:
         cls._clients[run_id] = manager
         cls._initializers[run_id] = initializing
 
-        async def close():
-            # close() 可能清空 SDK 中的进程引用，必须先保存。
-            proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
-            if proc is not None:
-                cls._processes[run_id] = proc
-            try:
-                async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
-                    await manager.__aexit__(None, None, None)
-                    if not initializing.done():
-                        raise RuntimeError("SDK 初始化尚未结束，关闭未确认")
-                    late_proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
-                    if proc is None and late_proc is not None:
-                        proc = late_proc
-                        cls._processes[run_id] = proc
-                    if proc is not None:
-                        await asyncio.to_thread(proc.wait, timeout=1)
-                        if proc.poll() is None:
-                            raise RuntimeError("SDK 进程退出未确认")
-            except (Exception, asyncio.CancelledError):
-                logger.exception("关闭 Codex 客户端异常: run_id=%s", run_id)
-                if not await cls.force_close(run_id):
-                    raise RuntimeError("Codex 客户端关闭后仍未确认进程退出")
-            cls._clients.pop(run_id, None)
-            cls._processes.pop(run_id, None)
-            cls._initializers.pop(run_id, None)
-
         try:
             # Cancellation must not lose a subprocess that start() creates late in a worker thread.
             client = await asyncio.shield(initializing)
-            proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
+            proc = _sdk_process(manager)
             if proc is not None:
                 cls._processes[run_id] = proc
             yield client
         finally:
             # 外层重复取消不能打断进程回收；取消完成后仍必须向调用方传播。
             cancelled = bool(asyncio.current_task().cancelling())
-            closing = asyncio.create_task(close())
+            closing = asyncio.create_task(cls._close_session(run_id, manager, initializing))
             try:
                 while not closing.done():
                     try:
@@ -127,8 +116,40 @@ class CodexRuntime:
                     raise asyncio.CancelledError
 
     @classmethod
-    async def cleanup_control_sessions(cls):
-        """后台每轮清理一个控制会话，失败保留，24 小时后按现有策略释放。"""
+    async def _close_session(
+        cls,
+        run_id: str,
+        manager: AsyncCodex,
+        initializing: asyncio.Task[AsyncCodex],
+    ) -> None:
+        # close() 可能清空 SDK 中的进程引用，必须先保存。
+        proc = _sdk_process(manager)
+        if proc is not None:
+            cls._processes[run_id] = proc
+        try:
+            async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
+                await manager.__aexit__(None, None, None)
+                if not initializing.done():
+                    raise RuntimeError("SDK initialization still processing, closing unverified")
+                late_proc = _sdk_process(manager)
+                if proc is None and late_proc is not None:
+                    proc = late_proc
+                    cls._processes[run_id] = proc
+                if proc is not None:
+                    await asyncio.to_thread(proc.wait, timeout=1)
+                    if proc.poll() is None:
+                        raise RuntimeError("SDK processes are exited, but unverified")
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Closing Codex client Error: run_id=%s", run_id)
+            if not await cls.force_close(run_id):
+                raise RuntimeError("Processes exit still unverified after Codex client was closed")
+        cls._clients.pop(run_id, None)
+        cls._processes.pop(run_id, None)
+        cls._initializers.pop(run_id, None)
+
+    @classmethod
+    async def cleanup_control_sessions(cls) -> None:
+        """后台每轮清理一个控制会话, 失败保留, 24 小时后按现有策略释放。"""
         from fersk_codex.session.session_gateway import RETENTION_SECONDS
         now = time.monotonic()
         for run_id, (created, due) in list(cls._control_cleanup.items()):
@@ -165,7 +186,7 @@ class CodexRuntime:
         if client is None and proc is None:
             return run_id not in cls._active_turns and (initializing is None or initializing.done())
         if proc is None:
-            proc = getattr(getattr(getattr(client, "_client", None), "_sync", None), "_proc", None)
+            proc = _sdk_process(client)
             if proc is not None:
                 cls._processes[run_id] = proc
         try:
@@ -242,8 +263,13 @@ class CodexRuntime:
         return await cls.force_close(run_id)
 
     @classmethod
-    async def steer(cls, run_id: str, prompt: str | list,
-                    *, cancelled: Callable[[], bool] = lambda: False) -> dict:
+    async def steer(
+        cls,
+        run_id: str,
+        prompt: str | list[InputItem],
+        *,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> RunEvent:
         """Check the owning server's live status; never replay uncertain input."""
         from .codex_execution import _error_event
 
@@ -325,11 +351,11 @@ class CodexRuntime:
         manager = cls._clients.get(run_id)
         initializing = cls._initializers.get(run_id)
         if initializing is not None and not initializing.done():
-            def stop_late_process(task):
+            def stop_late_process(task: asyncio.Task[AsyncCodex]) -> None:
                 # 初始化在线程内延迟返回时仍尝试终止进程，不重新写入运行索引。
                 if not task.cancelled():
                     task.exception()
-                proc = getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
+                proc = _sdk_process(manager)
                 if proc is not None and proc.poll() is None:
                     try:
                         proc.kill()

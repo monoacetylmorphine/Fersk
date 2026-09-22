@@ -1,5 +1,7 @@
 """读取同一份运行配置，并使用共享 Schema 完整校验。"""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import Any
@@ -12,12 +14,12 @@ else:
     from fersk_codex.configs.validation import load_config
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_ROOT = Path.home() / ".fersk"
-ENV_FILE = DATA_ROOT / ".env"
+PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
+DATA_ROOT: Path = Path.home() / ".fersk"
+ENV_FILE: Path = DATA_ROOT / ".env"
 load_dotenv(ENV_FILE, override=False)
-CONFIG_FILE = Path(os.environ.get("FERSK_CONFIG_FILE", str(DATA_ROOT / "config.json"))).expanduser()
-SCHEMA_FILE = PROJECT_ROOT / "configs" / "config_schema.json"
+CONFIG_FILE: Path = Path(os.environ.get("FERSK_CONFIG_FILE", str(DATA_ROOT / "config.json"))).expanduser()
+SCHEMA_FILE: Path = PROJECT_ROOT / "configs" / "config_schema.json"
 
 
 def _load_config(file_path: str | Path) -> dict[str, Any]:
@@ -32,4 +34,4 @@ def _load_config(file_path: str | Path) -> dict[str, Any]:
             config["storage"][key] = str(path)
     return config
 
-CONFIG = _load_config(CONFIG_FILE)
+CONFIG: dict[str, Any] = _load_config(CONFIG_FILE)

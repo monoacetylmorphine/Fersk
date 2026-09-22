@@ -1,5 +1,7 @@
 """Real SDK request models and resource validation against an offline client."""
 
+from __future__ import annotations
+
 import importlib.util
 import asyncio
 import io
@@ -16,7 +18,7 @@ from fersk_codex.middleware.resource_validator import ResourceValidationError
 
 
 class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.enterContext(patch.dict(CONFIG['storage'], workspaceRoot=str(self.directory)))
         self.client = NS(im=NS(v1=NS(message_resource=NS(get=Mock()),
@@ -34,7 +36,7 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
         return NS(success=lambda: success, code=999, msg='denied', get_log_id=lambda: 'log',
                   raw=NS(content=b'{}', headers={}), data=None, **fields)
 
-    async def test_download_validates_renames_and_writes_original_bytes(self):
+    async def test_download_validates_renames_and_writes_original_bytes(self) -> None:
         payload = b'\x89PNG\r\n\x1a\nimage'
         response = self.response(file=io.BytesIO(payload), file_name='../../照片.exe')
         response.raw.headers = {'Content-Type': 'image/png', 'Content-Length': len(payload)}
@@ -49,13 +51,13 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((request.message_id, request.file_key), ('message', 'image-key'))
         self.assertIn(('type', 'image'), request.queries)
 
-    async def test_invalid_resource_is_never_written(self):
+    async def test_invalid_resource_is_never_written(self) -> None:
         self.client.im.v1.message_resource.get.return_value = self.response(file=io.BytesIO(b'not png'), file_name='fake.png')
         with self.assertRaises(ResourceValidationError):
             await self.tools.download_msg_resource('user', 'message', 'key', 'image')
         self.assertEqual([p for p in self.directory.rglob('*') if p.is_file()], [])
 
-    async def test_slow_large_write_does_not_block_event_loop(self):
+    async def test_slow_large_write_does_not_block_event_loop(self) -> None:
         entered, release = threading.Event(), threading.Event()
         def slow_write(*args):
             entered.set()
@@ -74,18 +76,18 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
                 result = await task
         self.assertEqual(result, 'written')
 
-    async def test_failed_resource_api_does_not_create_destination(self):
+    async def test_failed_resource_api_does_not_create_destination(self) -> None:
         self.client.im.v1.message_resource.get.return_value = self.response(False)
         self.assertIsNone(await self.tools.download_msg_resource('user', 'message', 'key', 'file'))
         self.assertEqual(list(self.directory.iterdir()), [])
 
-    async def test_resource_transport_exception_is_not_reported_as_success(self):
+    async def test_resource_transport_exception_is_not_reported_as_success(self) -> None:
         self.client.im.v1.message_resource.get.side_effect = OSError('offline')
         with self.assertRaisesRegex(OSError, 'offline'):
             await self.tools.download_msg_resource('user', 'message', 'key', 'file')
         self.assertEqual(list(self.directory.iterdir()), [])
 
-    async def test_history_requests_descending_order_and_page_size(self):
+    async def test_history_requests_descending_order_and_page_size(self) -> None:
         response = self.response()
         response.data = NS(items=[NS(message_id='new'), NS(message_id='old')])
         self.client.im.v1.message.list.return_value = response
@@ -98,7 +100,7 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(query['sort_type'], 'ByCreateTimeDesc')
         self.assertEqual(query['page_size'], '15')
 
-    async def test_empty_and_failed_history_return_empty_list(self):
+    async def test_empty_and_failed_history_return_empty_list(self) -> None:
         for success, items in ((True, None), (True, []), (False, None)):
             with self.subTest(success=success, items=items):
                 response = self.response(success)
@@ -106,7 +108,7 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
                 self.client.im.v1.message.list.return_value = response
                 self.assertEqual(await self.tools.getting_chat_history('chat', 10), [])
 
-    async def test_add_reaction_returns_id_only_on_success(self):
+    async def test_add_reaction_returns_id_only_on_success(self) -> None:
         for success in (True, False):
             with self.subTest(success=success):
                 response = self.response(success)
