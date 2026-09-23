@@ -1,1 +1,1 @@
-/Users/fersk/Documents/fersk/fersk_codex/configs/loader.py
+../../fersk_codex/configs/loader.py

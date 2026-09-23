@@ -1,1 +1,1 @@
-/Users/fersk/Documents/fersk/fersk_codex/configs/validation.py
+../../fersk_codex/configs/validation.py

@@ -1,1 +1,1 @@
-/Users/fersk/Documents/fersk/fersk_codex/services/lark/lark_requests.py
+../../../fersk_codex/services/lark/lark_requests.py

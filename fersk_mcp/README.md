@@ -64,6 +64,8 @@ docker run --rm \
 
 `configs/loader.py` 通过符号链接共用 `fersk_codex/configs/loader.py`，MCP 保留存储路径原值，Codex 将其解析为绝对路径；模块分别加载，配置对象相互独立。
 
+共享文件必须使用相对符号链接：`configs/` 下指向 `../../fersk_codex/configs/`，`services/lark/` 下指向 `../../../fersk_codex/services/lark/`。不要使用本机绝对路径，否则 Docker 内无法解析链接，`uv sync` 构建 wheel 时会报文件不存在。修改 Codex 中的共享源码后，MCP 源码目录立即同步读取同一文件，无需手动复制；Dockerfile 保留两者在 `/opt/` 下的相邻目录结构，使这些链接在构建时仍然有效。已安装的 wheel 和已构建的镜像包含构建时的文件内容，源码更新后需重新安装或重新构建镜像并重建容器；Compose 部署可运行 `docker compose up -d --build fersk-mcp`。
+
 `services/lark/lark_requests.py` 通过符号链接共用 `fersk_codex/services/lark/lark_requests.py`，两个服务仍各自加载配置并创建独立线程池。Docker 构建会一并复制共享源码。`services/lark/lark_client.py` 保持独立，以保留 MCP 调用工具时才校验飞书凭据的行为；Codex 则在启动时校验凭据并提供 WebSocket 客户端。
 
 文件发送的接收方目录必须同时满足正则 `(?:on_|oc_)[A-Za-z0-9]+` 与总长度 35，并且只识别到一个接收方。长度取自用户提供的参考 ID（3 字符前缀加 32 字符主体）；不新增调用授权或工作区归属检查。

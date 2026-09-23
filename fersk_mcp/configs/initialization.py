@@ -1,1 +1,1 @@
-/Users/fersk/Documents/fersk/fersk_codex/configs/initialization.py
+../../fersk_codex/configs/initialization.py
