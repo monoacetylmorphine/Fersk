@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from openai_codex import AsyncThread, InvalidRequestError, LocalImageInput
 from openai_codex.types import TurnStatus, TurnCompletedNotification
-from openai_codex.generated.v2_all import AgentMessageThreadItem, ThreadStatus
+from openai_codex.generated.v2_all import AgentMessageThreadItem, ThreadItem, ThreadStatus
 
 from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
 from fersk_codex.session import session_codex, session_history
@@ -151,7 +151,7 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("actual", FerskCodex._live_turns)
             saving.assert_not_awaited()
 
-    async def test_stream_preserves_message_phase_and_forwards_tool_content(self) -> None:
+    async def test_stream_preserves_message_phase_and_hides_tool_content(self) -> None:
         async def stream():
             for item_id, phase in [("progress", "commentary"), ("final", "final_answer")]:
                 item = AgentMessageThreadItem(id=item_id, phase=phase, text="", type="agentMessage")
@@ -173,15 +173,84 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in FerskCodex.running("user", "hello", "phases")]
         self.assertEqual(events, [
             {"type": "answer", "content": "text", "item_id": "progress", "phase": "commentary"},
-            {"type": "progress", "content": "tool output", "item_id": "tool"},
             {"type": "reasoning", "content": "reasoning", "item_id": "r"},
             {"type": "answer", "content": "text", "item_id": "final", "phase": "final_answer"},
-            {"type": "progress", "content": "tool output", "item_id": "tool"},
             {"type": "done"},
         ])
 
+    async def test_tool_statuses_hide_details_and_keep_probe_activity(self) -> None:
+        from datetime import datetime, timezone
+
+        # Fixture fields follow the current SDK; body markers verify that no details bypass filtering.
+        command = dict(type="commandExecution", command="PRIVATE command", cwd="/private",
+                       commandActions=[], aggregatedOutput="PRIVATE output")
+        mcp = dict(type="mcpToolCall", server="files", tool="read", arguments={"path": "PRIVATE"},
+                   result={"content": [{"text": "PRIVATE result"}]})
+        dynamic = dict(type="dynamicToolCall", namespace="custom", tool="lookup",
+                       arguments={"query": "PRIVATE"})
+        cases = [
+            (dict(command, status="completed", exitCode=0), "commandExecution", "succeeded"),
+            (dict(command, status="failed", exitCode=1), "commandExecution", "failed"),
+            (dict(command, status="completed", exitCode=2), "commandExecution", "failed"),
+            (dict(command, status="declined"), "commandExecution", "failed"),
+            (dict(command, status="failed", exitCode=0), "commandExecution", "failed"),
+            (dict(mcp, status="completed"), "files.read", "succeeded"),
+            (dict(mcp, status="failed", error={"message": "PRIVATE error"}), "files.read", "failed"),
+            (dict(mcp, status="completed", error={"message": "PRIVATE error"}), "files.read", "failed"),
+            (dict(dynamic, status="completed", success=False), "custom.lookup", "failed"),
+            (dict(dynamic, status="completed", success=True), "custom.lookup", "succeeded"),
+            (dict(dynamic, namespace=None, status="completed"), "lookup", "succeeded"),
+            (dict(type="fileChange", changes=[], status="declined"), "fileChange", "failed"),
+            (dict(type="fileChange", changes=[], status="completed"), "fileChange", "succeeded"),
+            (dict(type="collabAgentToolCall", tool="spawnAgent", senderThreadId="main",
+                  receiverThreadIds=[], agentsStates={}, status="interrupted", prompt="PRIVATE"),
+             "spawnAgent", "failed"),
+            (dict(type="webSearch", query="PRIVATE", results=["PRIVATE"]),
+             "webSearch", "finished (status unknown)"),
+            (dict(type="imageView", path="/PRIVATE"), "imageView", "finished (status unknown)"),
+        ]
+        expected = []
+        received = []
+
+        async def stream():
+            for index, (data, name, suffix) in enumerate(cases):
+                item_id = f"tool-{index}"
+                item = ThreadItem.model_validate(dict(data, id=item_id))
+                for method, text in (("item/started", ""), ("item/completed", ": " + suffix)):
+                    expected.append({"type": "progress", "item_id": item_id,
+                                     "content": f"Agent executing {name} tool{text}\n"})
+                    yield NS(method=method, payload=NS(item=item))
+            # Unknown and non-tool items are not treated as tools; unknown notifications do not emit JSON.
+            for kind in ("unknownTool", "plan", "contextCompaction", "subAgentActivity"):
+                yield NS(method="item/completed", payload=NS(item=NS(root=NS(
+                    id="hidden", type=kind, content="PRIVATE"))))
+            for method in ("item/commandExecution/outputDelta", "item/fileChange/outputDelta",
+                           "item/mcpToolCall/progress", "hook/started", "hook/completed",
+                           "turn/plan/updated", "turn/diff/updated", "unknown/event"):
+                yield NS(method=method, payload=NS(item_id="hidden", delta="PRIVATE", message="PRIVATE"))
+            # Do not fabricate success for a tool without a completion event.
+            yield NS(method="item/started", payload=NS(item=NS(root=NS(
+                id="pending", type="commandExecution"))))
+            expected.append({"type": "progress", "item_id": "pending",
+                             "content": "Agent executing commandExecution tool\n"})
+            yield NS(method="turn/completed", payload=NS(turn=NS(
+                duration_ms=10, status=TurnStatus.completed)))
+
+        async def tracked_stream():
+            async for event in stream():
+                received.append(event)
+                yield event
+
+        self.handle.stream = tracked_stream
+        probe = Mock()
+        events = [event async for event in FerskCodex._stream_turn(
+            self.live, "user", None, False, datetime.now(timezone.utc), probe)]
+        self.assertEqual(events, expected + [{"type": "done"}])
+        self.assertNotIn("PRIVATE", str(events))
+        self.assertEqual([call.args[0] for call in probe.activity.call_args_list], received)
+
     async def test_reasoning_delta_variants_reach_gateway_before_answer(self) -> None:
-        # 事件格式来自根目录两份流式样本；短文本仅用于验证传递与替换。
+        # Event formats come from the two root-level stream samples; short text verifies forwarding and replacement only.
         source = ast.parse((Path(__file__).resolve().parents[1] / "middleware/gateway_execution.py").read_text())
         reply = next(n for n in ast.walk(source)
                      if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reply_content")
@@ -202,11 +271,11 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                 async def stream():
                     item = NS(type="reasoning", id="r", content=[], summary=[])
                     yield NS(method="item/started", payload=NS(item=NS(root=item)))
-                    for text in ("推理一", "推理二"):
+                    for text in ("Reasoning 1", "Reasoning 2"):
                         yield NS(method=method, payload=NS(item_id="r", delta=text,
                                                           summary_index=0, content_index=0))
-                    item.summary = ["推理一推理二"] if phase is None else []
-                    item.content = [] if phase is None else ["推理一推理二"]
+                    item.summary = ["Reasoning 1Reasoning 2"] if phase is None else []
+                    item.content = [] if phase is None else ["Reasoning 1Reasoning 2"]
                     yield NS(method="item/completed", payload=NS(item=NS(root=item)))
                     tool = NS(type="commandExecution", id="tool", command="test command", status="inProgress")
                     yield NS(method="item/started", payload=NS(item=NS(root=tool)))
@@ -218,7 +287,7 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                         type="commandExecution", id="fallback", aggregated_output="completion only"))))
                     answer = AgentMessageThreadItem(id="a", phase=phase, text="", type="agentMessage")
                     yield NS(method="item/started", payload=NS(item=NS(root=answer)))
-                    yield NS(method="item/agentMessage/delta", payload=NS(item_id="a", delta="答案"))
+                    yield NS(method="item/agentMessage/delta", payload=NS(item_id="a", delta="Answer"))
                     yield NS(method="item/completed", payload=NS(item=NS(root=answer)))
                     yield NS(method="hook/completed", payload=NS(status="completed"))
                     yield NS(method="turn/completed", payload=NS(turn=NS(
@@ -234,15 +303,16 @@ class BackendSteerTests(unittest.IsolatedAsyncioTestCase):
                     events = FerskCodex.running("user", "hello", "reasoning-variants")
                     rendered = [chunk async for chunk in namespace["_reply_content"](adapter,
                         None, None, NS(), events=events)]
-                self.assertEqual(rendered[:2], ["推理一", "推理二"])
+                self.assertEqual(rendered[:2], ["Reasoning 1", "Reasoning 2"])
                 progress = "".join(rendered[:-1])
-                self.assertIn("test command", progress)
-                self.assertEqual(progress.count("unique output"), 1)
-                self.assertIn(" plus tail", progress)
-                self.assertIn("completion only", progress)
+                self.assertIn("Agent executing commandExecution tool\n", progress)
+                self.assertIn("Agent executing commandExecution tool: succeeded\n", progress)
+                self.assertIn("Agent executing commandExecution tool: finished (status unknown)\n", progress)
+                for detail in ("test command", "unique output", " plus tail", "completion only"):
+                    self.assertNotIn(detail, progress)
                 self.assertNotIn("hook/completed", progress)
                 self.assertIsInstance(rendered[-1], CardReplace)
-                self.assertEqual(rendered[-1].content, "答案")
+                self.assertEqual(rendered[-1].content, "Answer")
 
 
 class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
@@ -569,7 +639,7 @@ class GatewaySteerTests(unittest.IsolatedAsyncioTestCase):
             entered.set()
             return NS(turn=NS(id="turn-1")), subscription
         low = NS(
-            # 已安装 SDK 0.154.0 为每个 handle 返回独立订阅。
+            # Installed SDK 0.154.0 returns a separate subscription for each handle.
             _start_turn=AsyncMock(side_effect=start_turn),
             thread_read=AsyncMock(return_value=status("active")),
             turn_steer=AsyncMock(return_value=NS(turn_id="turn-1")),

@@ -129,8 +129,8 @@ class AudioTranscriptionTests(unittest.IsolatedAsyncioTestCase):
 
     def test_response_extraction_ignores_nonmessage_and_nontext_items(self) -> None:
         response = NS(output=[NS(type='reasoning'), NS(type='message', content=[
-            NS(type='other'), NS(type='output_text', text='  你好\n')])])
-        self.assertEqual(audio.ASR._extract_text(response), '你好')
+            NS(type='other'), NS(type='output_text', text='  Hello, café\n')])])
+        self.assertEqual(audio.ASR._extract_text(response), 'Hello, café')
         for response in (NS(), NS(output=[]), NS(output=[NS(type='message', content=[])])):
             with self.subTest(response=response), self.assertRaises(audio.AudioProcessingError):
                 audio.ASR._extract_text(response)

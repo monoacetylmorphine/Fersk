@@ -1,4 +1,4 @@
-"""飞书消息入口、固定窗口缓冲与历史收集，通过回调提交任务。"""
+"""Lark message entry, fixed-window buffering, and history collection with callback-based task submission."""
 
 from __future__ import annotations
 
@@ -24,19 +24,23 @@ if TYPE_CHECKING:
 logger = get_logger("Message")
 
 def _bot_identity(*, required: bool = False) -> tuple[str, str]:
-    """Resolve optional identity settings; reject an unusable startup config."""
+    """读取并去除机器人 Union ID 与名称环境变量的首尾空白。
+
+    required 为真且两者均为空时抛出 RuntimeError，否则返回两项字符串，缺失项为空字符串。
+    """
     credentials = CONFIG["lark"]["credentials"]
     def value(key: str) -> str:
+        """按配置键查找环境变量名称并读取去空白后的值；缺少配置或变量时返回空字符串。"""
         env_name = credentials.get(key)
         return (os.getenv(env_name, "").strip() if env_name else "")
     robot_union_id = value("robotUnionIdEnv")
     robot_name = value("robotNameEnv")
     if required and not (robot_union_id or robot_name):
-        raise RuntimeError("群聊机器人标识未配置：robotUnionIdEnv 或 robotNameEnv 对应的环境变量至少一个非空")
+        raise RuntimeError("Group-chat bot identity is not configured: at least one environment variable referenced by robotUnionIdEnv or robotNameEnv must be non-empty")
     return robot_union_id, robot_name
 
 def _is_bot_mentioned(mentions: Iterable[MentionEvent] | None) -> bool:
-    """Match a nonempty Union ID or name; Union ID survives bot renaming."""
+    """检查任一 mention 是否匹配已配置的非空机器人 Union ID 或名称；未配置的标识不参与匹配。"""
     robot_union_id, robot_name = _bot_identity()
     for mention in mentions or []:
         mention_id = getattr(mention, "id", None)
@@ -63,6 +67,7 @@ class MessageRouter:
         buffer_seconds: Callable[[], float],
         history: Callable[[P2ImMessageReceiveV1], Awaitable[None]] | None = None,
     ) -> None:
+        """注入共享缓存、消息及命令处理回调和缓冲时长提供函数，不启动网络或后台任务。"""
         self.cache = cache
         self.submit = submit
         self.stop = stop
@@ -76,11 +81,16 @@ class MessageRouter:
         self.history = history
 
     async def processing(self, data: P2ImMessageReceiveV1) -> None:
-        """登记整个入站请求，避免旧任务回收新请求正在使用的会话锁。"""
+        """在保留期限内处理入站事件；内部登记缓存使用者，防止处理期间聊天锁被回收。"""
         async with asyncio.timeout(RETENTION_SECONDS):
             await self._processing(data)
 
     async def _processing(self, data: P2ImMessageReceiveV1) -> None:
+        """过滤聊天范围及群聊 mention，去重消息并优先分发历史、停止和新会话命令。
+
+        普通输入等待重置门禁后添加 reaction 并按配置路由；代次失效时放弃旧输入，
+        finally 释放不再处于缓冲中的消息瞬态状态。
+        """
         with self.cache.hold(data.event.message.chat_id):
             self.cache.prune()
             try:
@@ -118,7 +128,7 @@ class MessageRouter:
                         async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
                             reaction_id = await self.add_reaction(message_id=message.message_id)
                     except Exception:
-                        logger.exception("添加 reaction 失败，继续处理消息: message_id=%s", message.message_id)
+                        logger.exception("Failed to add reaction; continuing message processing: message_id=%s", message.message_id)
                         reaction_id = None
                     if reaction_id is not None:
                         self.cache.reaction_message_ids.setdefault(chat_id, {})[message.message_id] = reaction_id
@@ -139,7 +149,7 @@ class MessageRouter:
                     if not self.cache.pending_chat_requests[chat_id]:
                         self.cache.pending_chat_requests.pop(chat_id)
             except Exception as exc:
-                logger.exception("解析消息异常: chat_id=%s", data.event.message.chat_id)
+                logger.exception("Message parsing error: chat_id=%s", data.event.message.chat_id)
             finally:
                 message = data.event.message
                 buffered = self.cache.buffered_events.get(message.chat_id)
@@ -148,7 +158,7 @@ class MessageRouter:
                     self.cache.release_messages(message.chat_id, {message.message_id})
 
     async def _route_message(self, data: P2ImMessageReceiveV1, generation: int) -> None:
-        """Apply the configured direct/buffered behavior to one message."""
+        """按配置选择缓冲或立即拉取历史的路径；不支持的消息发送提示并清理 reaction。"""
         message_type = data.event.message.message_type
         if message_type in CONFIG["messaging"]["bufferedTypes"]:
             await self._buffer_message(data, generation)
@@ -166,7 +176,7 @@ class MessageRouter:
             await self.clear_reactions(message.chat_id, {message.message_id})
 
     async def _buffer_message(self, data: P2ImMessageReceiveV1, generation: int) -> None:
-        """Start one fixed window per chat without extending it on new messages."""
+        """为聊天启动不随新消息延长的固定缓冲窗口，并将最新事件保存为本轮历史锚点。"""
         chat_id = data.event.message.chat_id
         async with self.cache.buffer_guard:
             if generation != self.cache.chat_generations.get(chat_id, 0):
@@ -182,7 +192,7 @@ class MessageRouter:
                 )
 
     async def _cancel_buffer(self, chat_id: str) -> None:
-        """Cancel a pending attachment window taken over by a direct message."""
+        """在锁内移除聊天的缓冲事件及时间记录，并取消尚未结束的缓冲任务。"""
         async with self.cache.buffer_guard:
             self.cache.buffered_events.pop(chat_id, None)
             self.cache._buffer_times.pop(chat_id, None)
@@ -191,7 +201,10 @@ class MessageRouter:
                 task.cancel()
 
     async def _flush_after_fixed_window(self, chat_id: str, generation: int) -> None:
-        """Fetch and process history exactly once after the original 10 seconds."""
+        """等待配置的缓冲时长后取出本轮最新事件，尝试一次历史处理并释放缓存引用。
+
+        等待时长不超过保留期限；取消向外传播，其余异常记录日志。
+        """
         data = None
         try:
             await asyncio.sleep(min(self.buffer_seconds(), RETENTION_SECONDS))
@@ -206,14 +219,17 @@ class MessageRouter:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("消息缓冲处理异常: chat_id=%s", chat_id)
+            logger.exception("Message buffer processing error: chat_id=%s", chat_id)
         finally:
             if data is not None:
                 self.cache.release_messages(chat_id, {data.event.message.message_id})
             self.cache.release_idle(chat_id)
 
     async def _process_chat_history(self, data: P2ImMessageReceiveV1, generation: int) -> None:
-        """Fetch the latest history and submit the current user turn to Codex."""
+        """在代次有效且消息未撤回时，按剩余任务时限获取一页历史并组装批次。
+
+        非空批次交给提交回调，历史请求异常交给失败通知与清理流程；本函数不直接调用 Codex SDK。
+        """
         with self.cache.hold(data.event.message.chat_id):
 
             current_message_id = data.event.message.message_id
@@ -251,7 +267,7 @@ class MessageRouter:
         current_message_id: str,
     ) -> None:
         """历史请求失败时沿用当前通知和 reaction 清理顺序。"""
-        logger.exception("获取历史消息失败: message_id=%s", current_message_id)
+        logger.exception("Failed to fetch message history: message_id=%s", current_message_id)
         state = ActiveCodexRun(uuid4().hex, data.event.message.chat_id,
                                frozenset({current_message_id}),
                                target_id=(data.event.message.chat_id if data.event.message.chat_type == "group"

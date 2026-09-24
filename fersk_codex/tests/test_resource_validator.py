@@ -59,7 +59,7 @@ class ResourceValidatorTests(unittest.TestCase):
                 self.assertEqual(result.file_name, "image-key" + extension)
 
     def test_signature_repairs_misleading_extension(self) -> None:
-        self.assertEqual(self.validate(file_name="photo.exe").file_name, "photo.png")
+        self.assertEqual(self.validate(file_name="photo-é.exe").file_name, "photo-é.png")
 
     def test_matching_office_and_jpeg_extensions_are_preserved(self) -> None:
         for suffix, data in [(s, office_bytes(s)) for s in (".docx", ".xlsx", ".pptx")] + [
@@ -99,7 +99,7 @@ class ResourceValidatorTests(unittest.TestCase):
 
     def test_json_and_text_validate_actual_content(self) -> None:
         for data, name, expected in [(b'\xef\xbb\xbf{"ok":true}', "a.json", "json"),
-                                     ("你好\n".encode(), "a.txt", "text")]:
+                                     ("Hello, café\n".encode(), "a.txt", "text")]:
             with self.subTest(name=name):
                 self.assertEqual(self.validate(data, file_name=name).detected_format, expected)
         for data, name in [(b"{bad", "a.json"), (b"\xfe", "a.json"),
@@ -123,7 +123,7 @@ class ResourceValidatorTests(unittest.TestCase):
                 self.validate(**options)
 
     def test_filenames_cannot_escape_destination(self) -> None:
-        for name in ("../../照片.png", "/tmp/a b.png", r"..\..\photo.png", "...", None):
+        for name in ("../../photo-é.png", "/tmp/a b.png", r"..\..\photo-é.png", "...", None):
             with self.subTest(name=name):
                 result = self.validate(file_name=name, resource_key="../../unsafe/key")
                 self.assertEqual(Path(result.file_name).name, result.file_name)
@@ -149,7 +149,7 @@ class ResourceValidatorTests(unittest.TestCase):
         for suffix in ('.md', '.csv', '.jsonl', '.py', '.js', '.ts', '.html', '.xml', '.yml', '.yaml', '.toml', '.sh'):
             for mime in ('text/plain', 'application/octet-stream'):
                 with self.subTest(suffix=suffix, mime=mime):
-                    result = self.validate('示例\n'.encode(), file_name='sample' + suffix,
+                    result = self.validate('Example\n'.encode(), file_name='sample' + suffix,
                                            headers={'content-type': mime})
                     self.assertEqual(result.file_name, 'sample' + suffix)
                     for payload in (b'\x00binary', b'\xffbinary', b'\x89PNG\r\n\x1a\n'):
@@ -188,7 +188,7 @@ class ResourceValidatorTests(unittest.TestCase):
                               file_name='report.docx')
 
     def test_office_default_content_types_and_override_precedence(self) -> None:
-        # 来源：用户 WPS 样例的 BOM、根相对关系和 Default 声明；不包含业务内容。
+        # Source: BOM, root-relative relationships, and Default declarations from the user WPS sample, without business content.
         for extension, expected_type in OFFICE_TYPES.items():
             for part_extension in ('xml', 'XML'):
                 target = 'custom/main.' + part_extension
@@ -222,7 +222,7 @@ class ResourceValidatorTests(unittest.TestCase):
                             self.assertEqual(result.extension, extension)
                             self.assertEqual(result.data, payload)
                         else:
-                            with self.assertRaisesRegex(ResourceValidationError, 'Office 主文档类型与扩展名不匹配'):
+                            with self.assertRaisesRegex(ResourceValidationError, 'Office main-document type does not match its extension'):
                                 self.validate(payload, file_name='report' + extension)
 
     def test_office_mime_supplies_extension_without_filename(self) -> None:

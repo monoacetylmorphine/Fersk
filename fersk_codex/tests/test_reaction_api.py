@@ -1,4 +1,4 @@
-"""使用真实 SDK 请求模型验证 reaction 删除结果，不读取凭据或访问飞书。"""
+"""Verify reaction deletion using real SDK request models without reading credentials or accessing Lark."""
 
 from __future__ import annotations
 

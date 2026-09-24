@@ -1,4 +1,4 @@
-"""离线验证用户环境初始化、恢复、冲突保护和任务环境隔离。"""
+"""Offline verification of user environment initialization, recovery, conflict protection, and task environment isolation."""
 
 from __future__ import annotations
 
@@ -71,9 +71,9 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_existing_git_and_agents_still_get_environment(self) -> None:
         (self.workspace / ".git").write_text("gitdir: /synthetic/worktree")
-        (self.workspace / "AGENTS.md").write_text("保留用户约定")
+        (self.workspace / "AGENTS.md").write_text("Preserve user instructions")
         await module.prepare_workspace(self.workspace, 5)
-        self.assertEqual((self.workspace / "AGENTS.md").read_text(), "保留用户约定")
+        self.assertEqual((self.workspace / "AGENTS.md").read_text(), "Preserve user instructions")
         self.assertTrue((self.workspace / ".venv/bin/python").exists())
         self.assertFalse(any(args[:2] == ["git", "init"] for args, _, _ in self.calls))
 
@@ -82,10 +82,10 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             workspace = self.root / name.replace(".", "")
             workspace.mkdir()
             target = workspace / name
-            target.write_text("用户文件")
-            with self.assertRaisesRegex(RuntimeError, "非初始化器管理"):
+            target.write_text("User file")
+            with self.assertRaisesRegex(RuntimeError, "unmanaged"):
                 await module.prepare_workspace(workspace, 5)
-            self.assertEqual(target.read_text(), "用户文件")
+            self.assertEqual(target.read_text(), "User file")
             self.assertFalse((workspace / ".office-env.json").exists())
 
     async def test_failed_install_is_not_ready_and_can_retry(self) -> None:
@@ -105,7 +105,7 @@ class OfficeWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         manifest = self.workspace / "package.json"
         content = manifest.read_text() + "\n"
         manifest.write_text(content)
-        with self.assertRaisesRegex(RuntimeError, "已被修改"):
+        with self.assertRaisesRegex(RuntimeError, "has been modified"):
             await module.prepare_workspace(self.workspace, 5)
         self.assertEqual(manifest.read_text(), content)
 

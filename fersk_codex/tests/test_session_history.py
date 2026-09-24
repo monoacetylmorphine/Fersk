@@ -1,4 +1,4 @@
-"""历史会话的真实 SQLite 持久化及模拟 SDK 集成测试，不调用外部服务。"""
+"""Real SQLite persistence and mocked SDK integration tests for session history, without external services."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ import test_stop_command as helpers
 
 class NameTests(unittest.TestCase):
     def test_unicode_grapheme_boundaries(self) -> None:
-        # 不按语言分支，覆盖组合重音、南亚文字、阿拉伯文与 emoji。
-        for cluster in ("中", "あ", "a", "é", "e\u0301", "क्\u200dष", "ก้", "نَ", "한", "🇸🇬", "👩🏽‍💻", "👨‍👩‍👧‍👦"):
+        # Avoid language-specific branches; cover combining accents, South Asian scripts, Arabic, and emoji.
+        for cluster in ("\u4e2d", "あ", "a", "é", "e\u0301", "क्\u200dष", "ก้", "نَ", "한", "🇸🇬", "👩🏽‍💻", "👨‍👩‍👧‍👦"):
             with self.subTest(cluster=cluster):
                 self.assertEqual(history.make_thread_name(cluster * 15), cluster * 15)
                 self.assertEqual(history.make_thread_name(cluster * 16), cluster * 15 + "…")
@@ -118,7 +118,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         self.thread.turn.assert_not_awaited()
         self.assertEqual(await thread_manager.get_user_thread("user"), "thread-1")
         self.assertIsNone((await history.get_session("user", "thread-1")).updated_at)
-        # 模拟服务端已经命名、响应丢失：恢复时不再发送同一命名请求。
+        # Simulate successful server-side naming with a lost response; recovery must not repeat the naming request.
         self.metadata.name = "first"
         self.assertEqual(await self.run_prompt("different"), [{"type": "done"}])
         self.thread.set_name.assert_awaited_once_with("first")
@@ -272,7 +272,7 @@ class HistoryGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.get_session.return_value = None
         with patch.object(self.commands, "_stop_chat", AsyncMock()) as stop:
             result = await self.commands.processing_history_restore(helpers.event(), "foreign")
-        self.assertEqual(result, {"ok": False, "content": "恢复历史会话失败"})
+        self.assertEqual(result, {"ok": False, "content": "Failed to restore the previous session"})
         stop.assert_not_awaited()
         self.runtime.codex.restore_session.assert_not_awaited()
 
@@ -294,7 +294,7 @@ class HistoryGatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_restore_failure_returns_frontend_error(self) -> None:
         self.runtime.codex.restore_session.side_effect = RuntimeError("unarchive failed")
         result = await self.commands.processing_history_restore(helpers.event(), "chosen")
-        self.assertEqual(result, {"ok": False, "content": "恢复历史会话失败"})
+        self.assertEqual(result, {"ok": False, "content": "Failed to restore the previous session"})
         self.assertFalse(self.runtime.cache.reset_tasks)
 
     async def test_new_input_waits_for_restore(self) -> None:

@@ -1,4 +1,4 @@
-"""离线验证网关组件组装、事件路由和启动退出，不连接外部服务。"""
+"""Offline verification of gateway assembly, event routing, and startup/shutdown without external services."""
 
 from __future__ import annotations
 

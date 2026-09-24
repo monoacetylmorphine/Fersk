@@ -1,4 +1,4 @@
-"""验证生命周期边界，不等待真实的 24 小时。"""
+"""Verify lifecycle boundaries without waiting for an actual 24-hour period."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""撤回、停止、新会话以及历史选择和恢复命令。"""
+"""Recall, stop, new-session, and history selection and restoration commands."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ logger = get_logger("Message")
 
 
 class HistoryRestoreResult(TypedDict):
-    """恢复结果保持原有字典协议，失败时不提供线程 ID。"""
+    """Restoration results preserve the dictionary protocol and omit the thread ID on failure."""
 
     ok: bool
     content: str
@@ -38,7 +38,7 @@ class HistoryRestoreResult(TypedDict):
 
 
 class GatewayCommands:
-    """复用 runtime 的停止和提交门禁，独立管理历史卡片上下文。"""
+    """Reuse runtime stop and submission gates while managing history card context independently."""
 
     def __init__(
         self,
@@ -46,6 +46,7 @@ class GatewayCommands:
         *,
         cancel_buffer: Callable[[str], Awaitable[None]],
     ) -> None:
+        """绑定共享 runtime、缓存和缓冲取消入口，并创建独立的历史卡片存储。"""
         self.runtime = runtime
         self.cache = runtime.cache
         self.cancel_buffer = cancel_buffer
@@ -56,7 +57,10 @@ class GatewayCommands:
         self.history_cards.prune()
 
     async def processing_recall(self, data: P2ImMessageRecalledV1) -> None:
-        """Interrupt the Codex run associated with an owner-recalled message."""
+        """处理消息所有者发起的撤回，停止关联任务或登记撤回以阻止后续提交。
+
+        同时取消对应的缓冲触发消息并尝试清理 reaction；存在关联任务时发送停止结果通知。
+        """
         event = data.event
         if event.recall_type != "message_owner":
             return
@@ -93,7 +97,7 @@ class GatewayCommands:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
                 await self.runtime._clear_reaction(chat_id, {message_id})
         except Exception:
-            logger.exception("撤回消息 reaction 清理失败: message_id=%s", message_id)
+            logger.exception("Failed to clean up reactions for a recalled message: message_id=%s", message_id)
         finally:
             self.cache.release_idle(chat_id)
 
@@ -103,7 +107,11 @@ class GatewayCommands:
         *,
         advance_generation: bool = True,
     ) -> tuple[dict[str, ActiveCodexRun], bool, bool]:
-        """停止本会话当前任务和已接收的待处理输入，保留 thread 绑定。"""
+        """停止本聊天的活跃及待处理任务、取消缓冲输入，并保留线程绑定。
+
+        返回任务字典、是否全部确认停止、此前是否存在待处理工作组成的三元组。
+        advance_generation 为真时推进消息代次，使旧输入失效；失败的停止允许重新尝试。
+        """
         message = data.event.message
         chat_id = message.chat_id
         reaction_ids = set(self.cache.reaction_message_ids.get(chat_id, {}))
@@ -133,10 +141,14 @@ class GatewayCommands:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
                 await self.runtime._clear_reaction(chat_id, reaction_ids)
         except Exception:
-            logger.exception("停止后 reaction 清理失败: chat_id=%s", chat_id)
+            logger.exception("Reaction cleanup failed after stopping: chat_id=%s", chat_id)
         return states, succeeded, had_work
 
     async def processing_stop(self, data: P2ImMessageReceiveV1 | SimpleNamespace) -> None:
+        """执行聊天级停止，并按停止确认结果和此前是否有任务发送一次状态卡片。
+
+        已经全部通知过的任务不重复发送；交付失败仅记录日志，不据此重放停止操作。
+        """
         states, succeeded, had_work = await self._stop_chat(data)
         message = data.event.message
         chat_id = message.chat_id
@@ -153,17 +165,20 @@ class GatewayCommands:
                 if state.probe:
                     state.probe.record("notification_sent", messageKey=key)
         except Exception:
-            logger.exception("停止卡片投递失败或结果不确定: chat_id=%s", chat_id)
+            logger.exception("Stop card delivery failed or its outcome is uncertain: chat_id=%s", chat_id)
 
     async def history_options(
         self,
         data: P2ImMessageReceiveV1 | SimpleNamespace,
     ) -> list[HistoryOption]:
-        """前端适配入口：data 必须来自已验证的事件，不能由客户端伪造身份。"""
+        """按可信事件中的私聊用户或群 chat_id 获取历史会话，转换为下拉选项列表。
+
+        返回数据库排序后的全部选项，数量限制由调用方应用；本函数不验证事件身份真实性。
+        """
         message = data.event.message
         target_id = message.chat_id if message.chat_type == "group" else data.event.sender.sender_id.union_id
         return [
-            {"label": record.thread_name or "未命名会话", "value": record.thread_id,
+            {"label": record.thread_name or "Untitled session", "value": record.thread_id,
              "updated_at": record.updated_at}
             for record in await list_sessions(target_id)
         ]
@@ -174,27 +189,27 @@ class GatewayCommands:
             return
         user_id = data.event.sender.sender_id.union_id
         if not user_id:
-            logger.error("历史卡片缺少可信 union_id")
+            logger.error("History card lacks a trusted union_id")
             return
         card = None
         try:
-            # list_sessions 已按 updated_at DESC、thread_id DESC 排序，先排序再限制总数。
+            # list_sessions already orders by updated_at DESC, thread_id DESC; sort before applying the total limit.
             options = (await self.history_options(data))[:CONFIG["messaging"].get("sessionHistoryLimit", 30)]
             card = self.history_cards.create(user_id, data.event.message.chat_id, options)
             card.message_id = await interactive.send_interactive_card(user_id, interactive.build_history_card(card))
         except Exception:
             if card is not None:
                 self.history_cards.cards.pop(card.token, None)
-            logger.exception("历史卡片加载或发送失败")
-            await interactive.send_interactive_card(user_id, interactive.status_card("历史会话加载或发送失败，请重新发送 /history。"))
+            logger.exception("Failed to load or send the history card")
+            await interactive.send_interactive_card(user_id, interactive.status_card("Failed to load or send session history. Send /history again."))
 
     async def processing_history_action(self, data: P2CardActionTrigger) -> None:
         """主事件循环内校验、去重并串行恢复；SDK 回调不等待恢复完成。"""
         try:
             card = self.history_cards.resolve(data)
         except (ValueError, AttributeError):
-            # 未校验的回调不得用于向任意用户发送消息。
-            logger.warning("历史卡片回调被拒绝：上下文失效、不匹配或重复操作")
+            # Unvalidated callbacks must not be used to send messages to arbitrary users.
+            logger.warning("History card callback rejected: expired context, context mismatch, or duplicate action")
             return
         value = data.event.action.value
         try:
@@ -203,7 +218,7 @@ class GatewayCommands:
                 if (data.event.action.tag != "button" or type(page) is not int
                         or abs(page - card.page) != 1
                         or not 0 <= page < (len(card.options) + interactive.PAGE_SIZE - 1) // interactive.PAGE_SIZE):
-                    raise ValueError("无效的历史页码")
+                    raise ValueError("Invalid history page number")
                 card.busy = True
                 updated = replace(card, page=page, revision=card.revision + 1, busy=False)
                 await interactive.update_interactive_card(card.message_id, interactive.build_history_card(updated))
@@ -214,23 +229,23 @@ class GatewayCommands:
             await interactive.send_interactive_card(card.user_id, interactive.status_card(str(exc)))
             return
         except Exception:
-            logger.exception("历史卡片翻页失败")
+            logger.exception("Failed to change the history card page")
             card.busy = False
-            await interactive.send_interactive_card(card.user_id, interactive.status_card("翻页失败，请重新发送 /history。"))
+            await interactive.send_interactive_card(card.user_id, interactive.status_card("Failed to change the page. Send /history again."))
             return
         card.busy = True
-        # 每张卡片的确认仅消费一次；失败后重新 /history，避免重投回调再次停止任务。
+        # Consume each card confirmation once; use /history again after failure so callback redelivery does not stop the task again.
         card.finished = True
         try:
             with self.cache.hold(card.chat_id):
                 result = await self.processing_history_restore(card.message_event(), thread_id)
             label = next(item["label"] for item in card.visible_options if item["value"] == thread_id)
-            text = f"已激活：{label}" if result["ok"] else "激活失败，未切换当前线程绑定。请重新发送 /history 后重试。"
+            text = f"Activated: {label}" if result["ok"] else "Activation failed and the current thread binding was not changed. Send /history again and retry."
             body = interactive.status_card(text)
             try:
                 await interactive.update_interactive_card(card.message_id, body)
             except Exception:
-                logger.exception("激活结果卡片更新失败；不重试恢复操作")
+                logger.exception("Failed to update the activation result card; restoration will not be retried")
                 await interactive.send_interactive_card(card.user_id, body)
         finally:
             card.busy = False
@@ -244,70 +259,79 @@ class GatewayCommands:
         action = getattr(getattr(data, "event", None), "action", None)
         value = getattr(action, "value", None)
         if not isinstance(value, dict) or value.get("action") not in {"activate_history", "history_page"}:
-            return interactive.callback_response("未执行任何操作")
+            return interactive.callback_response("No action was performed")
         try:
-            # 这里只读检查，以便过期/转发卡片得到即时提示；主循环在执行前再次校验。
+            # Perform a read-only check for immediate feedback on expired or forwarded cards; the main loop validates again before execution.
             self.history_cards.resolve(data)
         except ValueError as exc:
             return interactive.callback_response(str(exc), error=True)
         except AttributeError:
-            return interactive.callback_response("卡片回调缺少必要身份或上下文", error=True)
+            return interactive.callback_response("Card callback is missing required identity or context", error=True)
         if not dispatcher.submit(self.processing_history_action, data, control=True):
-            return interactive.callback_response("当前任务繁忙，请稍后重试", error=True)
-        return interactive.callback_response("正在处理，请以卡片最终结果为准")
+            return interactive.callback_response("The current task is busy. Please try again later", error=True)
+        return interactive.callback_response("Processing. Refer to the final result on the card")
 
     async def processing_history_restore(
         self,
         data: P2ImMessageReceiveV1 | SimpleNamespace,
         thread_id: str,
     ) -> HistoryRestoreResult:
-        """返回供前端展示的结果；复用 /new 的停止、等待及提交隔离流程。"""
+        """串行恢复指定历史会话，返回包含 ok、content 及成功时 thread_id 的结果字典。
+
+        在首次 await 前建立提交门禁；校验归属后停止旧任务，等待收尾并持锁切换绑定。
+        目标已激活时直接成功；失败转为失败结果，调用方取消不取消受 shield 保护的恢复任务。
+        """
         chat_id = data.event.message.chat_id
         target_id = chat_id if data.event.message.chat_type == "group" else data.event.sender.sender_id.union_id
         previous = self.cache.reset_tasks.get(chat_id)
 
         async def restore() -> HistoryRestoreResult:
+            """等待前次切换，校验历史归属并在启动超时内完成停止和恢复，最后释放本次门禁。"""
             try:
                 if previous is not None:
                     await asyncio.shield(previous)
                 async with asyncio.timeout(settings()["startupTimeoutSeconds"]):
                     if not isinstance(thread_id, str) or not thread_id or await get_session(target_id, thread_id) is None:
-                        raise ValueError("历史会话不存在或不属于当前用户")
+                        raise ValueError("Session history does not exist or does not belong to the current user")
                     if await get_user_thread(target_id) == thread_id:
-                        return {"ok": True, "thread_id": thread_id, "content": "已恢复历史会话"}
+                        return {"ok": True, "thread_id": thread_id, "content": "Previous session restored"}
                     self.cache.chat_generations[chat_id] = self.cache.chat_generations.get(chat_id, 0) + 1
                     states, succeeded, _ = await self._stop_chat(data, advance_generation=False)
                     for state in states.values():
                         state.notified = True
                     if not succeeded:
-                        raise RuntimeError("当前任务停止未确认")
+                        raise RuntimeError("Current task termination is unconfirmed")
                     for state in states.values():
                         if state.task is not None:
                             await state.finished.wait()
                     async with await self.runtime._get_codex_lock(chat_id):
                         await self.runtime.codex.restore_session(target_id, thread_id)
-                return {"ok": True, "thread_id": thread_id, "content": "已恢复历史会话"}
+                return {"ok": True, "thread_id": thread_id, "content": "Previous session restored"}
             except Exception:
-                logger.exception("恢复历史会话失败: chat_id=%s", chat_id)
-                return {"ok": False, "content": "恢复历史会话失败"}
+                logger.exception("Failed to restore the previous session: chat_id=%s", chat_id)
+                return {"ok": False, "content": "Failed to restore the previous session"}
             finally:
                 if self.cache.reset_tasks.get(chat_id) is asyncio.current_task():
                     self.cache.reset_tasks.pop(chat_id, None)
                     self.cache.release_idle(chat_id)
 
-        # 第一次 await 之前建立门禁，后续普通输入会等待本次切换完成。
+        # Establish the gate before the first await so subsequent regular input waits for this switch to complete.
         task = asyncio.create_task(restore())
         self.cache.reset_tasks[chat_id] = task
         return await asyncio.shield(task)
 
     async def processing_new(self, data: P2ImMessageReceiveV1 | SimpleNamespace) -> None:
-        """Gate subsequent submissions before the first await; stop then reset."""
+        """在首次 await 前推进消息代次并登记切换任务，阻止后续输入越过会话重置。
+
+        等待前次切换、停止确认及旧任务收尾后持锁重置线程，并发送结果；调用方取消不取消内部重置任务。
+        """
         chat_id = data.event.message.chat_id
         target_id = chat_id if data.event.message.chat_type == "group" else data.event.sender.sender_id.union_id
         previous = self.cache.reset_tasks.get(chat_id)
         self.cache.chat_generations[chat_id] = self.cache.chat_generations.get(chat_id, 0) + 1
 
         async def reset() -> None:
+            """串行等待并停止旧任务，确认收尾后重置绑定和通知结果，finally 释放本次门禁。"""
             try:
                 if previous is not None:
                     await asyncio.shield(previous)
@@ -327,12 +351,12 @@ class GatewayCommands:
                                 await self.runtime.codex.reset_thread(target_id)
                         key = "newThreadCreated"
                     except Exception:
-                        logger.exception("新会话重置失败: chat_id=%s", chat_id)
+                        logger.exception("New-session reset failed: chat_id=%s", chat_id)
                         key = "newThreadFailed"
                 async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
                     await self.runtime.send_card(union_id=target_id, content=CONFIG["messages"][key])
             except Exception:
-                logger.exception("新会话命令处理或通知失败: chat_id=%s", chat_id)
+                logger.exception("New-session command handling or notification failed: chat_id=%s", chat_id)
             finally:
                 if self.cache.reset_tasks.get(chat_id) is asyncio.current_task():
                     self.cache.reset_tasks.pop(chat_id, None)

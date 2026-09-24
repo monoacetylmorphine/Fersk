@@ -1,4 +1,4 @@
-"""用临时 SQLite 文件验证绑定持久化，不访问实际 state.db 或 Codex 服务。"""
+"""Verify binding persistence using temporary SQLite files without accessing the real state.db or Codex service."""
 
 from __future__ import annotations
 

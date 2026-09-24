@@ -1,4 +1,4 @@
-"""Fersk Codex 公共接口；导入包本身不读取配置或启动客户端。"""
+"""Fersk Codex public interface; importing the package does not read configuration or start clients."""
 
 from __future__ import annotations
 
@@ -18,4 +18,4 @@ def __getattr__(name: str) -> type[FerskCodex] | type[LiveTurn]:
         value = getattr(codex, name)
         globals()[name] = value
         return value
-    raise AttributeError(f"模块 {__name__!r} 没有属性 {name!r}")
+    raise AttributeError(f"Module {__name__!r} has no attribute {name!r}")

@@ -1,4 +1,4 @@
-"""业务日志等级与 SDK DEBUG 独立，连接凭据不进入输出。"""
+"""Application log levels are independent of SDK DEBUG, and connection credentials are excluded from output."""
 
 from __future__ import annotations
 
@@ -28,18 +28,18 @@ class BusinessLoggerTests(unittest.TestCase):
             try:
                 business.logger.handlers = [handler]
                 module.configure_logging("DEBUG")
-                business.debug("业务 DEBUG 可见")
+                business.debug("Application DEBUG is visible")
                 module.configure_logging("INFO")
-                business.debug("不应显示")
+                business.debug("Must not appear")
                 try:
-                    raise ValueError("异常堆栈")
+                    raise ValueError("Exception traceback")
                 except ValueError:
-                    business.exception("业务失败")
+                    business.exception("Application failure")
                 module.protect_sdk_logs(sdk)
                 sdk.debug("wss://example.invalid/ws?access_key=secret&ticket=hidden&aid=1")
                 text = stream.getvalue()
-                self.assertIn("业务 DEBUG 可见", text)
-                self.assertNotIn("不应显示", text)
+                self.assertIn("Application DEBUG is visible", text)
+                self.assertNotIn("Must not appear", text)
                 self.assertIn("Traceback", text)
                 self.assertNotIn("secret", text)
                 self.assertNotIn("hidden", text)

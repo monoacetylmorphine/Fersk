@@ -52,13 +52,13 @@ class BotMentionTests(unittest.IsolatedAsyncioTestCase):
             for mentions in (None, [], [NS()], [NS(id=None, name=None)],
                              [NS(id=NS(union_id=None), name="")]):
                 self.assertFalse(message_router._is_bot_mentioned(mentions))
-            with self.assertRaisesRegex(RuntimeError, "至少一个非空"):
+            with self.assertRaisesRegex(RuntimeError, "must be non-empty"):
                 message_router._bot_identity(required=True)
 
     async def test_startup_rejects_missing_identity_before_connecting(self) -> None:
         self.configure(robotUnionIdEnv="TEST_BOT_ID")
         with patch.object(self.g, "create_websocket_client") as connect:
-            with self.assertRaisesRegex(RuntimeError, "至少一个非空"):
+            with self.assertRaisesRegex(RuntimeError, "must be non-empty"):
                 await self.g.main()
         connect.assert_not_called()
 

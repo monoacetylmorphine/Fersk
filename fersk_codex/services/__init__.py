@@ -1,1 +1,1 @@
-"""fersk_codex.services 包；子模块按需导入。"""
+"""fersk_codex.services package; submodules are imported on demand."""

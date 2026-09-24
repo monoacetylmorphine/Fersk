@@ -1,4 +1,4 @@
-"""使用参考项目的 Card 2.0 样式发送普通通知和流式回复。"""
+"""Send regular notifications and streaming replies using the reference project Card 2.0 style."""
 
 from __future__ import annotations
 
@@ -46,22 +46,23 @@ MARKDOWN_IMAGE_PATTERN = re.compile(
 
 
 class CardDeliveryError(RuntimeError):
-    """消息交付失败，与上游任务失败分开处理。"""
+    """Message delivery failure, handled separately from upstream task failure."""
 
 
 class CardRequestError(CardDeliveryError):
     def __init__(self, message: str, *, code: int | None = None) -> None:
+        """保存卡片请求错误文案及可选的飞书错误码。"""
         super().__init__(message)
         self.code = code
 
 
 class CardStreamStopped(Exception):
-    """上游撤回或 /stop 请求：停止输出，丢弃尚未发送的缓冲文本。"""
+    """Upstream recall or /stop request: stop output and discard unsent buffered text."""
 
 
 @dataclass(frozen=True)
 class CardReplace:
-    """替换当前正文及缓冲内容，用于从推理切换到答案。"""
+    """Replace the current body and buffer when switching from reasoning to the answer."""
 
     content: str
 
@@ -70,6 +71,7 @@ class CardSteer:
     """A writer barrier: pause before the RPC, rotate only on confirmed acceptance."""
 
     def __init__(self, content: str) -> None:
+        """在当前事件循环中创建写入屏障及等待状态，用于协调 steer 确认和换卡结果。"""
         loop = asyncio.get_running_loop()
         self.content = content
         self.ready: asyncio.Future[bool] = loop.create_future()
@@ -78,11 +80,13 @@ class CardSteer:
         self.accepted = False
 
     def decide(self, accepted: bool) -> None:
+        """仅首次记录 steer 是否被接受并完成决策 Future，后续调用不覆盖已有决定。"""
         if not self.decision.done():
             self.accepted = accepted
             self.decision.set_result(accepted)
 
     def release(self) -> None:
+        """将尚未完成的 ready 和 applied Future 置为 False，唤醒等待者；不修改决策 Future。"""
         for future in (self.ready, self.applied):
             if not future.done():
                 future.set_result(False)
@@ -101,6 +105,7 @@ class CardStreamSession:
     """
 
     def __init__(self, *, cancelled: Callable[[], bool] = lambda: False) -> None:
+        """初始化单次运行的控制队列、屏障及卡片缓冲状态；cancelled 回调由发送过程检查。"""
         self.cancelled = cancelled
         self.controls: asyncio.Queue[CardSteer] = asyncio.Queue()
         self.closed = False
@@ -118,6 +123,10 @@ class CardStreamSession:
 
     @asynccontextmanager
     async def steering(self, content: str) -> AsyncIterator[CardSteer]:
+        """将 steer 屏障排入输出控制队列，等待发送层就绪后交给调用方决策。
+
+        已关闭或取消时释放等待者；退出上下文时将尚未决定的屏障判为未接受，并移除登记。
+        """
         barrier = CardSteer(content)
         self.barriers.add(barrier)
         try:
@@ -132,6 +141,7 @@ class CardStreamSession:
             self.barriers.discard(barrier)
 
     def close(self) -> None:
+        """标记会话关闭，拒绝未决定的屏障并释放等待者；不直接发送关闭卡片请求。"""
         self.closed = True
         for barrier in self.barriers:
             barrier.decide(False)
@@ -141,6 +151,10 @@ class CardStreamSession:
         self,
         source: AsyncGenerator[RunEvent, None],
     ) -> AsyncGenerator[RunEvent, None]:
+        """合并上游运行事件和 steer 控制事件，同时就绪时优先产出控制事件。
+
+        最多保留一个预读事件，取消时抛出 CardStreamStopped；finally 释放屏障、取消待读任务并关闭上游生成器。
+        """
         pending = control = None
         try:
             while True:
@@ -172,7 +186,8 @@ class CardStreamSession:
 
 
 def _card(content: str, streaming: bool) -> dict[str, Any]:
-    # 来源：project-reference/skills/lark-im/references/card/card-2.0-schema.md。
+    """组合配置、固定标题和正文，构造静态或流式 Card 2.0 数据，不发送请求。"""
+    # Source: project-reference/skills/lark-im/references/card/card-2.0-schema.md.
     return {
         "schema": "2.0",
         "config": _card_config(content, streaming),
@@ -192,12 +207,13 @@ def _card(content: str, streaming: bool) -> dict[str, Any]:
 
 
 def _card_config(content: str, streaming: bool) -> dict[str, Any]:
+    """构造卡片展示与流式开关配置；流式摘要使用等待提示，静态摘要取正文前 100 个字符。"""
     return {
         "update_multi": True,
         "width_mode": "fill",
         "streaming_mode": streaming,
         "summary": {
-            "content": '小脑袋已经开始转动啦，稍等哦~' if streaming else content[:100],
+            "content": 'Thinking, please wait...' if streaming else content[:100],
         },
         "style": {
             "text_size": {
@@ -212,6 +228,7 @@ def _card_config(content: str, streaming: bool) -> dict[str, Any]:
 
 
 def _card_body(content: str) -> dict[str, Any]:
+    """构造带固定正文元素标识和 AI 提示的卡片正文，并将 Markdown 图片语法降级为地址。"""
     return {
         "direction": "vertical",
         "padding": "12px 12px 12px 12px",
@@ -285,20 +302,25 @@ def _card_body(content: str) -> dict[str, Any]:
 
 
 async def _call(operation: Callable[[RequestT], ResponseT], request: RequestT) -> ResponseT:
+    """在配置超时内调用飞书卡片接口，统一将请求异常或失败响应转为 CardRequestError。
+
+    失败响应保留飞书错误码供恢复逻辑判断；外部取消不在此处转换。
+    """
     try:
         async with asyncio.timeout(settings()["cardRequestTimeoutSeconds"]):
             response = await call_lark(operation, request)
     except Exception as exc:
-        raise CardRequestError(f"飞书卡片请求异常: {type(exc).__name__}: {exc}") from exc
+        raise CardRequestError(f"Lark card request error: {type(exc).__name__}: {exc}") from exc
     if not response.success():
         raise CardRequestError(
-            f"飞书卡片请求失败: code={response.code}, msg={response.msg}, "
+            f"Lark card request failed: code={response.code}, msg={response.msg}, "
             f"log_id={response.get_log_id()}", code=response.code,
         )
     return response
 
 
 async def _send(union_id: str, content: dict[str, Any]) -> str:
+    """发送交互卡片数据并返回 message_id；以 oc_ 开头的目标按 chat_id 处理，其余按 union_id 处理。"""
     request = (CreateMessageRequest.builder()
         .receive_id_type("chat_id" if union_id.startswith("oc_") else "union_id")
         .request_body(CreateMessageRequestBody.builder()
@@ -315,14 +337,17 @@ async def sending_card(
     *,
     session: CardStreamSession | None = None,
 ) -> str | None:
-    """发送卡片并返回最后一张的 message_id；9 分钟关闭，按需续卡。
-    union_id 来自消息批次，也兼容以 oc_ 开头的群 chat_id。
-    空内容不发送；CardStreamStopped 结束流式状态且不刷新缓冲。
+    """发送静态文本或消费异步文本流，返回最后一张已发送卡片的 message_id，无消息时返回 None。
+
+    流式正文按更新间隔合并；CardReplace 替换正文及缓冲，CardSteer 在确认接受后换卡。
+    流式卡片达到 STREAM_LIFETIME 时关闭，后续有内容才续卡；300309 明确拒绝时承接未发送内容。
+    其他交付失败后继续消费上游，结束时抛出 CardDeliveryError；CardStreamStopped 丢弃未发送缓冲，
+    但仍尝试关闭流式状态。目标支持 union_id 或以 oc_ 开头的群 chat_id，空文本不发送。
     """
     if isinstance(content, str):
         return await _send(union_id, _card(content, False)) if content else None
     if not isinstance(content, AsyncIterable):
-        raise TypeError("content 必须是字符串或异步文本流")
+        raise TypeError("content must be a string or an asynchronous text stream")
 
     session = session or CardStreamSession()
 
@@ -331,10 +356,12 @@ async def sending_card(
     no_chunk = object()
 
     def reset_card() -> None:
+        """重置当前卡片标识、序号及正文缓冲，保留最后发送的 message_id 和跨卡会话状态。"""
         session.card_id, session.sequence, session.accumulated, session.sent = None, 0, "", ""
         session.pending_replacement = False
 
     async def create_card() -> None:
+        """根据当前累计正文创建流式卡片并发送消息引用；请求前记录生命周期起点，发送前检查取消。"""
         if session.cancelled():
             raise CardStreamStopped()
         session.card_number += 1
@@ -354,9 +381,13 @@ async def sending_card(
         session.sent = session.accumulated
         session.pending_replacement = False
         session.last_update = time.monotonic()
-        logger.info("流式卡片已发送: card_id=%s, part=%s", session.card_id, session.card_number)
+        logger.info("Streaming card sent: card_id=%s, part=%s", session.card_id, session.card_number)
 
     async def flush() -> None:
+        """提交与已发送正文不同的累计内容；300309 拒绝时换卡承接未发送后缀或完整替换正文。
+
+        其他请求错误交给外层处理；成功后更新已发送内容及刷新时间。
+        """
         if session.cancelled():
             raise CardStreamStopped()
         if session.accumulated == session.sent:
@@ -377,7 +408,7 @@ async def sending_card(
             # a replacement must instead carry its full new body.
             remainder = (session.accumulated[len(session.sent):]
                          if not session.pending_replacement and session.accumulated.startswith(session.sent) else session.accumulated)
-            logger.warning("流式卡片已关闭，转续卡: card_id=%s", session.card_id)
+            logger.warning("Streaming card closed; continuing in a new card: card_id=%s", session.card_id)
             reset_card()
             session.accumulated = remainder
             if session.accumulated:
@@ -386,10 +417,11 @@ async def sending_card(
         session.sent = session.accumulated
         session.pending_replacement = False
         session.last_update = time.monotonic()
-        logger.debug("流式卡片已更新: card_id=%s, sequence=%s, chars=%s, age=%.3f",
+        logger.debug("Streaming card updated: card_id=%s, sequence=%s, chars=%s, age=%.3f",
                      session.card_id, session.sequence, len(session.sent), session.last_update - session.opened_at)
 
     async def close_card() -> None:
+        """关闭当前卡片的流式状态并设置摘要；忽略已关闭错误，finally 重置当前卡片缓冲。"""
         if session.card_id is None:
             return
         session.sequence += 1
@@ -406,19 +438,20 @@ async def sending_card(
             if exc.code != 300309:
                 raise
         else:
-            logger.info("流式卡片已关闭: card_id=%s, age=%.3f",
+            logger.info("Streaming card closed: card_id=%s, age=%.3f",
                         session.card_id, time.monotonic() - session.opened_at)
         finally:
             reset_card()
 
     async def delivery_failed(exc: CardDeliveryError) -> None:
+        """保存交付错误并尝试关闭当前卡片，使主循环转为仅消费上游而不继续发送正文。"""
         nonlocal delivery_error
         delivery_error = exc
-        logger.exception("卡片交付失败，继续消费任务事件，不重发结果不确定的请求")
+        logger.exception("Card delivery failed; continuing to consume task events without retrying requests with uncertain results")
         try:
             await close_card()
         except CardDeliveryError:
-            logger.exception("关闭飞书卡片流式状态失败")
+            logger.exception("Failed to close Lark card streaming mode")
 
     try:
         iterator = aiter(content)
@@ -489,7 +522,7 @@ async def sending_card(
                     chunk = chunk.content
                 if chunk is not no_chunk:
                     if not isinstance(chunk, str):
-                        raise TypeError("流式 content 只能产出字符串或 CardReplace")
+                        raise TypeError("Streaming content may yield only strings or CardReplace")
                     if chunk:
                         if session.placeholder:
                             replace = True
@@ -517,7 +550,7 @@ async def sending_card(
             await close_card()
         except CardDeliveryError as exc:
             delivery_error = delivery_error or exc
-            logger.exception("关闭飞书卡片流式状态失败")
+            logger.exception("Failed to close Lark card streaming mode")
     if delivery_error is not None:
         raise delivery_error
     return session.message_id

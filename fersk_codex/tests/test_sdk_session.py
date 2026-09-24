@@ -1,4 +1,4 @@
-"""验证 SDK 会话直接采用用户配置。"""
+"""Verify that SDK sessions use user configuration directly."""
 
 from __future__ import annotations
 import unittest
@@ -66,7 +66,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(session_codex, '_initialize_session_name', AsyncMock()), \
                 patch.object(session_history, 'update_session_time', AsyncMock()) as update:
             for operation in (self.cls.reset_thread('user'), self.cls.restore_session('user', 'target')):
-                with self.assertRaisesRegex(RuntimeError, '未确认'):
+                with self.assertRaisesRegex(RuntimeError, 'unverified'):
                     await operation
             save.assert_not_awaited()
             update.assert_not_awaited()
@@ -106,7 +106,7 @@ class ControlSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.manager.__aenter__.side_effect = initialize
         async def run():
             async with self.cls._session(None):
-                self.fail('取消后不得提交业务操作')
+                self.fail('Business operations must not be submitted after cancellation')
         task = self.asyncio.create_task(run())
         await entered.wait()
         task.cancel()

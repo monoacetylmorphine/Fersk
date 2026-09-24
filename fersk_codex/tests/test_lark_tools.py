@@ -38,13 +38,13 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_download_validates_renames_and_writes_original_bytes(self) -> None:
         payload = b'\x89PNG\r\n\x1a\nimage'
-        response = self.response(file=io.BytesIO(payload), file_name='../../照片.exe')
+        response = self.response(file=io.BytesIO(payload), file_name='../../photo-é.exe')
         response.raw.headers = {'Content-Type': 'image/png', 'Content-Length': len(payload)}
         self.client.im.v1.message_resource.get.return_value = response
         result = await self.tools.download_msg_resource('user', 'message', 'image-key', 'image')
         path = Path(result)
         self.assertEqual(path.parent, self.directory / 'user' / CONFIG['storage']['inboundSubdirectory'])
-        self.assertTrue(path.name.startswith('照片_'))
+        self.assertTrue(path.name.startswith('photo-é_'))
         self.assertEqual(path.suffix, '.png')
         self.assertEqual(path.read_bytes(), payload)
         request = self.client.im.v1.message_resource.get.call_args.args[0]
@@ -62,7 +62,7 @@ class LarkToolsTests(unittest.IsolatedAsyncioTestCase):
         def slow_write(*args):
             entered.set()
             if not release.wait(3):
-                raise TimeoutError('测试写入未释放')
+                raise TimeoutError('Test write was not released')
             return 'written'
         self.client.im.v1.message_resource.get.return_value = self.response()
         with patch.object(self.tools, '_save_resource', side_effect=slow_write):

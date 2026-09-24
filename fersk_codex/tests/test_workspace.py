@@ -1,4 +1,4 @@
-"""验证真实 Git 初始化、慢初始化隔离和超时/取消进程回收。"""
+"""Verify real Git initialization, slow-initialization isolation, and process cleanup on timeout or cancellation."""
 
 from __future__ import annotations
 
@@ -44,11 +44,11 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_initializes_once_and_preserves_agents(self) -> None:
         await module.prepare_workspace(self.root, 5)
         self.assertTrue((self.root / '.git').is_dir())
-        (self.root / 'AGENTS.md').write_text('保留原指令')
+        (self.root / 'AGENTS.md').write_text('Preserve original instructions')
         with patch.object(module, '_initialize_git', AsyncMock()) as init:
             await module.prepare_workspace(self.root, 5)
         init.assert_not_awaited()
-        self.assertEqual((self.root / 'AGENTS.md').read_text(), '保留原指令')
+        self.assertEqual((self.root / 'AGENTS.md').read_text(), 'Preserve original instructions')
 
     async def test_git_worktree_file_is_already_initialized(self) -> None:
         (self.root / '.git').write_text('gitdir: /synthetic/worktree')

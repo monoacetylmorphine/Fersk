@@ -1,4 +1,4 @@
-"""私聊历史卡片离线回归：真实 SDK 数据模型，外部请求和恢复操作模拟。"""
+"""Offline private-chat history card regression using real SDK models and mocked external requests and restoration."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def callback(card, *, selected="thread-1", action="activate_history", user="user
 
 
 def options(count=1):
-    return [{"label": "同名会话", "value": f"thread-{index + 1}", "updated_at": None}
+    return [{"label": "Same-name session", "value": f"thread-{index + 1}", "updated_at": None}
             for index in range(count)]
 
 
@@ -54,14 +54,14 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
         select, button = form["elements"]
         self.assertEqual(form["tag"], "form")
         self.assertTrue(select["required"])
-        self.assertNotIn("behaviors", select)  # 单纯选择不回调。
+        self.assertNotIn("behaviors", select)  # Selection alone does not trigger a callback.
         self.assertNotIn("initial_option", select)
         self.assertEqual(len(select["options"]), cards.PAGE_SIZE)
         self.assertEqual(len({item["value"] for item in select["options"]}), cards.PAGE_SIZE)
         self.assertEqual(button["form_action_type"], "submit")
         self.assertNotIn("action_type", button)
         self.assertIn("confirm", button)
-        self.assertIn("停止当前", button["confirm"]["text"]["content"])
+        self.assertIn("stop the current", button["confirm"]["text"]["content"])
         self.card.page = 1
         self.assertEqual(len(cards.build_history_card(self.card)["body"]["elements"][1]["elements"][0]["options"]), 3)
 
@@ -107,7 +107,7 @@ class InteractiveCardTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(("receive_id_type", "union_id"), request.queries)
             self.assertEqual(request.request_body.receive_id, "user-1")
             self.assertEqual(json.loads(request.request_body.content), body)
-            await cards.update_interactive_card("sent", cards.status_card("已激活"))
+            await cards.update_interactive_card("sent", cards.status_card("Activated"))
             self.assertEqual(call.call_args.args[1].message_id, "sent")
             call.return_value = NS(success=lambda: False, code=123, get_log_id=lambda: "log")
             with self.assertRaisesRegex(RuntimeError, "123"):
@@ -120,7 +120,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.send = self.enterContext(patch.object(cards, "send_interactive_card", AsyncMock(return_value="message-1")))
         self.update = self.enterContext(patch.object(cards, "update_interactive_card", AsyncMock()))
         self.listing = self.enterContext(patch.object(gateway_commands, "list_sessions", AsyncMock(return_value=[
-            NS(thread_id="thread-1", thread_name="历史名称", updated_at=None)])))
+            NS(thread_id="thread-1", thread_name="History name", updated_at=None)])))
         self.real_restore = self.commands.processing_history_restore
         self.restore = self.enterContext(patch.object(self.commands, "processing_history_restore", AsyncMock(
             return_value={"ok": True, "thread_id": "thread-1"})))
@@ -155,12 +155,12 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trusted.event.sender.sender_id.union_id, "user-1")
         self.assertEqual(thread_id, "thread-1")
         self.update.assert_awaited_once()
-        self.assertIn("已激活", json.dumps(self.update.call_args.args[1], ensure_ascii=False))
+        self.assertIn("Activated", json.dumps(self.update.call_args.args[1], ensure_ascii=False))
 
     async def test_cancel_unknown_select_and_foreign_callbacks_do_not_restore(self) -> None:
         dispatcher = Mock()
         reply = self.commands.dispatch_history_action(dispatcher, callback(self.card, action="cancel"))
-        self.assertIn("未执行", reply.toast.content)
+        self.assertIn("No action", reply.toast.content)
         dispatcher.submit.assert_not_called()
         for data in (callback(self.card, user="other"), callback(self.card, selected="foreign")):
             await self.commands.processing_history_action(data)
@@ -177,7 +177,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         await self.commands.processing_history_action(data)
         await self.commands.processing_history_action(data)
         self.restore.assert_awaited_once()
-        self.assertIn("激活失败", json.dumps(self.send.call_args.args[1], ensure_ascii=False))
+        self.assertIn("Activation failed", json.dumps(self.send.call_args.args[1], ensure_ascii=False))
         self.assertTrue(self.card.finished)
         self.assertFalse(self.card.busy)
 
@@ -211,23 +211,23 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.listing.side_effect = RuntimeError("database")
         await self.commands.processing_history(helpers.event("/history"))
         text = json.dumps(self.send.call_args.args[1], ensure_ascii=False)
-        self.assertIn("失败", text)
-        self.assertNotIn("暂无", text)
+        self.assertIn("Failed to load or send session history", text)
+        self.assertNotIn("No session history", text)
 
     async def test_history_card_limits_sorted_database_records_without_deleting_history(self) -> None:
         directory = self.enterContext(TemporaryDirectory())
         self.enterContext(patch.object(session_history, "DB_PATH", Path(directory) / "state.sqlite"))
         self.enterContext(patch.object(gateway_commands, "list_sessions", session_history.list_sessions))
         expected = []
-        # 故意乱序插入、制造同秒和空时间，验证按数据库更新时间排序后再截取。
+        # Insert out of order with equal and missing timestamps to verify sorting by database update time before truncation.
         for index in range(36):
             thread_id = f"history-{index:02d}"
             updated_at = (index * 7) % 10 if index else None
-            await session_history.register_session("user-1", thread_id, "同名会话")
+            await session_history.register_session("user-1", thread_id, "Same-name session")
             if updated_at is not None:
                 await session_history.update_session_time("user-1", thread_id, updated_at)
             expected.append((updated_at if updated_at is not None else -1, thread_id))
-        await session_history.register_session("other", "foreign", "其他用户")
+        await session_history.register_session("other", "foreign", "Other user")
         await session_history.update_session_time("other", "foreign", 999)
         expected_ids = [item[1] for item in sorted(expected, reverse=True)]
         for limit in (30, 5, 40):
@@ -236,7 +236,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
                 body = self.send.call_args.args[1]
                 values = body["body"]["elements"][1]["elements"][0]["options"]
                 self.assertEqual([item["value"] for item in values], expected_ids[:limit])
-                self.assertNotIn("下一页", json.dumps(body, ensure_ascii=False))
+                self.assertNotIn("Next", json.dumps(body, ensure_ascii=False))
         legacy = dict(CONFIG["messaging"])
         legacy.pop("sessionHistoryLimit")
         with patch.dict(CONFIG["messaging"], legacy, clear=True):
@@ -249,7 +249,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         db_path = Path(directory) / "state.sqlite"
         self.enterContext(patch.object(session_history, "DB_PATH", db_path))
         self.enterContext(patch.object(thread_manager, "DB_PATH", db_path))
-        await session_history.register_session("user-1", "thread-1", "历史名称")
+        await session_history.register_session("user-1", "thread-1", "History name")
         await session_history.update_session_time("user-1", "thread-1", 100)
         sdk = NS(thread_unarchive=AsyncMock(return_value=NS(
             id="thread-1", read=AsyncMock(return_value=NS(thread=NS(updated_at=200))))))
@@ -275,7 +275,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await thread_manager.get_user_thread("user-1"), "old" if failure else "thread-1")
                 self.assertNotIn("chat-1", self.runtime.cache.reset_tasks)
                 text = json.dumps(self.update.call_args.args[1], ensure_ascii=False)
-                self.assertIn("激活失败" if failure else "已激活", text)
+                self.assertIn("Activation failed" if failure else "Activated", text)
 
     def test_callback_capacity_and_expiry_return_error_toast(self) -> None:
         dispatcher = Mock()
@@ -283,7 +283,7 @@ class HistoryInteractionGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.commands.dispatch_history_action(dispatcher, callback(self.card)).toast.type, "error")
         dispatcher.submit.reset_mock()
         self.card.created_at -= cards.CARD_TTL_SECONDS
-        self.assertIn("失效", self.commands.dispatch_history_action(dispatcher, callback(self.card)).toast.content)
+        self.assertIn("expired", self.commands.dispatch_history_action(dispatcher, callback(self.card)).toast.content)
         dispatcher.submit.assert_not_called()
 
 

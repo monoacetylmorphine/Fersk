@@ -1,4 +1,4 @@
-"""统一业务日志的控制台输出。"""
+"""Consistent console output for application logs."""
 
 from __future__ import annotations
 
@@ -19,18 +19,21 @@ _logger.propagate = False
 
 
 class RedactingFormatter(logging.Formatter):
-    """保留 SDK DEBUG 与原始格式，仅遮蔽连接凭据。"""
+    """Preserve SDK DEBUG logs and their original format while masking connection credentials."""
 
     def __init__(self, original: logging.Formatter | None) -> None:
+        """保留原日志 formatter，没有原 formatter 时使用默认实现。"""
         super().__init__()
         self.original = original or logging.Formatter()
 
     def format(self, record: logging.LogRecord) -> str:
+        """沿用原 formatter 生成文本，再遮蔽 URL 查询参数中的 access_key、ticket 和 access_token 值。"""
         return re.sub(r"(?i)([?&](?:access_key|ticket|access_token)=)[^&\s]+",
                       r"\1[REDACTED]", self.original.format(record))
 
 
 def protect_sdk_logs(sdk_logger: logging.Logger) -> None:
+    """为 SDK Logger 已有 handler 安装去重的脱敏 formatter，不改变日志等级或添加 handler。"""
     for handler in sdk_logger.handlers:
         if not isinstance(handler.formatter, RedactingFormatter):
             handler.setFormatter(RedactingFormatter(handler.formatter))

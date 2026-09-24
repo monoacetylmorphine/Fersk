@@ -1,4 +1,4 @@
-"""读取同一份运行配置，并使用共享 Schema 完整校验。"""
+"""Read the shared runtime configuration and validate it against the shared Schema."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-# 符号链接按导入包选择依赖，不要求 MCP 安装 Codex 运行模块。
+# Symlinked modules select dependencies by importing package; MCP does not require Codex runtime modules.
 if __package__ == "fersk_mcp.configs":
     from fersk_mcp.configs.validation import load_config
 else:
@@ -23,9 +23,10 @@ SCHEMA_FILE: Path = PROJECT_ROOT / "configs" / "config_schema.json"
 
 
 def _load_config(file_path: str | Path) -> dict[str, Any]:
+    """加载并校验配置；在 Codex 包中相对配置文件目录解析存储路径，MCP 包保留配置原值。"""
     file_path = Path(file_path).expanduser()
     config = load_config(file_path, SCHEMA_FILE)
-    # 仅 Codex 消费持久化路径；MCP 保留配置原值。
+    # Only Codex resolves persistence paths; MCP keeps the original configuration values.
     if __package__ != "fersk_mcp.configs":
         for key in ("runLogPath", "databasePath", "workspaceRoot"):
             path = Path(config["storage"][key]).expanduser()

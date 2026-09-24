@@ -73,19 +73,23 @@ INSERT INTO {TABLE_NAME} (
 
 
 def ensure_keys(log: dict[str, Any]) -> dict[str, Any]:
-    """校验日志字段，并为缺失字段填充默认值。"""
+    """返回日志字典的浅拷贝并为缺失键补默认值，不修改原字典，也不校验已有字段值的类型或范围。"""
     fixed_log = log.copy()
 
     for key in REQUIRED_KEYS:
         if key not in fixed_log:
             fixed_log[key] = DEFAULT_VALUES[key]
-            logger.debug("缺少字段 %s，已填充默认值 %s", key, DEFAULT_VALUES[key])
+            logger.debug("Missing field %s; filled with default value %s", key, DEFAULT_VALUES[key])
 
     return fixed_log
 
 
 async def SavingLog(log: dict[str, Any]) -> None:
-    """异步写入日志。"""
+    """将一条补齐字段的用量记录写入配置的 SQLite 表并提交。
+
+    启用 WAL，按需建表，并在写事务中为旧表补充 runId 列；不合并或去重用量记录。
+    SQLite 异常记录后重新抛出，不输出 CSV 文件。
+    """
     fixed_log = ensure_keys(log)
 
     try:
@@ -94,9 +98,9 @@ async def SavingLog(log: dict[str, Any]) -> None:
 
             async with db.execute("PRAGMA journal_mode=WAL") as cursor:
                 if (await cursor.fetchone())[0] != "wal":
-                    raise aiosqlite.OperationalError("无法启用 SQLite WAL 模式")
+                    raise aiosqlite.OperationalError("Unable to enable SQLite WAL mode")
             await db.execute(CREATE_TABLE_SQL)
-            # 写事务串行化旧表检查和追加字段，避免并发首次写入重复迁移。
+            # Serialize legacy table checks and column additions within a write transaction to avoid duplicate migrations on concurrent first writes.
             await db.execute("BEGIN IMMEDIATE")
             async with db.execute(f"PRAGMA table_info({TABLE_NAME})") as cursor:
                 columns = {row[1] for row in await cursor.fetchall()}
@@ -124,7 +128,7 @@ async def SavingLog(log: dict[str, Any]) -> None:
             await db.commit()
             logger.info("Usage : detail=%s", log)
     except aiosqlite.Error as exc:
-        logger.exception("数据库操作失败")
+        logger.exception("Database operation failed")
         raise
 
 

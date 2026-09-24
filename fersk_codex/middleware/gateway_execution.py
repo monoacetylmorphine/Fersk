@@ -1,4 +1,4 @@
-"""消息批次执行、steer 转交和流式卡片交付。"""
+"""Message batch execution, steer handoff, and streaming card delivery."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ logger = get_logger("Message")
 
 
 class GatewayExecution:
-    """通过共享 runtime 协调提交和收尾，输出阶段不占用提交锁。"""
+    """Coordinate submission and cleanup through shared runtime; output does not hold the submission lock."""
 
     def __init__(
         self,
@@ -39,12 +39,13 @@ class GatewayExecution:
         *,
         assemble_input: Callable[[MessageBatch], Awaitable[AssemblyResult]],
     ) -> None:
+        """绑定共享 runtime 与缓存，并注入消息输入组装函数。"""
         self.runtime = runtime
         self.cache = runtime.cache
         self.assemble_input = assemble_input
 
     def _pending_batch(self, batch: MessageBatch) -> MessageBatch:
-        """在原有调用位置筛除已处理消息，不改变提交锁的边界。"""
+        """返回排除已处理消息及已登记到活跃运行的消息后的新批次，不修改原批次。"""
         return replace(batch, messages=tuple(
             message for message in batch.messages
             if message.message_id not in self.cache.processed_message_ids.get(batch.chat_id, {})
@@ -52,9 +53,14 @@ class GatewayExecution:
         ))
 
     async def _handle_message_batch(self, batch: MessageBatch, generation: int) -> None:
+        """校验批次容量和聊天阻塞状态，为可提交消息创建执行任务及 watchdog。
+
+        等待执行或监督结果，并在取消或退出时协调停止、收尾、运行索引释放与 reaction 清理。
+        仍未完成的清理交由后台观察，不将停止请求本身视为已确认停止。
+        """
         if len(self.cache.all_runs) + len(self.runtime.detached_tasks) >= CONFIG["messaging"].get("maxPendingEvents", 32):
             try:
-                await self.runtime.send_card(batch.union_id, "当前任务繁忙，请稍后重试。")
+                await self.runtime.send_card(batch.union_id, "The current task is busy. Please try again later.")
             finally:
                 await self.runtime._clear_reaction(batch.chat_id, {m.message_id for m in batch.messages})
             return
@@ -96,7 +102,7 @@ class GatewayExecution:
             if state.stop_task:
                 await asyncio.wait({state.stop_task}, timeout=settings()["cleanupTimeoutSeconds"])
             if state.probe.cleanup_timed_out or (state.probe.stop_reason and state.probe.stop_reason.endswith("timeout")):
-                # worker 先完成时，给 watchdog 已发起的超时通知保留请求预算。
+                # If the worker finishes first, preserve the request budget for timeout notifications already started by the watchdog.
                 await asyncio.wait({watcher}, timeout=settings()["cardRequestTimeoutSeconds"] + settings()["cleanupTimeoutSeconds"])
             watcher.cancel()
             await asyncio.wait({watcher}, timeout=settings()["cleanupTimeoutSeconds"])
@@ -109,7 +115,7 @@ class GatewayExecution:
             if state.task is not None and not state.task.done() and not state.released:
                 await self.runtime._cleanup_timeout(state)
             self.runtime._release_run(state)
-            # 输出 worker 退出、卡片收尾后清除；steer 消息继续由接收任务负责。
+            # Clean up after the output worker exits and the card is finalized; the receiving task remains responsible for steer messages.
             if state.task is None or state.task.done():
                 try:
                     async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
@@ -118,7 +124,7 @@ class GatewayExecution:
                             if self.cache.active_runs_by_message_id.get(mid) in (None, state)
                         })
                 except Exception:
-                    logger.exception("任务 reaction 清理未完成，交由后台重试: run_id=%s", state.run_id)
+                    logger.exception("Task reaction cleanup is incomplete; retrying in the background: run_id=%s", state.run_id)
 
     async def _execute_message_batch(
         self,
@@ -126,7 +132,11 @@ class GatewayExecution:
         generation: int,
         state: ActiveCodexRun,
     ) -> None:
-        """Serialize input submission only; the original task owns the reply stream."""
+        """在聊天提交锁内过滤消息、组装输入，并优先尝试向当前运行 steer。
+
+        steer 接受后转交消息归属，由原任务继续持有输出流；否则等待旧任务结束并启动新 turn。
+        收到 started 后释放提交锁并交付卡片，finally 关闭事件流、清理运行登记并唤醒等待者。
+        """
         events = None
         transferred = False
         try:
@@ -217,7 +227,7 @@ class GatewayExecution:
                 )
                 first = await anext(events, None)
                 if first is None:
-                    raise RuntimeError("Codex 启动后未返回任何状态")
+                    raise RuntimeError("Codex returned no status after startup")
                 if first["type"] != "started":
                     state.probe.finish("failed" if first["type"] == "error" else "completed")
                     if not await self.runtime._run_was_interrupted(state):
@@ -231,7 +241,7 @@ class GatewayExecution:
             # No submission lock is held during model output or CardKit updates.
             await self._deliver_reply(batch, assembly.codex_input, state, events)
         except Exception as exc:
-            logger.exception("消息批次处理异常: chat_id=%s, error=%s", batch.chat_id, exc)
+            logger.exception("Message batch processing error: chat_id=%s, error=%s", batch.chat_id, exc)
             state.probe.record("exception", errorType=type(exc).__name__)
             if not state.interrupted:
                 state.probe.finish("failed")
@@ -249,7 +259,7 @@ class GatewayExecution:
                             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
                                 await events.aclose()
                     except Exception:
-                        logger.exception("事件流清理失败: run_id=%s", state.run_id)
+                        logger.exception("Event stream cleanup failed: run_id=%s", state.run_id)
                         if not await self.runtime.codex.force_close(state.run_id) and not state.expired:
                             self.cache.blocked_chats[state.chat_id] = state
                             state.probe.stop_confirmed = False
@@ -266,7 +276,7 @@ class GatewayExecution:
                                         self.cache.active_runs_by_chat.pop(batch.chat_id, None)
                                     await self.runtime.codex.forget_run(state.run_id)
                         except Exception:
-                            logger.exception("任务收尾失败: run_id=%s", state.run_id)
+                            logger.exception("Task cleanup failed: run_id=%s", state.run_id)
                             if not transferred:
                                 await self.runtime._unregister_active_run(state)
                             if self.cache.active_runs_by_chat.get(batch.chat_id) is state:
@@ -290,7 +300,7 @@ class GatewayExecution:
             except CardDeliveryError as exc:
                 # The sender drains the model stream before reporting delivery failure.
                 # A CardKit outage must not interrupt an otherwise healthy Codex turn.
-                logger.error("卡片交付失败: run_id=%s, error_type=%s", state.run_id, type(exc).__name__)
+                logger.error("Card delivery failed: run_id=%s, error_type=%s", state.run_id, type(exc).__name__)
                 state.probe.record("delivery_failed", errorType=type(exc).__name__)
 
     async def _reply_content(
@@ -301,7 +311,13 @@ class GatewayExecution:
         *,
         events: AsyncGenerator[RunEvent, None] | None = None,
     ) -> AsyncGenerator[str | CardReplace | CardSteer, None]:
-        """展示推理、工具及运行进度；最终答案替换正文并保持定格。"""
+        """将运行事件转换为卡片文本、正文替换及 steer 控制对象。
+
+        答案开始前展示推理、commentary 和工具状态；usage 不进入卡片正文。
+        首个答案替换正文，后续答案追加，
+        期间不再追加上述进度。错误可替换或追加，接受 steer 后重置展示状态；检测到停止时
+        抛出 CardStreamStopped，使发送层丢弃未发送缓冲。
+        """
         answer_started = False
         last_text_item = None
         async with aclosing(events if events is not None else self.runtime.codex.running(
@@ -318,7 +334,7 @@ class GatewayExecution:
                     if rotation.accepted:
                         answer_started = False
                         last_text_item = None
-                elif event_type in {"reasoning", "progress", "usage"} or (
+                elif event_type in {"reasoning", "progress"} or (
                     event_type == "answer" and event.get("phase") == "commentary"
                 ):
                     if chunk and not answer_started:

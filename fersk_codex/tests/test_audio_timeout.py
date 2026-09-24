@@ -92,7 +92,7 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
             ), patch.object(audio, 'AsyncOpenAI') as api:
                 with self.assertRaises(audio.AudioConversionTimeout) as error:
                     await audio.ASR().transfer(source)
-                self.assertIn('音频转换失败', str(error.exception))
+                self.assertIn('Audio conversion failed', str(error.exception))
                 api.assert_not_called()
                 self.assertEqual(len(outputs), 2)
                 self.assertFalse(converted.exists())
@@ -115,7 +115,7 @@ class AudioTimeoutTests(unittest.IsolatedAsyncioTestCase):
             CollectedMessage('m1', 'audio', {'file_key': 'voice'}, 1),
             CollectedMessage('m2', 'text', {'text': 'summarize'}, 2),
         ))
-        with patch.object(audio.ASR, 'transfer', AsyncMock(side_effect=audio.AudioConversionTimeout('音频转换失败：超过 9 分钟'))):
+        with patch.object(audio.ASR, 'transfer', AsyncMock(side_effect=audio.AudioConversionTimeout('Audio conversion failed: exceeded 9 minutes'))):
             result = await assembly.assemble_codex_input(batch)
         self.assertIsNone(result.codex_input)
-        self.assertIn('超过 9 分钟', ' '.join(result.notices))
+        self.assertIn('exceeded 9 minutes', ' '.join(result.notices))

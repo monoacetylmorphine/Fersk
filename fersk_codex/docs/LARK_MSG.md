@@ -32,7 +32,11 @@ await sending_card(union_id, content_stream())
 
 每张卡从创建请求开始计时，持续 540 秒后提交缓冲并关闭流式状态；之后有新文本才创建新卡，所有卡片标题统一为“Codex”，没有新文本不发送空卡。续卡仅包含后续文本，不重复旧卡全文；每张卡独立递增请求序号。遇到明确的 `300309` 拒绝时，新建续卡承接未提交后缀（正文替换则承接完整的新正文）。其他交付错误不盲目重试结果不确定的请求：关闭旧卡、停止卡片输出，继续消费模型事件至结束，再抛出 `CardDeliveryError`。网关记录 `delivery_failed`，不会因此中断模型或将已完成的任务改为失败；原有任务期限仍生效。终端记录卡片创建、关闭和错误；逐次更新的序号、字符数及卡龄为 debug 日志。
 
-后端将 `item/reasoning/textDelta` 和 `item/reasoning/summaryTextDelta` 统一转换为 reasoning，保留 delta 文本和 item_id，兼容根目录样本中的 API 在线模型和本地 Ollama 模型；不在 `item/completed` 重复追加推理全文。后端按 `item/started` 保留 agentMessage 的 phase。网关持续展示 reasoning 和 commentary，不因出现进度说明而屏蔽后续推理；工具调用、工具结果和 usage 不展示。最终答案首段覆盖当前卡正文（包括未发送的缓冲），后续答案累积追加；未提供 phase 的旧协议答案兼容原来的替换行为，但仍不会屏蔽之后的 reasoning。已经关闭的旧卡保留历史内容。cmd 仍显示为通知；错误在答案后追加，尚无答案时以错误替换当前正文。输入校验提示和附件通知也使用卡片。撤回时通过 `CardStreamStopped` 丢弃未发送缓冲，保留此前已显示的内容并结束流式状态；已经发出的网络请求无法追回。
+后端将 `item/reasoning/textDelta` 和 `item/reasoning/summaryTextDelta` 统一转换为 reasoning，保留 delta 文本和 item_id，兼容根目录样本中的 API 在线模型和本地 Ollama 模型；不在 `item/completed` 重复追加推理全文。后端按 `item/started` 保留 agentMessage 的 phase。网关在最终答案开始前展示 reasoning、commentary 和工具状态，不因出现工具状态或 commentary 而屏蔽后续推理。最终答案首段覆盖当前卡正文（包括未发送的缓冲），后续答案累积追加；未提供 phase 的旧协议答案兼容原来的替换行为。最终答案开始后，reasoning、commentary 和工具状态不再追加到正文。usage 事件仅用于数据库记录和任务耗时回填，不生成输出事件；网关也忽略 usage，执行过程中和最终答案后均不展示用量信息。已经关闭的旧卡保留历史内容。cmd 仍显示为通知；错误在答案后追加，尚无答案时以错误替换当前正文。输入校验提示和附件通知也使用卡片。撤回时通过 `CardStreamStopped` 丢弃未发送缓冲，保留此前已显示的内容并结束流式状态；已经发出的网络请求无法追回。
+
+工具开始时仅显示“智能体执行 xxx 工具”，完成时依据 SDK 状态显示“智能体执行 xxx 工具成功/失败”。命令工具名称使用 `commandExecution`，不从命令文本推测原始调用名称；MCP 使用 `server.tool`，Dynamic 使用 `namespace.tool`（没有 namespace 时仅使用 tool），协作工具使用实际 tool 名称，其余已识别工具使用类型名称。失败、拒绝、中断、非零命令退出码、Dynamic 的 `success=False` 或明确的 error/failure 优先判为失败；明确完成状态、零退出码或 `success=True` 才判为成功。没有可靠成功标志时显示“智能体执行 xxx 工具执行结束（状态未知）”；没有完成事件时不补造结果。成功表示工具协议报告成功，不通过输出正文推断业务结果。
+
+工具命令、参数、工作路径、输出增量、汇总结果、文件 diff 和错误详情均不推送。工具进度、hook、plan 及未识别事件不再通过通用 JSON 兜底进入卡片；事件仍先交给现有日志和 watchdog 处理。不改变工具执行、推理 delta、commentary、最终答案、任务级错误以及停止/steer 的处理。工具状态沿用现有 `progress` 和 `item_id`，末尾换行保证同一工具连续开始/完成消息不会粘连；最终答案仍覆盖当前卡正文。
 
 应用需要具备消息发送及 CardKit 创建、更新权限。使用现有 `lark_client` 的应用凭据，不新增密钥配置。官方接口说明：[流式更新文本](https://open.feishu.cn/document/cardkit-v1/card-element/content)、[更新卡片配置](https://open.feishu.cn/document/cardkit-v1/card/settings)。
 

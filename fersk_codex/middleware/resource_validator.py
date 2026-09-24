@@ -1,4 +1,4 @@
-"""在落盘前验证飞书下载资源。"""
+"""Validate resources downloaded from Lark before writing them to disk."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ OFFICE_MIMES: dict[str, str] = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
 }
-# 来源：本项目元数据校验的初始资源预算，不是 Office 格式或平台上限。
+# Source: initial resource budget for project metadata validation, not an Office format or platform limit.
 MAX_OFFICE_METADATA_BYTES = 1024 * 1024
 
 FORMAT_EXTENSIONS: dict[str, str] = {
@@ -121,7 +121,7 @@ STRICT_FORMATS: set[str] = {
 
 
 class ResourceValidationError(ValueError):
-    """资源字节或元数据不可信时拒绝继续处理。"""
+    """Reject further processing when resource bytes or metadata are untrusted."""
 
 
 @dataclass(frozen=True)
@@ -134,11 +134,11 @@ class ValidatedResource:
 
 
 def read_resource_bytes(stream: BinaryIO) -> bytes:
-    """读取 SDK BytesIO 响应或普通二进制流。"""
+    """从支持 getvalue 的 SDK 响应或普通二进制流读取字节；结果不是 bytes 时抛出 ResourceValidationError。"""
     getvalue = getattr(stream, "getvalue", None)
     data = getvalue() if callable(getvalue) else stream.read()
     if not isinstance(data, bytes):
-        raise ResourceValidationError("消息资源响应不是二进制内容")
+        raise ResourceValidationError("Message resource response is not binary content")
     return data
 
 
@@ -150,11 +150,15 @@ def validate_downloaded_resource(
     file_name: str | None,
     headers: Mapping[str, object] | None = None,
 ) -> ValidatedResource:
-    """校验响应字节并返回安全且与格式匹配的文件名。"""
+    """校验资源字节及响应元数据，返回包含原始字节、安全文件名、MIME、检测格式和扩展名的 ValidatedResource。
+
+    检查长度、格式声明及签名的一致性，并对支持的 Office 容器校验元数据；
+    不可信或不匹配的资源抛出 ResourceValidationError。本函数不写磁盘，也不判断模型是否接受该扩展名。
+    """
     if resource_type not in {"image", "file"}:
-        raise ResourceValidationError(f"非法资源类型: {resource_type}")
+        raise ResourceValidationError(f"Invalid resource type: {resource_type}")
     if not isinstance(data, bytes) or not data:
-        raise ResourceValidationError("下载资源内容为空")
+        raise ResourceValidationError("Downloaded resource is empty")
 
     normalized_headers = {
         str(key).lower(): str(value)
@@ -173,7 +177,7 @@ def validate_downloaded_resource(
                         else OFFICE_MIMES.get(mime_type))
     if office_extension:
         if mime_type in OFFICE_MIMES and OFFICE_MIMES[mime_type] != office_extension:
-            raise ResourceValidationError("Office 扩展名与 MIME 类型不匹配")
+            raise ResourceValidationError("Office extension does not match the MIME type")
         _validate_office(data, office_extension)
 
     detected_format = _resolve_format(
@@ -188,7 +192,7 @@ def validate_downloaded_resource(
 
     if resource_type == "image" and detected_format not in IMAGE_FORMATS:
         raise ResourceValidationError(
-            f"资源声明为图片，但实际格式为 {detected_format or '未知'}"
+            f"Resource is declared as an image, but its detected format is {detected_format or 'unknown'}"
         )
 
     _validate_mime_consistency(mime_type, mime_format, detected_format)
@@ -223,15 +227,19 @@ def _resolve_format(
     mime_type: str,
     original_extension: str,
 ) -> str:
+    """综合扩展名、MIME 和字节签名确定格式，并校验文本及 JSON 内容。
+
+    已知二进制格式要求签名匹配；未知普通文件可保留扩展名推断结果，是否支持由上层决定。
+    """
     if original_extension in TEXT_EXTENSIONS or original_extension == ".json":
         if signature_format:
-            raise ResourceValidationError("文本扩展名与二进制文件签名不匹配")
+            raise ResourceValidationError("Text extension does not match the binary file signature")
         text = _validate_plain_text(data)
         if original_extension == ".json":
             try:
                 json.loads(text)
             except json.JSONDecodeError as exc:
-                raise ResourceValidationError("JSON 内容格式无效") from exc
+                raise ResourceValidationError("Invalid JSON content format") from exc
             return "json"
         return "text"
     # Binary signatures are the strongest source of truth.
@@ -251,7 +259,7 @@ def _resolve_format(
         try:
             json.loads(data.decode("utf-8-sig"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ResourceValidationError("JSON MIME/扩展名与实际内容不匹配") from exc
+            raise ResourceValidationError("JSON MIME type or extension does not match the actual content") from exc
         return "json"
 
     if claimed_format == "text":
@@ -262,7 +270,7 @@ def _resolve_format(
     # renamed executables or archives from being trusted as documents/media.
     if claimed_format in STRICT_FORMATS:
         raise ResourceValidationError(
-            f"{mime_type or original_extension or resource_type} 与文件签名不匹配"
+            f"{mime_type or original_extension or resource_type} does not match the file signature"
         )
 
     # Unknown file formats may still be saved under their original extension;
@@ -270,10 +278,11 @@ def _resolve_format(
     if resource_type == "file" and original_extension:
         return extension_format or original_extension.removeprefix(".")
 
-    raise ResourceValidationError("无法从 MIME、文件名和文件签名识别资源格式")
+    raise ResourceValidationError("Unable to identify the resource format from its MIME type, filename, and file signature")
 
 
 def _detect_signature(data: bytes) -> str | None:
+    """根据已支持的文件头特征返回格式名称，无法识别时返回 None；不验证完整文件内容。"""
     if data.startswith(b"\xff\xd8\xff"):
         return "jpeg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -308,6 +317,7 @@ def _validate_mime_consistency(
     mime_format: str | None,
     detected_format: str,
 ) -> None:
+    """检查已知 MIME 与检测格式是否相容，允许通用 MIME 及规定的容器兼容组合，否则抛出校验异常。"""
     if mime_type in GENERIC_MIME_TYPES or mime_format is None:
         return
     compatible = (
@@ -318,11 +328,12 @@ def _validate_mime_consistency(
     )
     if not compatible:
         raise ResourceValidationError(
-            f"MIME {mime_type} 与文件签名 {detected_format} 不匹配"
+            f"MIME type {mime_type} does not match file signature {detected_format}"
         )
 
 
 def _choose_extension(detected_format: str, mime_type: str, original_extension: str) -> str:
+    """优先保留与检测格式一致的原扩展名，其次使用格式映射；无可用扩展名时抛出校验异常。"""
     # Preserve the extension supplied by Lark whenever it agrees with the
     # validated content. Only repair the name when metadata and bytes disagree.
     if EXTENSION_FORMATS.get(original_extension) == detected_format:
@@ -332,43 +343,49 @@ def _choose_extension(detected_format: str, mime_type: str, original_extension: 
     if original_extension:
         return original_extension
     raise ResourceValidationError(
-        f"无法为 {mime_type or detected_format} 确定安全的文件扩展名"
+        f"Unable to determine a safe file extension for {mime_type or detected_format}"
     )
 
 
 def _validate_plain_text(data: bytes) -> str:
-    # 保留既有 UTF-8 策略；不猜测编码，也不修改原始字节。
+    """拒绝不允许的二进制控制字符并按 UTF-8（可带 BOM）解码，失败时抛出 ResourceValidationError。"""
+    # Preserve the existing UTF-8 policy; do not guess encodings or modify the original bytes.
     if any(value < 32 and value not in (9, 10, 12, 13) for value in data):
-        raise ResourceValidationError("文本文件包含二进制控制字符")
+        raise ResourceValidationError("Text file contains binary control characters")
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise ResourceValidationError("文本文件不是有效的 UTF-8") from exc
+        raise ResourceValidationError("Text file is not valid UTF-8") from exc
 
 
 def _validate_office(data: bytes, extension: str) -> None:
-    """只读 ZIP 目录及有界元数据；验证主部件，不解压或执行文档内容。"""
+    """读取 ZIP 目录及有大小限制的元数据 XML，检查主文档关系、部件属性和声明类型。
+
+    拒绝重复部件、异常路径、实体声明及格式不匹配；不解析主文档正文，不向磁盘解压或执行内容。
+    底层容器及元数据读取异常转换为 ResourceValidationError。
+    """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             names = archive.namelist()
             if len(names) != len(set(names)):
-                raise ResourceValidationError("Office 容器存在重复部件")
+                raise ResourceValidationError("Office container contains duplicate parts")
 
             def metadata(name: str) -> ET.Element:
+                """有界读取并解析指定元数据 XML，按显式 BOM 支持 UTF-16，拒绝空字节及实体声明。"""
                 info = archive.getinfo(name)
                 if info.file_size > MAX_OFFICE_METADATA_BYTES:
-                    raise ResourceValidationError("Office 元数据超过校验大小限制")
+                    raise ResourceValidationError("Office metadata exceeds the validation size limit")
                 with archive.open(info) as stream:
                     raw = stream.read(MAX_OFFICE_METADATA_BYTES + 1)
                 if len(raw) > MAX_OFFICE_METADATA_BYTES:
-                    raise ResourceValidationError("Office 元数据超过校验大小限制")
-                # 显式 BOM 支持 UTF-16；不猜测编码，拒绝实体声明与空字节。
+                    raise ResourceValidationError("Office metadata exceeds the validation size limit")
+                # An explicit BOM allows UTF-16; do not guess encodings, and reject entity declarations and null bytes.
                 encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
                 text = raw.decode(encoding)
                 if "\x00" in text:
-                    raise ResourceValidationError("Office 元数据编码无效")
+                    raise ResourceValidationError("Invalid Office metadata encoding")
                 if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
-                    raise ResourceValidationError("Office 元数据不允许实体声明")
+                    raise ResourceValidationError("Entity declarations are not allowed in Office metadata")
                 return ET.fromstring(text)
 
             types = metadata("[Content_Types].xml")
@@ -379,20 +396,20 @@ def _validate_office(data: bytes, extension: str) -> None:
                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
                            "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument"}]
             if len(targets) != 1 or targets[0].get("TargetMode", "Internal") != "Internal":
-                raise ResourceValidationError("Office 容器缺少唯一的内部主文档关系")
+                raise ResourceValidationError("Office container lacks a unique internal main-document relationship")
             target = unquote(targets[0].get("Target", "")).lstrip("/")
             if (not target or "\\" in target or ":" in target
                     or ".." in target.split("/")):
-                raise ResourceValidationError("Office 主文档路径无效")
+                raise ResourceValidationError("Invalid Office main-document path")
             target = posixpath.normpath(target)
             info = archive.getinfo(target)
             if info.is_dir() or info.file_size == 0 or info.flag_bits & 1:
-                raise ResourceValidationError("Office 主文档部件为空或不可读取")
+                raise ResourceValidationError("Office main-document part is empty or unreadable")
             overrides = [node.get("ContentType") for node in types
                          if node.tag == "{http://schemas.openxmlformats.org/package/2006/content-types}Override"
                          and unquote(node.get("PartName", "")).lstrip("/") == target]
-            # OPC 按部件名优先匹配 Override，缺省时按扩展名匹配 Default。
-            # 来源：WPS 实际样例通过 Default 声明 workbook.xml 的主文档类型。
+            # OPC prefers Override matches by part name, falling back to Default matches by extension.
+            # Source: a real WPS sample declares the workbook.xml main-document type through Default.
             content_types = overrides
             if not overrides:
                 part_extension = posixpath.splitext(target)[1].lstrip(".").lower()
@@ -401,37 +418,41 @@ def _validate_office(data: bytes, extension: str) -> None:
                                  and node.get("Extension", "").lower() == part_extension
                                  and part_extension]
             if content_types != [OFFICE_TYPES[extension]]:
-                raise ResourceValidationError("Office 主文档类型与扩展名不匹配")
+                raise ResourceValidationError("Office main-document type does not match its extension")
     except ResourceValidationError:
         raise
     except (zipfile.BadZipFile, KeyError, ET.ParseError, UnicodeError, RuntimeError,
             NotImplementedError, ValueError, OSError) as exc:
-        raise ResourceValidationError("Office 容器损坏或缺少必要元数据") from exc
+        raise ResourceValidationError("Office container is corrupt or lacks required metadata") from exc
 
 
 def _validate_content_length(data: bytes, value: str | None) -> None:
+    """响应声明了非空 Content-Length 时，校验其为整数且等于实际字节数，否则抛出校验异常。"""
     if not value:
         return
     try:
         expected = int(value)
     except ValueError as exc:
-        raise ResourceValidationError("响应 Content-Length 非法") from exc
+        raise ResourceValidationError("Invalid response Content-Length") from exc
     if expected != len(data):
         raise ResourceValidationError(
-            f"资源下载不完整: Content-Length={expected}, 实际={len(data)}"
+            f"Incomplete resource download: Content-Length={expected}, actual={len(data)}"
         )
 
 
 def _normalize_mime(value: str | None) -> str:
+    """去除 MIME 参数和首尾空白并转为小写；缺失值返回空字符串。"""
     return (value or "").split(";", 1)[0].strip().lower()
 
 
 def _safe_name(value: str | None) -> str:
+    """提取原始路径的文件名，替换不允许的字符并去掉首尾点及下划线；缺失值返回空字符串。"""
     if not value:
         return ""
     return re.sub(r"[^\w.()\-\u4e00-\u9fff]+", "_", Path(value).name).strip("._")
 
 
 def _safe_stem(value: str) -> str:
+    """将资源标识转换为允许的文件名主干；结果为空时使用配置的后备名称。"""
     stem = re.sub(r"[^\w\-]+", "_", value).strip("._")
     return stem or CONFIG["resources"]["fileName"]["fallbackStem"]

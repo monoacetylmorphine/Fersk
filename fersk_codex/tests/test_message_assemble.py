@@ -40,8 +40,8 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
         return await self.assembly.assemble_codex_input(batch(*messages))
 
     async def test_single_text_is_trimmed_without_any_external_io(self) -> None:
-        result = await self.assemble(message("text", {"text": "  你好\n"}))
-        self.assertEqual(result.codex_input, "你好")
+        result = await self.assemble(message("text", {"text": "  Hello, café\n"}))
+        self.assertEqual(result.codex_input, "Hello, café")
         self.assertEqual(result.notices, ())
         self.download.assert_not_awaited()
         self.transcribe.assert_not_awaited()
@@ -59,7 +59,7 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(caught.exception.user_message, CONFIG["messages"]["emptyInput"])
 
     async def test_unsupported_message_type_fails_before_download(self) -> None:
-        with self.assertRaisesRegex(self.assembly.InputAssemblyError, "sticker、video"):
+        with self.assertRaisesRegex(self.assembly.InputAssemblyError, "sticker, video"):
             await self.assemble(message("video", {}), message("sticker", {}, 2))
         self.download.assert_not_awaited()
 
@@ -110,7 +110,7 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
                 result = await self.assemble(message("text", {"text": "inspect"}),
                     message("file", {"file_key": "f", "file_name": "program.exe"}, 2))
                 self.assertIsNone(result.codex_input)
-                self.assertIn("本次附件和文本任务均未提交", result.notices[0])
+                self.assertIn("Neither attachments nor the text task were submitted", result.notices[0])
 
     async def test_partial_success_keeps_text_and_valid_attachment(self) -> None:
         self.download.side_effect = [RuntimeError("offline"), "/tmp/ok.png"]
@@ -194,7 +194,7 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_post_attachment_limit_before_download(self) -> None:
         nodes = [[{'tag': 'img', 'image_key': f'img-{i}'} for i in range(11)]]
-        with self.assertRaisesRegex(self.assembly.InputAssemblyError, '最多接收 10 个附件'):
+        with self.assertRaisesRegex(self.assembly.InputAssemblyError, 'at most 10 attachments'):
             await self.assemble(message('post', {'content': nodes, 'content_v2': nodes}))
         self.download.assert_not_awaited()
         self.transcribe.assert_not_awaited()
@@ -209,13 +209,13 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_image_and_file_share_one_limit(self) -> None:
         with patch.dict(CONFIG['messaging'], historyPageSize=1):
-            with self.assertRaisesRegex(self.assembly.InputAssemblyError, '最多接收 1 个附件'):
+            with self.assertRaisesRegex(self.assembly.InputAssemblyError, 'at most 1 attachments'):
                 await self.assemble(message('image', {'image_key': 'i'}),
                                     message('file', {'file_key': 'f'}, 2))
         self.download.assert_not_awaited()
 
     async def test_post_file_reference_downloads_once_with_parent_message_id(self) -> None:
-        name = "本周工作总结&下周工作计划.xlsx"
+        name = "Weekly summary&next week plan.xlsx"
         rows = [[{"tag": "text", "text": "ddd", "style": []}]]
         self.download.return_value = f"/tmp/{name}"
         with patch.dict(CONFIG['messaging'], historyPageSize=1):
@@ -267,12 +267,12 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_post_files_do_not_submit_text_alone(self) -> None:
         for files, reason in (
-            ({}, "files 格式错误"), ("invalid", "files 格式错误"),
-            ([None], "附件格式错误"),
+            ({}, "invalid files format"), ("invalid", "invalid files format"),
+            ([None], "invalid attachment format"),
             ([{"file_name": "missing.pdf"}], CONFIG['messages']['missingResourceKeySuffix']),
             ([{"file_key": 123}], CONFIG['messages']['missingResourceKeySuffix']),
-            ([{"file_key": "folder", "is_folder": True}], "暂不支持文件夹"),
-            ([{"file_key": "folder", "is_folder": "true"}], "is_folder 格式错误"),
+            ([{"file_key": "folder", "is_folder": True}], "folders are not supported"),
+            ([{"file_key": "folder", "is_folder": "true"}], "invalid is_folder format"),
         ):
             with self.subTest(files=files):
                 result = await self.assemble(message("post", {
@@ -290,7 +290,7 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
                       {"file_key": "ok", "file_name": 123}],
         }))
         self.assertEqual([type(item) for item in result.codex_input], [TextInput, MentionInput])
-        self.assertIn("暂不支持文件夹", result.notices[0])
+        self.assertIn("folders are not supported", result.notices[0])
         self.download.assert_awaited_once_with(
             union_id="user", message_id="m1", resource_key="ok", resource_type="file")
 
@@ -303,13 +303,13 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
                     "files": [{"file_key": "file", "file_name": "attachment"}],
                 }))
                 self.assertIsNone(result.codex_input)
-                self.assertIn("本次附件和文本任务均未提交", result.notices[0])
+                self.assertIn("Neither attachments nor the text task were submitted", result.notices[0])
 
     async def test_post_files_and_images_share_limit_including_rejections(self) -> None:
         for files in ([{"file_key": "a"}, {"file_key": "b"}],
                       [{"file_key": "a"}, {"is_folder": True}]):
             with self.subTest(files=files), patch.dict(CONFIG['messaging'], historyPageSize=2):
-                with self.assertRaisesRegex(self.assembly.InputAssemblyError, "最多接收 2 个附件"):
+                with self.assertRaisesRegex(self.assembly.InputAssemblyError, "at most 2 attachments"):
                     await self.assemble(message("post", {
                         "content": [[{"tag": "img", "image_key": "image"}]], "files": files,
                     }))
@@ -317,8 +317,8 @@ class MessageAssemblyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_validation_errors_retain_cause_instead_of_network_failure(self) -> None:
         from fersk_codex.middleware.resource_validator import ResourceValidationError
-        self.download.side_effect = ResourceValidationError('Office 容器损坏或缺少必要元数据')
+        self.download.side_effect = ResourceValidationError('Office container is corrupt or lacks required metadata')
         result = await self.assemble(message('file', {'file_key': 'key', 'file_name': 'report.docx'}))
         self.assertIsNone(result.codex_input)
-        self.assertIn('Office 容器损坏', result.notices[0])
+        self.assertIn('Office container is corrupt', result.notices[0])
         self.assertNotIn(CONFIG['messages']['downloadFailedSuffix'], result.notices[0])

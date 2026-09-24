@@ -26,7 +26,7 @@ def history(message_id, sender="user", **kwargs):
 class MessageCollectorTests(unittest.TestCase):
     def test_post_files_survive_history_and_event_fallback(self) -> None:
         content = {"title": "", "content": [[{"tag": "text", "text": "ddd"}]],
-                   "files": [{"file_key": "workbook", "file_name": "工作计划.xlsx", "is_folder": False}]}
+                   "files": [{"file_key": "workbook", "file_name": "Work plan.xlsx", "is_folder": False}]}
         incoming = event()
         incoming.event.message.message_type = "post"
         incoming.event.message.content = json.dumps(content, ensure_ascii=False)

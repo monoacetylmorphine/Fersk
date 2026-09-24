@@ -1,4 +1,4 @@
-"""共享配置源、原子首次初始化及已有配置保护。"""
+"""Shared configuration source, atomic first initialization, and protection of existing configuration."""
 
 from __future__ import annotations
 

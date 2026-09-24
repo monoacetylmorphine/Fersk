@@ -1,4 +1,4 @@
-"""会话历史：与活跃绑定共用数据库，名称固定，SDK 时间用于最近使用排序。"""
+"""Session history shares the active-binding database, keeps names fixed, and uses SDK timestamps for recency ordering."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ class SessionRecord:
 
 
 def make_thread_name(prompt: str | list[InputItem]) -> str | None:
-    """按用户约定保留 15 个 Unicode 字素簇，超长追加省略号。"""
+    """提取 prompt 中的文本并合并连续空白，保留前 15 个 Unicode 字素簇，超长追加省略号；无文本返回 None。"""
     text = prompt if isinstance(prompt, str) else " ".join(
         item.text for item in prompt if isinstance(item, TextInput)
     )
@@ -82,7 +82,8 @@ def make_thread_name(prompt: str | list[InputItem]) -> str | None:
 
 
 def _truncate_thread_name(text: str) -> str | None:
-    # 只扫描到第 16 个字素簇，避免为长 prompt 构造完整字符列表。
+    """返回至多 15 个 Unicode 字素簇组成的名称，超长追加省略号，空字符串返回 None。"""
+    # Scan only up to the 16th grapheme cluster to avoid building a full character list for long prompts.
     clusters = []
     for match in regex.finditer(r"\X", text):
         clusters.append(match.group())
@@ -93,11 +94,12 @@ def _truncate_thread_name(text: str) -> str | None:
 
 @asynccontextmanager
 async def _connect() -> AsyncIterator[aiosqlite.Connection]:
+    """创建数据库父目录，打开 SQLite 连接并启用 WAL，确保历史表和索引存在后交给调用方使用，退出时关闭连接。"""
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH, timeout=30) as db:
         async with db.execute("PRAGMA journal_mode=WAL") as cursor:
             if (await cursor.fetchone())[0] != "wal":
-                raise aiosqlite.OperationalError("无法启用 SQLite WAL 模式")
+                raise aiosqlite.OperationalError("Unable to enable SQLite WAL mode")
         await db.execute(CREATE_TABLE_SQL)
         await db.execute(CREATE_INDEX_SQL)
         await db.commit()
@@ -143,7 +145,7 @@ async def claim_session_name(
 async def update_session_time(user_id: str, thread_id: str, updated_at: int) -> None:
     """只更新已有记录的 SDK 时间，不改名称；过期响应不能使时间倒退。"""
     if type(updated_at) is not int or updated_at < 0:
-        raise ValueError("SDK updated_at 必须是非负整数时间戳")
+        raise ValueError("SDK updated_at must be a non-negative integer timestamp")
     async with _connect() as db:
         await db.execute(UPDATE_SESSION_TIME_SQL, (updated_at, user_id, thread_id, updated_at))
         await db.commit()

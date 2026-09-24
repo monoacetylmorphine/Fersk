@@ -1,4 +1,4 @@
-"""验证 /stop、撤回和启动竞态；模拟飞书及 Codex，不读取凭据。"""
+"""Verify /stop, recall, and startup races with mocked Lark and Codex, without reading credentials."""
 
 from __future__ import annotations
 from fersk_codex.session.session_gateway import ActiveCodexRun
@@ -38,7 +38,7 @@ class CommandTests(unittest.TestCase):
     def test_exact_command_and_configuration(self) -> None:
         for text in ("/stop", "  /STOP\n"):
             self.assertTrue(is_stop_command("text", json.dumps({"text": text})))
-        for text in ("请 /stop", "/stop now", "/stopping", "@_user_1 /stop"):
+        for text in ("Please /stop", "/stop now", "/stopping", "@_user_1 /stop"):
             self.assertFalse(is_stop_command("text", json.dumps({"text": text})))
         for raw in ("invalid", "[]", "null", '{"text": 1}'):
             self.assertFalse(is_stop_command("text", raw))
@@ -82,7 +82,7 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
             from fersk_codex.services.lark.lark_message_card import CardDeliveryError, CardReplace, CardSteer, CardStreamSession, CardStreamStopped
             self.card_module = sys.modules["fersk_codex.services.lark.lark_message_card"]
             self.card_control_type = CardSteer
-        # 网关全部外部 I/O 替换，单独运行也不会读取凭据。
+        # Replace all external gateway I/O so standalone runs do not read credentials either.
         stubs = {
             "fersk_codex.services.lark.lark_client": module("fersk_codex.services.lark.lark_client", create_websocket_client=None),
             "fersk_codex.services.lark.lark_tools": module("fersk_codex.services.lark.lark_tools",
@@ -138,8 +138,8 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
         closed = []
         async def events(**kwargs):
             try:
-                yield {"type": "answer", "content": "已显示"}
-                yield {"type": "answer", "content": "停止后内容"}
+                yield {"type": "answer", "content": "Displayed"}
+                yield {"type": "answer", "content": "Content after stop"}
             finally:
                 closed.append(True)
         self.runtime.codex.running = events
@@ -260,7 +260,7 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
                     self.router.fetch_history.return_value = list(items)
                     await self.router.processing(data)
                 if not text_finishes:
-                    # 实际执行定时 flush 路径，缩短窗口以避免测试等待。
+                    # Exercise the actual timed flush path with a shorter window to avoid test delays.
                     await self.runtime.cache.buffer_tasks["chat-1"]
                 self.assertEqual(
                     {tuple(call.kwargs.values()) for call in self.runtime.delete_reaction.await_args_list},

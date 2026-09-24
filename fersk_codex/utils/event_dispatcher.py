@@ -1,4 +1,4 @@
-"""在线程回调创建协程前限制容量，并消费处理 Future 的异常。"""
+"""Limit capacity before thread callbacks create coroutines and consume handler Future exceptions."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ class EventDispatcher:
         capacity: int = 32,
         controls: int = 4,
     ) -> None:
-        # 来源：内部小规模部署的初始保护值，控制事件独立预留容量。
+        """绑定目标事件循环，分别为普通事件和控制事件创建独立容量限制。"""
+        # Source: initial protection limits for small internal deployments, with separate reserved capacity for control events.
         self.loop = loop
         self.normal = threading.BoundedSemaphore(capacity)
         self.controls = threading.BoundedSemaphore(controls)
@@ -34,9 +35,13 @@ class EventDispatcher:
         *,
         control: bool = False,
     ) -> bool:
+        """从线程回调向目标事件循环提交异步处理器，成功入队返回 True，容量不足返回 False。
+
+        返回 True 不代表业务处理成功；任务结束时释放名额并消费异常，创建或调度失败则清理后原样抛出。
+        """
         slots = self.controls if control else self.normal
         if not slots.acquire(blocking=False):
-            logger.error("入站事件容量已满: control=%s", control)
+            logger.error("Inbound event capacity is full: control=%s", control)
             return False
         coroutine = None
         try:
@@ -48,12 +53,13 @@ class EventDispatcher:
             slots.release()
             raise
         def done(completed: Future[None]) -> None:
+            """归还事件容量并消费 Future 结果，忽略取消，记录其他处理异常。"""
             slots.release()
             try:
                 completed.result()
             except CancelledError:
                 pass
             except Exception:
-                logger.exception("入站事件处理失败: control=%s", control)
+                logger.exception("Inbound event handling failed: control=%s", control)
         future.add_done_callback(done)
         return True

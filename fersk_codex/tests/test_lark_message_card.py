@@ -1,4 +1,4 @@
-"""验证卡片请求及网关流式适配；不加载真实凭据、不访问飞书。"""
+"""Verify card requests and gateway stream adaptation without real credentials or Lark access."""
 
 from __future__ import annotations
 import ast
@@ -32,7 +32,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                 card_element=SimpleNamespace(content=Mock(return_value=response())),
             )),
         )
-        # 仅替换项目的鉴权入口，请求对象使用真正的 Lark SDK。
+        # Replace only the project authentication entry point; use real Lark SDK request objects.
         stub = ModuleType("fersk_codex.services.lark.lark_client")
         stub.client = self.client
         with patch.dict(sys.modules, {"fersk_codex.services.lark.lark_client": stub}):
@@ -54,7 +54,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_static_card_and_recipient_routing(self) -> None:
         for recipient, kind in [("on_user", "union_id"), ("oc_group", "chat_id")]:
-            self.assertEqual(await self.card.sending_card(recipient, "**你好**"), "message-1")
+            self.assertEqual(await self.card.sending_card(recipient, "**Hello**"), "message-1")
             request = self.client.im.v1.message.create.call_args.args[0]
             self.assertIn(("receive_id_type", kind), request.queries)
             self.assertEqual(request.request_body.msg_type, "interactive")
@@ -62,28 +62,28 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["schema"], "2.0")
             self.assertEqual(body["header"]["template"], "blue")
             self.assertFalse(body["config"]["streaming_mode"])
-            self.assertEqual(body["body"]["elements"][0]["content"], "**你好**")
+            self.assertEqual(body["body"]["elements"][0]["content"], "**Hello**")
         self.client.cardkit.v1.card.create.assert_not_called()
 
     async def test_markdown_images_are_sent_as_bare_urls(self) -> None:
         content = (
-            "已生成：![预览](https://example.com/image.jpeg?x=1&y=2)\n"
-            "普通链接：[详情](https://example.com/detail)\n"
-            r"转义语法：\![示例](https://example.com/example.png)"
+            "Generated: ![Preview](https://example.com/image.jpeg?x=1&y=2)\n"
+            "Regular link: [Details](https://example.com/detail)\n"
+            r"Escaped syntax: \![Example](https://example.com/example.png)"
         )
         await self.card.sending_card("on_user", content)
         request = self.client.im.v1.message.create.call_args.args[0]
         body = json.loads(request.request_body.content)
         self.assertEqual(
             body["body"]["elements"][0]["content"],
-            "已生成：https://example.com/image.jpeg?x=1&y=2\n"
-            "普通链接：[详情](https://example.com/detail)\n"
-            r"转义语法：\![示例](https://example.com/example.png)",
+            "Generated: https://example.com/image.jpeg?x=1&y=2\n"
+            "Regular link: [Details](https://example.com/detail)\n"
+            r"Escaped syntax: \![Example](https://example.com/example.png)",
         )
 
     async def test_stream_converts_image_only_after_markdown_is_complete(self) -> None:
         async def chunks():
-            yield "已生成：![预览](https://example.com/image.jpeg?x=1"
+            yield "Generated: ![Preview](https://example.com/image.jpeg?x=1"
             yield "&y=2)"
         with patch.object(self.card, "UPDATE_INTERVAL", 0):
             await self.card.sending_card("on_user", chunks())
@@ -92,26 +92,26 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             created["body"]["elements"][0]["content"],
-            "已生成：![预览](https://example.com/image.jpeg?x=1",
+            "Generated: ![Preview](https://example.com/image.jpeg?x=1",
         )
         write = self.client.cardkit.v1.card_element.content.call_args.args[0]
         self.assertEqual(
             write.request_body.content,
-            "已生成：https://example.com/image.jpeg?x=1&y=2",
+            "Generated: https://example.com/image.jpeg?x=1&y=2",
         )
 
     async def test_stream_sends_before_end_and_flushes_tail(self) -> None:
         async def chunks():
-            yield "你"
+            yield "Hel"
             self.client.im.v1.message.create.assert_called_once()
-            yield "好"
+            yield "lo"
             self.client.cardkit.v1.card_element.content.assert_called_once()
-            yield "！"
+            yield "!"
         with patch.object(self.card, "UPDATE_INTERVAL", 0):
             result = await self.card.sending_card("on_user", chunks())
         self.assertEqual(result, "message-1")
         writes = self.client.cardkit.v1.card_element.content.call_args_list
-        self.assertEqual([c.args[0].request_body.content for c in writes], ["你好", "你好！"])
+        self.assertEqual([c.args[0].request_body.content for c in writes], ["Hello", "Hello!"])
         close = self.client.cardkit.v1.card.settings.call_args.args[0].request_body
         self.assertEqual([c.args[0].request_body.sequence for c in writes] + [close.sequence], [1, 2, 3])
         self.assertFalse(json.loads(close.settings)["config"]["streaming_mode"])
@@ -137,8 +137,8 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_recall_discards_pending_text(self) -> None:
         async def chunks():
-            yield "已显示"
-            yield "不得显示"
+            yield "Displayed"
+            yield "Must not be displayed"
             raise self.card.CardStreamStopped()
         with patch.object(self.card, "UPDATE_INTERVAL", 999):
             await self.card.sending_card("on_user", chunks())
@@ -147,7 +147,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_producer_failure_closes_stream(self) -> None:
         async def chunks():
-            yield "部分结果"
+            yield "Partial result"
             raise ValueError("producer failed")
         with self.assertRaisesRegex(ValueError, "producer failed"):
             await self.card.sending_card("on_user", chunks())
@@ -192,26 +192,26 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         async def recalled(state):
             return False
         async def events(**kwargs):
-            yield {"type": "reasoning", "content": "推理一"}
-            yield {"type": "reasoning", "content": "推理二"}
-            # 推理片段持续累积显示。
+            yield {"type": "reasoning", "content": "Reasoning 1"}
+            yield {"type": "reasoning", "content": "Reasoning 2"}
+            # Reasoning chunks accumulate continuously in the display.
             write = self.client.cardkit.v1.card_element.content
-            self.assertEqual(write.call_args.args[0].request_body.content, "推理一推理二")
-            # 模拟紧接到达的片段，被合并暂存。
+            self.assertEqual(write.call_args.args[0].request_body.content, "Reasoning 1Reasoning 2")
+            # Simulate immediately arriving chunks that are merged into the buffer.
             with patch.object(self.card, "UPDATE_INTERVAL", 999):
-                yield {"type": "reasoning", "content": "缓冲推理"}
+                yield {"type": "reasoning", "content": "Buffered reasoning"}
                 yield {"type": "answer", "content": ""}
-                yield {"type": "usage", "content": "token统计"}
-                yield {"type": "answer", "content": "答案一"}
-                # 首个非空答案绕过限频，覆盖已显示和缓冲的推理。
-                self.assertEqual(write.call_args.args[0].request_body.content, "答案一")
-                yield {"type": "answer", "content": "答案二"}
-                yield {"type": "usage", "content": "最终统计"}
+                yield {"type": "usage", "content": "Token usage"}
+                yield {"type": "answer", "content": "Answer 1"}
+                # The first non-empty answer bypasses throttling and replaces displayed and buffered reasoning.
+                self.assertEqual(write.call_args.args[0].request_body.content, "Answer 1")
+                yield {"type": "answer", "content": "Answer 2"}
+                yield {"type": "usage", "content": "Final usage"}
                 yield {"type": "done"}
         namespace = dict(aclosing=aclosing, FerskCodex=SimpleNamespace(running=events),
                          _run_was_interrupted=recalled, CardStreamStopped=self.card.CardStreamStopped,
                          CardReplace=self.card.CardReplace,
-                         CONFIG={"messages": {"codexFailure": "失败"}})
+                         CONFIG={"messages": {"codexFailure": "failed"}})
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
         adapter = SimpleNamespace(runtime=SimpleNamespace(
             codex=namespace.get("FerskCodex"),
@@ -226,9 +226,9 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.create.assert_called_once()
         writes = self.client.cardkit.v1.card_element.content.call_args_list
         self.assertEqual([c.args[0].request_body.content for c in writes],
-                         ["推理一推理二", "答案一", "答案一答案二"])
+                         ["Reasoning 1Reasoning 2", "Answer 1", "Answer 1Answer 2"])
         close = self.client.cardkit.v1.card.settings.call_args.args[0].request_body
-        self.assertEqual(json.loads(close.settings)["config"]["summary"]["content"], "答案一答案二")
+        self.assertEqual(json.loads(close.settings)["config"]["summary"]["content"], "Answer 1Answer 2")
         self.assertEqual([c.args[0].request_body.sequence for c in writes] + [close.sequence], [1, 2, 3, 4])
 
     async def test_gateway_adapter_streams_errors_and_stops_on_recall(self) -> None:
@@ -238,8 +238,8 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         closed = []
         async def events(**kwargs):
             try:
-                yield {"type": "answer", "content": "正文"}
-                yield {"type": "error", "content": "错误"}
+                yield {"type": "answer", "content": "Body"}
+                yield {"type": "error", "content": "Error"}
             finally:
                 closed.append(True)
         async def recalled(state):
@@ -247,16 +247,16 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         namespace = dict(aclosing=aclosing, FerskCodex=SimpleNamespace(running=events),
                          _run_was_interrupted=recalled, CardStreamStopped=self.card.CardStreamStopped,
                          CardReplace=self.card.CardReplace,
-                         CONFIG={"messages": {"codexFailure": "失败"}})
+                         CONFIG={"messages": {"codexFailure": "failed"}})
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
         adapter = SimpleNamespace(runtime=SimpleNamespace(
             codex=namespace.get("FerskCodex"),
             _run_was_interrupted=namespace["_run_was_interrupted"],
         ))
         stream = namespace["_reply_content"](adapter, SimpleNamespace(union_id="on_user"), "prompt", state)
-        self.assertEqual([chunk async for chunk in stream], [self.card.CardReplace("正文"), "\n\n错误"])
+        self.assertEqual([chunk async for chunk in stream], [self.card.CardReplace("Body"), "\n\nError"])
         stream = namespace["_reply_content"](adapter, SimpleNamespace(union_id="on_user"), "prompt", state)
-        self.assertEqual(await anext(stream), self.card.CardReplace("正文"))
+        self.assertEqual(await anext(stream), self.card.CardReplace("Body"))
         state.interrupted = True
         with self.assertRaises(self.card.CardStreamStopped):
             await anext(stream)
@@ -270,8 +270,8 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                 flushed.set()
         self.use_async_api(after)
         async def chunks():
-            yield "推理"
-            yield "尾部"
+            yield "Reasoning"
+            yield "Tail"
             try:
                 await finish.wait()
             except asyncio.CancelledError:
@@ -284,7 +284,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(task.done())
                 self.assertFalse(cancelled)
                 write = self.client.cardkit.v1.card_element.content.call_args.args[0]
-                self.assertEqual(write.request_body.content, "推理尾部")
+                self.assertEqual(write.request_body.content, "ReasoningTail")
             finally:
                 finish.set()
                 await asyncio.wait_for(task, 1)
@@ -301,10 +301,10 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.client.cardkit.v1.card.create.side_effect = [response(card_id="first"), response(card_id="second")]
         self.client.im.v1.message.create.side_effect = [response(message_id="m1"), response(message_id="m2")]
         async def chunks():
-            yield "旧卡"
-            yield "尾部"
+            yield "Old card"
+            yield "Tail"
             await resume.wait()
-            yield "新内容"
+            yield "New content"
             await finish.wait()
         with (patch.object(self.card, "STREAM_LIFETIME", .05),
               patch.object(self.card, "UPDATE_INTERVAL", 999)):
@@ -315,7 +315,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(task.done())
                 write = self.client.cardkit.v1.card_element.content.call_args.args[0]
                 self.assertEqual(write.card_id, "first")
-                self.assertEqual(write.request_body.content, "旧卡尾部")
+                self.assertEqual(write.request_body.content, "Old cardTail")
                 resume.set()
                 await asyncio.wait_for(second.wait(), 1)
             finally:
@@ -325,7 +325,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "m2")
         bodies = [json.loads(c.args[0].request_body.data)
                   for c in self.client.cardkit.v1.card.create.call_args_list]
-        self.assertEqual(bodies[1]["body"]["elements"][0]["content"], "新内容")
+        self.assertEqual(bodies[1]["body"]["elements"][0]["content"], "New content")
         self.assertEqual(bodies[1]["header"]["title"]["content"], "Codex")
         closes = self.client.cardkit.v1.card.settings.call_args_list
         self.assertEqual([c.args[0].card_id for c in closes], ["first", "second"])
@@ -336,7 +336,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.use_async_api(lambda op, req: closed.set()
                            if op is self.client.cardkit.v1.card.settings else None)
         async def chunks():
-            yield "只有这一段"
+            yield "Only this chunk"
             await asyncio.wait_for(closed.wait(), 1)
         with patch.object(self.card, "STREAM_LIFETIME", .02):
             await asyncio.wait_for(self.card.sending_card("on_user", chunks()), 1)
@@ -345,14 +345,14 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_closed_stream_recovers_unsent_suffix_and_full_replacement(self) -> None:
         self.use_async_api()
-        for chunk, expected in [("续写", "续写"), (self.card.CardReplace("旧文答案"), "旧文答案")]:
+        for chunk, expected in [("Continuation", "Continuation"), (self.card.CardReplace("Old text answer"), "Old text answer")]:
             with self.subTest(chunk=chunk):
                 self.client.cardkit.v1.card.create.reset_mock()
                 self.client.cardkit.v1.card.create.side_effect = [response(card_id="old"), response(card_id="new")]
                 self.client.cardkit.v1.card_element.content.return_value = SimpleNamespace(
                     success=lambda: False, code=300309, msg="streaming mode is closed")
                 async def chunks():
-                    yield "旧文"
+                    yield "Old text"
                     yield chunk
                 await self.card.sending_card("on_user", chunks())
                 body = json.loads(self.client.cardkit.v1.card.create.call_args.args[0].request_body.data)
@@ -364,9 +364,9 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             success=lambda: False, code=999, msg="unavailable")
         completed = []
         async def chunks():
-            yield "一"
-            yield "二"
-            yield "三"
+            yield "one"
+            yield "two"
+            yield "three"
             completed.append(True)
         with patch.object(self.card, "UPDATE_INTERVAL", 0):
             with self.assertRaises(self.card.CardDeliveryError):
@@ -380,7 +380,7 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         self.use_async_api()
         async def chunks():
             try:
-                yield "一"
+                yield "one"
                 waiting.set()
                 await asyncio.Event().wait()
             finally:
@@ -399,15 +399,15 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
         async def recalled(state):
             return False
         async def events():
-            yield {"type": "reasoning", "content": "推理一", "item_id": "r1"}
-            yield {"type": "answer", "phase": "commentary", "content": "进度", "item_id": "a1"}
-            yield {"type": "progress", "content": "工具输出", "item_id": "tool"}
-            yield {"type": "usage", "content": "统计"}
-            yield {"type": "reasoning", "content": "推理二", "item_id": "r2"}
-            yield {"type": "reasoning", "content": "后续", "item_id": "r2"}
-            yield {"type": "answer", "phase": "final_answer", "content": "最终答案", "item_id": "a2"}
-            yield {"type": "usage", "content": "最终统计不应覆盖答案"}
-            yield {"type": "progress", "content": "hook 不应覆盖答案"}
+            yield {"type": "reasoning", "content": "Reasoning 1", "item_id": "r1"}
+            yield {"type": "answer", "phase": "commentary", "content": "Progress", "item_id": "a1"}
+            yield {"type": "progress", "content": "Agent executing commandExecution tool\n", "item_id": "tool"}
+            yield {"type": "usage", "content": "Usage"}
+            yield {"type": "reasoning", "content": "Reasoning 2", "item_id": "r2"}
+            yield {"type": "reasoning", "content": "Continuation", "item_id": "r2"}
+            yield {"type": "answer", "phase": "final_answer", "content": "Final answer", "item_id": "a2"}
+            yield {"type": "usage", "content": "Final usage must not overwrite the answer"}
+            yield {"type": "progress", "content": "hook must not overwrite the answer"}
         namespace = dict(aclosing=aclosing, _run_was_interrupted=recalled,
                          CardStreamStopped=self.card.CardStreamStopped, CardReplace=self.card.CardReplace)
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "gateway_execution.py", "exec"), namespace)
@@ -416,12 +416,13 @@ class LarkCardTests(unittest.IsolatedAsyncioTestCase):
             _run_was_interrupted=namespace["_run_was_interrupted"],
         ))
         chunks = [c async for c in namespace["_reply_content"](adapter, None, None, None, events=events())]
-        self.assertEqual(chunks, ["推理一", "\n\n进度", "\n\n工具输出", "\n\n统计",
-                                  "\n\n推理二", "后续", self.card.CardReplace("最终答案")])
+        self.assertEqual(chunks, ["Reasoning 1", "\n\nProgress", "\n\nAgent executing commandExecution tool\n",
+                                  "\n\nReasoning 2", "Continuation", self.card.CardReplace("Final answer")])
         await self.card.sending_card("user-1", namespace["_reply_content"](
             adapter, None, None, None, events=events()))
         updates = self.client.cardkit.v1.card_element.content.call_args_list
-        self.assertEqual(updates[-1].args[0].request_body.content, "最终答案")
+        self.assertTrue(all("Usage" not in call.args[0].request_body.content for call in updates))
+        self.assertEqual(updates[-1].args[0].request_body.content, "Final answer")
 
 
 class CardSteerTests(unittest.IsolatedAsyncioTestCase):

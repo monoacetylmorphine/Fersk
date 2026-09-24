@@ -1,1 +1,1 @@
-"""持久化会话元数据。"""
+"""Persistent session metadata."""

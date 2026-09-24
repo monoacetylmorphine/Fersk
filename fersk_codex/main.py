@@ -1,4 +1,4 @@
-"""飞书网关启动入口：组装职责实例、注册事件并管理后台任务。"""
+"""Lark gateway entry point: assemble components, register events, and manage background tasks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import lark_oapi as lark
 
-# 支持从项目目录直接运行 main.py。
+# Support running main.py directly from the project directory.
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -51,6 +51,10 @@ def create_gateway() -> tuple[GatewayRuntime, GatewayExecution, GatewayCommands,
 
 
 async def main() -> None:
+    """配置日志与机器人身份，组装网关、注册事件并启动 WebSocket 及后台维护任务。
+
+    退出时取消维护任务、请求停止仍登记的运行，并尝试在有界等待内刷新运行日志。
+    """
     configure_logging(CONFIG["logging"].get("logLevel", "INFO"))
     _bot_identity(required=True)
     runtime, _, commands, router = create_gateway()
@@ -59,11 +63,13 @@ async def main() -> None:
     notices = EventDispatcher(loop, capacity=1)
 
     async def busy(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
-        await sending_card(data.event.message.chat_id, "当前任务繁忙，请稍后重试。")
+        """向消息所属聊天发送繁忙提示，不提交模型任务。"""
+        await sending_card(data.event.message.chat_id, "The current task is busy. Please try again later.")
 
     def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
+        """记录入站消息并按普通或控制事件容量提交处理；容量不足时尝试提交繁忙提示。"""
         message = data.event.message
-        logger.debug("收到消息: chat_id=%s, message_id=%s, type=%s",
+        logger.debug("Message received: chat_id=%s, message_id=%s, type=%s",
                      message.chat_id, message.message_id, message.message_type)
         control = (is_stop_command(message.message_type, message.content)
                    or is_new_command(message.message_type, message.content)
@@ -72,20 +78,25 @@ async def main() -> None:
             notices.submit(busy, data)
 
     def do_p2_im_message_recalled_v1(data: lark.im.v1.P2ImMessageRecalledV1) -> None:
+        """使用控制事件容量将撤回消息交给异步撤回处理器。"""
         dispatcher.submit(commands.processing_recall, data, control=True)
 
     def do_p2_im_message_read_v1(data: lark.im.v1.P2ImMessageMessageReadV1) -> None:
+        """接收已读事件；当前无需业务处理。"""
         pass
 
     def do_p2_im_message_reaction_created_v1(data: lark.im.v1.P2ImMessageReactionCreatedV1) -> None:
+        """接收 reaction 创建事件；当前无需业务处理。"""
         pass
 
     def do_p2_im_message_reaction_deleted_v1(data: lark.im.v1.P2ImMessageReactionDeletedV1) -> None:
+        """接收 reaction 删除事件；当前无需业务处理。"""
         pass
 
     def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
         data: lark.im.v1.P2ImChatAccessEventBotP2pChatEnteredV1,
     ) -> None:
+        """接收用户进入机器人私聊的事件；当前无需业务处理。"""
         pass
 
     event_handler = (
@@ -118,7 +129,7 @@ async def main() -> None:
         try:
             await journal.flush()
         except Exception:
-            logger.exception("退出时运行日志尚未写入完成")
+            logger.exception("Run logs were not fully written before exit")
 
 
 def cli() -> None:

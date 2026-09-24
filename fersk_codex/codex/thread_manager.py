@@ -1,4 +1,4 @@
-"""持久化用户与 Codex 线程的绑定，复用 storage.databasePath 数据库。"""
+"""Persist user-to-Codex thread bindings in the storage.databasePath database."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ async def _connect() -> AsyncIterator[aiosqlite.Connection]:
     async with aiosqlite.connect(DB_PATH, timeout=30) as db:
         async with db.execute("PRAGMA journal_mode=WAL") as cursor:
             if (await cursor.fetchone())[0] != "wal":
-                raise aiosqlite.OperationalError("无法启用 SQLite WAL 模式")
+                raise aiosqlite.OperationalError("Unable to enable SQLite WAL mode")
         await db.execute(CREATE_TABLE_SQL)
         yield db
 

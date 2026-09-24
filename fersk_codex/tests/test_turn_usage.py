@@ -1,4 +1,4 @@
-"""逐条持久化增量用量，异常退出不重复写入。"""
+"""Persist incremental usage record by record without duplicate writes on abnormal exit."""
 
 from __future__ import annotations
 
@@ -51,6 +51,9 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
                                    "modelContextWindow": 996147},
                 })
                 yield NS(method="thread/tokenUsage/updated", payload=payload)
+                # A visible event lets tests inspect persistence while the turn remains open.
+                yield NS(method="item/reasoning/textDelta", payload=NS(
+                    delta=f"Reasoning after {total} tokens", item_id="reasoning"))
             if ending == "exception":
                 raise RuntimeError("stream disconnected")
             if ending == "wait":
@@ -73,6 +76,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
     async def test_completed(self) -> None:
         events = [e async for e in self.events(TurnStatus.completed)]
         self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual([e["type"] for e in events], ["reasoning", "reasoning", "done"])
         self.assert_saved_all()
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute("SELECT SUM(total_tokens), MIN(taskDuration_ms), MAX(taskDuration_ms) FROM token_usage WHERE runId = 'run-1'").fetchone(), (35, 123, 123))
@@ -182,7 +186,7 @@ class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
         events = self.events(TurnStatus.completed)
         self.factory.return_value.__aexit__.side_effect = RuntimeError("close failed")
         with patch.object(codex.FerskCodex, "force_close", AsyncMock(return_value=False)):
-            with self.assertRaisesRegex(RuntimeError, "仍未确认进程退出"):
+            with self.assertRaisesRegex(RuntimeError, "Processes exit still unverified"):
                 await self.drain(events)
         self.assert_saved_all()
 

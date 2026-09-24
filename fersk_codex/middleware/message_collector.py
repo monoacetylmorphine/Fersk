@@ -1,4 +1,4 @@
-"""将飞书倒序历史整理为按时间排序的 Codex 消息批次。"""
+"""Convert reverse-ordered Lark history into chronological Codex message batches."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ class MessageBatch:
 
     @property
     def unsupported_message_types(self) -> set[str]:
+        """返回批次中未列入配置支持集合的消息类型。"""
         return {
             message.message_type
             for message in self.messages
@@ -39,11 +40,11 @@ class MessageBatch:
 
 
 def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch:
-    """Build a chronological user-only batch from descending Lark history.
+    """从飞书倒序历史中提取当前用户轮次，返回按时间顺序排列的受支持消息批次。
 
-    Lark returns the newest message first.  Only messages newer than the most
-    recent app reply belong to the current user turn, so scanning stops at the
-    first app message.  The retained messages are then reversed for Codex.
+    以触发消息为锚点，遇到 app 消息、/new、/stop 或私聊 /history 即停止回溯；
+    跳过已删除及不支持的消息。历史接口尚未包含触发消息时补入该消息，命令自身返回空批次。
+    批次 union_id 在群聊中保存 chat_id，在私聊中保存发送者 union_id。
     """
     event_message = data.event.message
     target_id = (
@@ -74,7 +75,7 @@ def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch
             if sender_type == "app":
                 break
             if sender_type == "user" and not _field(item, "deleted", False):
-                # /new 和 /stop 都是历史边界，不与后续输入合并。
+                # Both /new and /stop are history boundaries and are not merged with subsequent input.
                 if _is_new_thread_command(item) or _is_command(item, "stopThreadCommand"):
                     break
                 if (event_message.chat_type == "p2p" and is_history_command(
@@ -102,7 +103,7 @@ def batch_from_chat_history(data: Any, history_items: list[Any]) -> MessageBatch
 
 
 def _candidate_history_items(event_message: Any, history_items: list[Any]) -> Iterator[Any]:
-    """以触发消息锚定历史，过滤尚未归属本次提交的较新输入。"""
+    """优先从触发消息所在位置截取历史；未找到时，仅凭有效数字时间戳过滤明确更晚的消息。"""
     current_id = event_message.message_id
     anchor = next((index for index, item in enumerate(history_items)
                    if _field(item, "message_id") == current_id), None)
@@ -118,6 +119,7 @@ def _candidate_history_items(event_message: Any, history_items: list[Any]) -> It
 
 
 def _parse_history_message(item: Any, sequence: int) -> CollectedMessage:
+    """将历史条目转换为带顺序的 CollectedMessage；JSON 解析失败时以 raw 字段保留原内容。"""
     body = _field(item, "body")
     raw_content = _field(body, "content", "")
     try:
@@ -135,10 +137,12 @@ def _parse_history_message(item: Any, sequence: int) -> CollectedMessage:
 
 
 def _is_new_thread_command(item: Any) -> bool:
+    """判断历史条目是否为配置中的独立新会话命令。"""
     return _is_command(item, "newThreadCommand")
 
 
 def is_new_command(message_type: str, raw_content: str) -> bool:
+    """判断文本消息是否完整匹配配置的新会话命令，忽略首尾空白和大小写。"""
     return _is_command({"msg_type": message_type, "body": {"content": raw_content}}, "newThreadCommand")
 
 
@@ -160,6 +164,7 @@ def is_history_command(message_type: str, raw_content: str) -> bool:
 
 
 def _is_command(item: Any, config_key: str) -> bool:
+    """解析文本消息 JSON 并匹配指定配置命令；类型或内容不符合要求时返回 False。"""
     if _field(item, "msg_type") != "text":
         return False
     body = _field(item, "body")
@@ -176,6 +181,7 @@ def _is_command(item: Any, config_key: str) -> bool:
 
 
 def _history_item_from_event(data: Any) -> dict[str, Any]:
+    """将接收事件转换为历史条目形状，供历史尚未包含触发消息时补入批次。"""
     message = data.event.message
     return {
         "message_id": message.message_id,
@@ -188,6 +194,7 @@ def _history_item_from_event(data: Any) -> dict[str, Any]:
 
 
 def _field(value: Any, name: str, default: Any = None) -> Any:
+    """从字典键或对象属性读取字段；不存在时返回指定默认值。"""
     if isinstance(value, dict):
         return value.get(name, default)
     return getattr(value, name, default)

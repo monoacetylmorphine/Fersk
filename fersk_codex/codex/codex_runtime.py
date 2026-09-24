@@ -1,4 +1,4 @@
-"""SDK 生命周期、运行状态以及停止和 steer 控制。"""
+"""SDK lifecycle, runtime state, and stop and steer controls."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ logger = get_logger("Codex")
 
 
 def _sdk_process(manager: AsyncCodex | None) -> subprocess.Popen[bytes] | None:
-    """集中访问 SDK 私有进程路径"""
+    """从 SDK 私有属性路径获取所属子进程；路径不存在时返回 None。"""
     return getattr(getattr(getattr(manager, "_client", None), "_sync", None), "_proc", None)
 
 
@@ -45,7 +45,7 @@ class LiveTurn:
 
 
 class CodexRuntime:
-    """集中保存所有运行索引，供 FerskCodex 的执行和会话方法共享。"""
+    """Central runtime indexes shared by FerskCodex execution and session methods."""
     _active_turns: dict[str, AsyncTurnHandle] = {}
     _live_turns: dict[str, LiveTurn] = {}
     _pending_interrupts: set[str] = set()
@@ -54,12 +54,15 @@ class CodexRuntime:
     _processes: dict[str, subprocess.Popen[bytes]] = {}
     _closed_runs: set[str] = set()
     _initializers: dict[str, asyncio.Task[AsyncCodex]] = {}
-    # 仅保存控制会话的失败清理，不重放归档/恢复等业务操作。
+    # Retain only failed control-session cleanup; do not replay archive or restore operations.
     _control_cleanup: dict[str, tuple[float, float]] = {}
 
     @classmethod
     async def completed_status(cls, run_id: str) -> str | None:
-        """Resolve a completion buffered behind a slow card before timing out."""
+        """在有界等待内读取当前 turn 的终态，避免慢卡片造成的完成事件延迟被判为超时。
+
+        返回 completed、failed 或 interrupted；无活跃句柄、未找到终态或读取失败时返回 None。
+        """
         live = cls._live_turns.get(run_id)
         if live is None:
             return None
@@ -77,6 +80,11 @@ class CodexRuntime:
     @classmethod
     @asynccontextmanager
     async def _session(cls, run_id: str | None) -> AsyncGenerator[AsyncCodex]:
+        """创建并登记 SDK 会话，在上下文退出时关闭并确认所属进程回收。
+
+        run_id 为 None 时生成独立控制会话标识，关闭失败的控制会话登记为后台清理任务。
+        初始化及清理受 shield 保护，防止取消丢失进程；清理结束后仍向调用方传播取消。
+        """
         control = run_id is None
         run_id = run_id or f"control-{uuid4().hex}"
         manager = AsyncCodex()
@@ -93,7 +101,7 @@ class CodexRuntime:
                 cls._processes[run_id] = proc
             yield client
         finally:
-            # 外层重复取消不能打断进程回收；取消完成后仍必须向调用方传播。
+            # Repeated outer cancellation must not interrupt process cleanup; propagate cancellation to the caller afterward.
             cancelled = bool(asyncio.current_task().cancelling())
             closing = asyncio.create_task(cls._close_session(run_id, manager, initializing))
             try:
@@ -122,7 +130,11 @@ class CodexRuntime:
         manager: AsyncCodex,
         initializing: asyncio.Task[AsyncCodex],
     ) -> None:
-        # close() 可能清空 SDK 中的进程引用，必须先保存。
+        """在收尾超时内关闭 SDK 会话并确认初始化及进程退出，失败时尝试强制关闭。
+
+        确认成功后移除客户端、进程和初始化索引；仍无法确认时抛出 RuntimeError 并保留清理信息。
+        """
+        # close() may clear the SDK process reference; save it first.
         proc = _sdk_process(manager)
         if proc is not None:
             cls._processes[run_id] = proc
@@ -149,7 +161,7 @@ class CodexRuntime:
 
     @classmethod
     async def cleanup_control_sessions(cls) -> None:
-        """后台每轮清理一个控制会话, 失败保留, 24 小时后按现有策略释放。"""
+        """每轮处理一个到期的控制会话清理任务；失败延后重试，超过保留期限则尝试关闭并释放索引。"""
         from fersk_codex.session.session_gateway import RETENTION_SECONDS
         now = time.monotonic()
         for run_id, (created, due) in list(cls._control_cleanup.items()):
@@ -159,13 +171,13 @@ class CodexRuntime:
                 if now - created >= RETENTION_SECONDS:
                     await cls.discard_expired_run(run_id)
                 elif not await cls.force_close(run_id):
-                    # 来源：控制会话失败清理初始重试策略，非 SDK 限制。
+                    # Source: initial retry policy for failed control-session cleanup, not an SDK limit.
                     cls._control_cleanup[run_id] = (created, time.monotonic() + 30)
                     return
                 cls._control_cleanup.pop(run_id, None)
                 cls._closed_runs.discard(run_id)
             except Exception:
-                logger.exception("控制会话后台清理失败: run_id=%s", run_id)
+                logger.exception("Background control-session cleanup failed: run_id=%s", run_id)
                 if now - created >= RETENTION_SECONDS:
                     cls._control_cleanup.pop(run_id, None)
                 else:
@@ -174,10 +186,10 @@ class CodexRuntime:
 
     @classmethod
     async def force_close(cls, run_id: str) -> bool:
-        """Close only this run's SDK process and verify exit (SDK 0.147.0).
+        """尝试关闭本次运行的 SDK 客户端或进程，并返回是否确认回收。
 
-        Capture the process before close(), which clears the SDK's reference.
-        This is not a guarantee about remote tools or detached descendants.
+        关闭前保存进程引用，关闭异常时尝试 kill；初始化尚未完成时不报告确认成功。
+        成功后清除客户端、进程和初始化索引；不保证远程工具或脱离进程的后代已停止。
         """
         cls._closed_runs.add(run_id)
         client = cls._clients.get(run_id)
@@ -202,7 +214,7 @@ class CodexRuntime:
             if initializing is not None and not initializing.done():
                 confirmed = False
         except Exception:
-            logger.exception("强制关闭 Codex: run_id=%s", run_id)
+            logger.exception("Force-closing Codex: run_id=%s", run_id)
             confirmed = False
             if proc is not None:
                 try:
@@ -211,7 +223,7 @@ class CodexRuntime:
                         await asyncio.to_thread(proc.wait, timeout=1)
                     confirmed = proc.poll() is not None
                 except Exception:
-                    logger.exception("Codex 进程退出未确认: run_id=%s", run_id)
+                    logger.exception("Codex process exit is unconfirmed: run_id=%s", run_id)
         probe = probes.get(run_id)
         if initializing is not None and not initializing.done():
             confirmed = False
@@ -225,7 +237,11 @@ class CodexRuntime:
 
     @classmethod
     async def interrupt_and_confirm(cls, run_id: str) -> bool:
-        """Interrupt, then poll the owning thread until idle; bound every wait."""
+        """请求中断当前 turn，并在宽限期内轮询所属线程，确认 idle 或运行已无待清理资源。
+
+        未启动时登记中断请求以阻止后续提交；超时、检查失败或运行已被关闭时尝试强制回收。
+        返回停止是否确认，不将发出中断请求本身视为停止成功。
+        """
         cls._pending_interrupts.add(run_id)
         if run_id in cls._closed_runs:
             return await cls.force_close(run_id)
@@ -241,7 +257,7 @@ class CodexRuntime:
                                 while True:
                                     response = await live.thread.read()
                                     status = response.thread.status.root.type
-                                    logger.info("停止确认: run_id=%s, thread_id=%s, status=%s",
+                                    logger.info("Stop confirmed: run_id=%s, thread_id=%s, status=%s",
                                                 run_id, live.thread.id, status)
                                     probe = probes.get(run_id)
                                     if probe:
@@ -259,7 +275,7 @@ class CodexRuntime:
                         return True
                     await asyncio.sleep(0.1)
         except Exception:
-            logger.exception("中断或停止确认超时/失败: run_id=%s", run_id)
+            logger.exception("Interrupt or stop confirmation timed out or failed: run_id=%s", run_id)
         return await cls.force_close(run_id)
 
     @classmethod
@@ -270,7 +286,12 @@ class CodexRuntime:
         *,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> RunEvent:
-        """Check the owning server's live status; never replay uncertain input."""
+        """在所属运行的锁内核对线程状态，并向仍活跃的 turn 提交补充输入。
+
+        返回 idle、cancelled、steered 或 error 事件；不在运行中切换模型或 provider。
+        只有明确未接受输入且线程已空闲时返回 idle，不重放结果不确定的请求。
+        外层锁等待超时及取消可能直接传播，不一定转换为 error 事件。
+        """
         from .codex_execution import _error_event
 
         live = cls._live_turns.get(run_id)
@@ -291,7 +312,7 @@ class CodexRuntime:
                 if status == "idle":
                     return {"type": "idle"}
                 if status != "active":
-                    raise RuntimeError(f"线程状态无法接收输入: {status}")
+                    raise RuntimeError(f"Thread state does not accept input: {status}")
                 if run_id in cls._pending_interrupts:
                     return {"type": "idle"}
                 # Steering cannot change model/provider. Do not silently send
@@ -316,7 +337,7 @@ class CodexRuntime:
                             return {"type": "idle"}
                     raise
                 if result.turn_id != live.handle.id:
-                    raise RuntimeError("steer 返回了不同的 turn ID")
+                    raise RuntimeError("steer returned a different turn ID")
                 logger.info("Steer accepted: thread_id=%s, turn_id=%s", live.thread.id, result.turn_id)
                 return {"type": "steered"}
             except Exception as exc:
@@ -324,7 +345,10 @@ class CodexRuntime:
 
     @classmethod
     async def interrupt(cls, run_id: str) -> bool:
-        """Interrupt a running turn, or remember the request until it starts."""
+        """登记中断意图，并在已有可用 turn 句柄时发送中断请求。
+
+        返回 True 仅表示请求已发送；尚未启动或运行已关闭时返回 False，保留中断标记。
+        """
         async with cls._turns_guard:
             cls._pending_interrupts.add(run_id)
             handle = cls._active_turns.get(run_id)
@@ -337,7 +361,7 @@ class CodexRuntime:
 
     @classmethod
     async def forget_run(cls, run_id: str) -> None:
-        """Drop interrupt bookkeeping after the gateway run has ended."""
+        """移除已结束运行的 turn、活跃状态及中断标记；尚有客户端或进程时保留关闭标记。"""
         async with cls._turns_guard:
             cls._active_turns.pop(run_id, None)
             cls._live_turns.pop(run_id, None)
@@ -347,12 +371,17 @@ class CodexRuntime:
 
     @classmethod
     async def discard_expired_run(cls, run_id: str) -> None:
-        """24 小时后有界关闭并移除引用，失败不能使缓存永久保留。"""
+        """为调用方判定已过期的运行尝试有界关闭，并在 finally 中移除运行索引。
+
+        即使关闭失败也释放缓存引用；未完成的初始化另注册回调处理迟到的子进程。
+        本函数不自行检查运行年龄，过期判断由调用方负责。
+        """
         manager = cls._clients.get(run_id)
         initializing = cls._initializers.get(run_id)
         if initializing is not None and not initializing.done():
             def stop_late_process(task: asyncio.Task[AsyncCodex]) -> None:
-                # 初始化在线程内延迟返回时仍尝试终止进程，不重新写入运行索引。
+                """消费迟到初始化的异常，并尝试 kill 尚存的 SDK 子进程，不恢复已释放的索引。"""
+                # Attempt process termination even when initialization returns late from a thread; do not restore runtime indexes.
                 if not task.cancelled():
                     task.exception()
                 proc = _sdk_process(manager)
@@ -365,7 +394,7 @@ class CodexRuntime:
         try:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
                 if not await cls.force_close(run_id):
-                    logger.error("过期任务进程退出未确认: run_id=%s", run_id)
+                    logger.error("Expired task process exit is unconfirmed: run_id=%s", run_id)
         finally:
             for mapping in (cls._active_turns, cls._live_turns, cls._clients,
                             cls._processes, cls._initializers):

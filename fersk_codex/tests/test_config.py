@@ -32,7 +32,7 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'messaging.sessionHistoryLimit'):
                     self.load(config)
         config['messaging'].pop('sessionHistoryLimit')
-        self.load(config)  # 兼容旧运行配置；消费处应用默认值。
+        self.load(config)  # Support legacy runtime configuration; consumers apply defaults.
 
     def test_shared_mcp_section_is_required_and_validated(self) -> None:
         config = copy.deepcopy(CONFIG)
@@ -97,11 +97,11 @@ class ConfigTests(unittest.TestCase):
     def test_missing_and_malformed_config_report_cause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'config.json'
-            with self.assertRaisesRegex(RuntimeError, '配置文件不存在') as caught:
+            with self.assertRaisesRegex(RuntimeError, 'Configuration file does not exist') as caught:
                 _load_config(path)
             self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
             path.write_text('{invalid', encoding='utf-8')
-            with self.assertRaisesRegex(RuntimeError, '格式错误') as caught:
+            with self.assertRaisesRegex(RuntimeError, 'Invalid config.json format') as caught:
                 _load_config(path)
             self.assertIsInstance(caught.exception.__cause__, json.JSONDecodeError)
 
@@ -113,7 +113,7 @@ class ConfigTests(unittest.TestCase):
                     with self.subTest(content=content):
                         if content is not None:
                             path.write_text(content, encoding='utf-8')
-                        with self.assertRaisesRegex(RuntimeError, '无法加载配置 Schema') as caught:
+                        with self.assertRaisesRegex(RuntimeError, 'Unable to load configuration Schema') as caught:
                             self.load(CONFIG)
                         self.assertIsNotNone(caught.exception.__cause__)
 

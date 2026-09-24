@@ -1,4 +1,4 @@
-"""按用户初始化 Git 和 Office 环境，保留已有文件并回收超时子进程。"""
+"""Initialize Git and Office environments per user, preserve existing files, and clean up timed-out subprocesses."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 
-# 来源：四份参考技能的常用工作流；首次安装由包管理器解析兼容的最新版本。
+# Source: common workflows from four reference skills; the package manager resolves the latest compatible versions on first installation.
 PYTHON_PACKAGES: tuple[str, ...] = (
     "defusedxml", "lxml", "Pillow", "openpyxl", "pandas", "pypdf", "pdfplumber",
     "pdf2image", "reportlab", "markitdown[pptx,xlsx]", "pytesseract",
@@ -31,7 +31,7 @@ NODE_PACKAGE: dict[str, Any] = {
         name: "latest" for name in ("docx", "pptxgenjs", "react", "react-dom", "react-icons", "sharp")
     },
 }
-# 来源：项目首次下载依赖的等待策略；Git 仍使用已有配置超时。
+# Source: project wait policy for initial dependency downloads; Git retains its configured timeout.
 ENVIRONMENT_TIMEOUT = 600
 _locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml")
@@ -52,7 +52,11 @@ def workspace_environment(workspace: Path) -> dict[str, str]:
 
 @asynccontextmanager
 async def _workspace_lock(workspace: Path) -> AsyncIterator[None]:
-    # 弱引用避免用户数量增长时永久保留 asyncio.Lock；flock 处理多个服务进程。
+    """为工作区同时获取进程内异步锁和跨进程文件锁，在上下文退出时释放。
+
+    工作区目录须已存在；文件锁使用非阻塞重试，不阻塞事件循环。
+    """
+    # Weak references avoid retaining asyncio.Lock objects as user counts grow; flock coordinates service processes.
     lock = _locks.setdefault(str(workspace), asyncio.Lock())
     async with lock:
         with (workspace / ".office-init.lock").open("a") as handle:
@@ -69,7 +73,8 @@ async def _workspace_lock(workspace: Path) -> AsyncIterator[None]:
 
 
 async def _reap(process: asyncio.subprocess.Process) -> None:
-    # 子进程独立会话：uv/pnpm 启动的后代也必须收到终止信号。
+    """向独立子进程组发送终止信号，短暂等待后升级为强制终止，并回收管道及子进程。"""
+    # Use a separate subprocess session so descendants started by uv/pnpm also receive termination signals.
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -90,6 +95,7 @@ async def _reap(process: asyncio.subprocess.Process) -> None:
 
 
 async def _initialize_git(workspace: Path, timeout: float) -> None:
+    """在指定工作区以 main 为初始分支执行 git init，遵守传入的超时。"""
     await _run(["git", "init", "-q", "-b", "main"], workspace, timeout)
 
 
@@ -100,6 +106,11 @@ async def _run(
     *,
     env: dict[str, str] | None = None,
 ) -> bytes:
+    """在工作区的独立进程会话中执行命令，成功返回 stdout 字节。
+
+    非零退出码抛出 CalledProcessError，超时或取消时接管可能迟到的子进程并清理进程组，
+    待清理完成后重新抛出原异常；env 为 None 时继承服务环境。
+    """
     creating = None
     process = None
     try:
@@ -108,7 +119,7 @@ async def _run(
                 *command, cwd=workspace, env=env, start_new_session=True,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             ))
-            # 创建过程不能因取消丢失稍后返回的进程句柄。
+            # Cancellation during creation must not lose a process handle returned later.
             process = await asyncio.shield(creating)
             stdout, stderr = await process.communicate()
             if process.returncode:
@@ -116,6 +127,7 @@ async def _run(
             return stdout
     except BaseException:
         async def cleanup() -> None:
+            """等待可能尚未创建完成的子进程，并将其交给进程组回收逻辑处理。"""
             child = process
             if child is None and creating is not None:
                 try:
@@ -135,6 +147,7 @@ async def _run(
 
 
 def _write_state(workspace: Path, state: dict[str, Any]) -> None:
+    """先写临时 JSON 文件，再原子替换工作区的环境状态文件。"""
     temporary = workspace / ".office-env.json.tmp"
     temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(workspace / ".office-env.json")
@@ -151,25 +164,31 @@ def _check_environment_conflicts(
                                        "yarn.lock", "pnpm-workspace.yaml", ".npmrc")
                      if (workspace / name).exists() or (workspace / name).is_symlink()]
         if conflicts:
-            raise RuntimeError("工作区存在非初始化器管理的环境，未覆盖：" + ", ".join(conflicts))
+            raise RuntimeError("The workspace contains an unmanaged environment; nothing was overwritten: " + ", ".join(conflicts))
     elif state.get("owner") != "fersk-office":
-        raise RuntimeError("无法识别工作区 .office-env.json，未修改现有环境")
+        raise RuntimeError("Unrecognized workspace .office-env.json; the existing environment was not modified")
 
     lockfile = workspace / "pnpm-lock.yaml"
     if lockfile.exists():
         recorded = (state or {}).get("manifests", {}).get("pnpm-lock.yaml")
         if recorded and hashlib.sha256(lockfile.read_bytes()).hexdigest() != recorded:
-            raise RuntimeError("工作区 pnpm-lock.yaml 已被修改，未覆盖")
+            raise RuntimeError("Workspace pnpm-lock.yaml has been modified and was not overwritten")
 
-    # 升级仅更新仍与记录一致的受管清单；用户自行修改的清单必须先人工处理。
+    # Upgrade only managed manifests that still match the recorded state; user-modified manifests require manual intervention first.
     for name, content in manifests.items():
         target = workspace / name
         if target.exists() and target.read_bytes() != content:
             recorded = (state or {}).get("manifests", {}).get(name)
             if hashlib.sha256(target.read_bytes()).hexdigest() != recorded:
-                raise RuntimeError(f"工作区 {name} 已被修改，未覆盖")
+                raise RuntimeError(f"Workspace {name} has been modified and was not overwritten")
 
 async def _initialize_environment(workspace: Path) -> None:
+    """校验或初始化当前用户的 Python 与 Node Office 环境，并记录安装状态及清单摘要。
+
+    已就绪且指纹、清单及依赖文件检查通过时直接复用；拒绝覆盖非受管环境和用户修改。
+    需要安装时调用 uv 与 pnpm，完成导入和运行检查后标记 ready；异常向调用方传播，
+    保留安装过程状态供后续重试。本函数须在工作区锁内调用。
+    """
     manifests = {"package.json": (json.dumps(NODE_PACKAGE, indent=2) + "\n").encode()}
     requirements = "\n".join(PYTHON_PACKAGES).encode()
     node_version = (await _run(["node", "--version"], workspace, 30)).decode().strip()
@@ -198,21 +217,21 @@ async def _initialize_environment(workspace: Path) -> None:
         actual = await _run([str(python), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
                             workspace, 30)
         if actual.decode().strip() != f"{sys.version_info.major}.{sys.version_info.minor}":
-            raise RuntimeError("工作区 Python 版本与服务不一致，需要人工迁移 .venv，未删除环境")
+            raise RuntimeError("The workspace Python version differs from the service version; migrate .venv manually. The environment was not deleted")
     elif (workspace / ".venv").exists():
-        raise RuntimeError("工作区 .venv 不完整，需要人工检查，未重建或删除")
+        raise RuntimeError("Workspace .venv is incomplete and requires manual inspection; it was not rebuilt or deleted")
 
     required = ("uv", "node", "pnpm", "soffice", "pdftoppm", "pdfinfo", "pdftotext", "pdfimages", "pandoc", "tesseract")
     missing = [name for name in required if not shutil.which(name)]
     if missing:
-        raise RuntimeError("缺少系统工具：" + ", ".join(missing))
+        raise RuntimeError("Missing system tools: " + ", ".join(missing))
     if int(node_version.lstrip("v").split(".")[0]) < 22:
-        raise RuntimeError("Office 工作区需要 Node.js >=22")
+        raise RuntimeError("The Office workspace requires Node.js >=22")
 
     state = {"owner": "fersk-office", "status": "installing", "fingerprint": fingerprint,
              "manifests": (state or {}).get("manifests", {})}
     _write_state(workspace, state)
-    # 安装阶段使用显式 Python 路径，避免 uv 误用服务的虚拟环境。
+    # Use an explicit Python path during installation so uv does not use the service virtual environment.
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
     env["UV_NO_CACHE"] = "false"
@@ -226,18 +245,18 @@ async def _initialize_environment(workspace: Path) -> None:
         (workspace / name).write_bytes(content)
     state["manifests"].update({name: hashlib.sha256(content).hexdigest() for name, content in manifests.items()})
     _write_state(workspace, state)
-    # 首次生成用户自己的 lockfile；已有锁文件由 pnpm 复用，升级直接依赖时允许更新。
+    # Generate a user-specific lockfile initially; pnpm reuses existing locks and may update them when direct dependencies are upgraded.
     try:
         await _run(["pnpm", "install", "--no-frozen-lockfile", "--ignore-scripts", "--strict-peer-dependencies"],
                    workspace, ENVIRONMENT_TIMEOUT, env=env)
     finally:
-        # 安装失败也可能已更新锁文件，记录安装器的写入以便下次重试。
+        # Failed installation may still update the lockfile; record installer writes for the next retry.
         if lockfile.is_file():
             state["manifests"]["pnpm-lock.yaml"] = hashlib.sha256(lockfile.read_bytes()).hexdigest()
             _write_state(workspace, state)
     await _run([str(python), "-c", _PYTHON_IMPORTS], workspace, 30, env=env)
     await _run(["uv", "pip", "check", "--python", str(python)], workspace, 30, env=env)
-    # 实际执行 sharp，验证平台二进制，而不只是检查包目录存在。
+    # Execute sharp to verify its platform binary rather than merely checking for the package directory.
     node_probe = """const fs = require('node:fs');
 for (const name of Object.keys(JSON.parse(fs.readFileSync('package.json')).dependencies)) require(name);
 require('sharp')(Buffer.from('<svg width="8" height="8"><rect width="8" height="8"/></svg>'))
@@ -249,8 +268,14 @@ require('sharp')(Buffer.from('<svg width="8" height="8"><rect width="8" height="
 
 
 async def prepare_workspace(workspace: Path, timeout: float) -> None:
+    """创建用户工作区，保留已有 AGENTS.md，并在锁内初始化缺失的 Git 仓库及 Office 环境。
+
+    传入的 timeout 仅用于 Git 初始化；环境初始化及等待锁另受 ENVIRONMENT_TIMEOUT 限制。
+    已有 .git 文件或目录均视为已初始化，依赖检查或安装失败向调用方传播。
+    """
     workspace = workspace.resolve()
     def prepare() -> None:
+        """创建工作区目录，仅在 AGENTS.md 不存在时创建空文件，不覆盖已有内容。"""
         workspace.mkdir(parents=True, exist_ok=True)
         try:
             (workspace / "AGENTS.md").touch(exist_ok=False)
@@ -260,7 +285,7 @@ async def prepare_workspace(workspace: Path, timeout: float) -> None:
     await asyncio.to_thread(prepare)
     async with asyncio.timeout(ENVIRONMENT_TIMEOUT):
         async with _workspace_lock(workspace):
-            # worktree 的 .git 是文件，同样视为已初始化；加锁后重新判断。
+            # A worktree .git file also indicates initialization; recheck after acquiring the lock.
             if not (workspace / ".git").exists():
                 await _initialize_git(workspace, timeout)
             await _initialize_environment(workspace)

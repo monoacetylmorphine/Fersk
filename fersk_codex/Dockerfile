@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/fersk_codex/.venv/bin:${PATH}" \
     PYTHONPATH=/opt
 
-# 来源：现有音频流程及 skills-office；仅显式安装两套字体，禁用推荐包。
+# Source: the existing audio workflow and skills-office; explicitly install only two font sets and disable recommended packages.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim tesseract-ocr-jpn \
     && fc-cache -f
 
-# 构建时安装 pnpm 最新版本；Office 业务包由用户工作区初始化器安装。
+# Install the latest pnpm at build time; the user workspace initializer installs Office packages.
 RUN --mount=type=cache,target=/root/.npm \
     npm install --global pnpm --no-audit --no-fund \
     && node --version && pnpm --version
@@ -45,8 +45,9 @@ ENV CODEX_HOME=${HOME}/.codex
 WORKDIR /opt/fersk_codex
 COPY fersk_codex/pyproject.toml fersk_codex/uv.lock ./
 ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
+# 构建缓存路径须与挂载点一致；仅对本次安装生效，运行时仍使用用户缓存。
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python \
+    UV_CACHE_DIR=/root/.cache/uv uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python \
         --default-index "${PYTHON_PACKAGE_INDEX}" \
     && ln -s "$(python -c 'from codex_cli_bin import bundled_codex_path; print(bundled_codex_path())')" \
         /usr/local/bin/codex \
@@ -54,8 +55,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY fersk_codex/ .
 # Dependencies are cached above; run the copied source via PYTHONPATH.
 RUN install -m 0755 docker/entrypoint.sh /usr/local/bin/fersk-entrypoint \
-    && mkdir -p "${HOME}/.fersk" "${CODEX_HOME}/workspace" \
-    && chown -R "${APP_UID}:${APP_GID}" "${HOME}"
+    && install -d -m 0755 -o "${APP_UID}" -g "${APP_GID}" \
+        "${HOME}/.fersk" "${CODEX_HOME}" "${CODEX_HOME}/workspace"
 
 USER ${APP_UID}:${APP_GID}
 WORKDIR ${HOME}

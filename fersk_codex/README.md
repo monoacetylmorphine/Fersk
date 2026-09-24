@@ -42,7 +42,11 @@ Docker 沿用 Debian Bookworm，安装 Python 3.13、uv、Node.js LTS（工作�
 仅显式添加两个字体包：`fonts-inter`（英文 Inter）和 `fonts-noto-cjk`（中文使用 Noto Sans CJK SC）；
 系统依赖可能附带符号字体。没有安装 Apple 专有字体。
 禁用 apt 推荐包，通过 BuildKit 缓存 apt、npm 和 uv 下载，保留依赖文件先于源码复制的分层。
-`Dockerfile.dockerignore` 仅向构建发送本服务，排除参考 skills、本地环境和测试。
+构建时仅对 `uv sync` 设置 `UV_CACHE_DIR=/root/.cache/uv`，与 BuildKit cache mount 对齐，
+避免 `HOME` 切换为应用用户后将下载缓存写入镜像。运行时 uv 仍使用应用用户的缓存目录。
+应用数据目录通过 `install -d` 定向设置所有权，不递归修改整个 HOME，避免已有文件因权限变更重复进入镜像层。
+此优化保留 Office 系统工具、ffmpeg/ffprobe 和用户工作区依赖初始化流程；实际体积收益需重建镜像后确认。
+仓库根目录的 `.dockerignore` 筛选两个服务的构建输入，排除参考 skills、本地环境和测试。
 镜像不默认安装 GCC：如果部署沙箱禁止 Unix socket，现有 LibreOffice shim 需要
 GCC 和 libc 开发头文件；该受限分支不属于默认精简镜像支持范围。
 

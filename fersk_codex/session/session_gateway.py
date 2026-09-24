@@ -1,4 +1,4 @@
-"""任务状态与短期去重缓存；按所属任务释放，最长保留 24 小时。"""
+"""Task state and short-lived deduplication caches, released per task and retained for at most 24 hours."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 logger = get_logger("Reaction")
 
-# 来源：用户指定内存状态和待写日志最长保留 24 小时。
+# Source: user requirement to retain in-memory state and pending logs for at most 24 hours.
 RETENTION_SECONDS = 24 * 60 * 60
 
 
@@ -55,6 +55,7 @@ class ActiveCodexRun:
 
 class SessionCache:
     def __init__(self) -> None:
+        """初始化聊天锁、消息去重、运行归属、缓冲及 reaction 清理等内存索引，不启动后台任务。"""
         self.codex_locks: dict[str, asyncio.Lock] = {}
         self.reset_tasks: dict[str, asyncio.Task[object]] = {}
         self.buffered_events: dict[str, P2ImMessageReceiveV1] = {}
@@ -98,9 +99,10 @@ class SessionCache:
         chat_id: str,
         message_id: str,
     ) -> None:
+        """记录消息首次出现的单调时间，清理过期项并按配置容量淘汰最早登记项；重复消息不延长保留期。"""
         now = time.monotonic()
         entries = mapping.setdefault(chat_id, {})
-        # 重复事件不会延长原消息的保留期限。
+        # Duplicate events do not extend the original message retention period.
         entries.setdefault(message_id, now)
         for key, timestamp in list(entries.items()):
             if timestamp is not None and now - timestamp >= RETENTION_SECONDS:
@@ -109,6 +111,7 @@ class SessionCache:
             entries.pop(next(iter(entries)))
 
     def recall(self, message_id: str) -> None:
+        """登记消息撤回及首次撤回时间，超过容量时移除最早登记的撤回标记。"""
         self.recalled_message_ids.add(message_id)
         self._recall_times.setdefault(message_id, time.monotonic())
         while len(self.recalled_message_ids) > CONFIG["messaging"]["recallCacheMaxEntries"]:
@@ -117,12 +120,17 @@ class SessionCache:
             self._recall_times.pop(oldest, None)
 
     def track_reaction(self, chat_id: str, message_id: str) -> None:
+        """记录聊天消息 reaction 的首次跟踪时间，用于后续保留期限清理。"""
         self._reaction_times.setdefault((chat_id, message_id), time.monotonic())
 
     def queue_reaction(self, chat_id: str, message_id: str, reaction_id: str) -> None:
+        """按聊天、消息和 reaction 标识去重登记待删记录，不直接发起删除请求。
+
+        队列满时淘汰最早记录并清理仍匹配的 reaction 索引，同时记录未确认删除的日志。
+        """
         key = (chat_id, message_id, reaction_id)
         if key not in self.pending_reactions:
-            # 来源：复用现有短期消息缓存容量，失败删除记录独立于任务生命周期。
+            # Source: reuse the short-lived message cache capacity; failed deletion records outlive the task.
             if len(self.pending_reactions) >= CONFIG["messaging"]["recallCacheMaxEntries"]:
                 oldest = next(iter(self.pending_reactions))
                 self.pending_reactions.pop(oldest)
@@ -132,7 +140,7 @@ class SessionCache:
                     if not self.reaction_message_ids[chat]:
                         self.reaction_message_ids.pop(chat)
                     self._reaction_times.pop((chat, mid), None)
-                logger.error("reaction 清理队列已满，丢弃未确认记录: %s", oldest)
+                logger.error("Reaction cleanup queue is full; discarding unconfirmed record: %s", oldest)
             self.pending_reactions[key] = ReactionCleanup()
 
     def release_messages(
@@ -149,9 +157,10 @@ class SessionCache:
             self.received_at.pop(mid, None)
             self.recalled_message_ids.discard(mid)
             self._recall_times.pop(mid, None)
-            # reaction 由卡片收尾后的删除流程处理，不能随任务缓存丢弃。
+            # Reactions are deleted after card finalization and must not be discarded with the task cache.
 
     def finish_run(self, state: ActiveCodexRun) -> None:
+        """将仍属于本运行的 reaction 加入清理队列，释放消息瞬态数据及任务、卡片引用，再尝试回收空闲聊天状态。"""
         for mid in state.message_ids:
             if self.active_runs_by_message_id.get(mid) not in (None, state):
                 continue
@@ -159,7 +168,7 @@ class SessionCache:
             if rid is not None:
                 self.queue_reaction(state.chat_id, mid, rid)
         self.release_messages(state.chat_id, state.message_ids, state)
-        # 任务/流引用释放，阻塞状态只保留停止重试所需的元数据。
+        # Release task and stream references; blocked state retains only metadata needed to retry stopping.
         state.task = None
         state.stop_task = None
         state.timeout_task = None
@@ -167,6 +176,10 @@ class SessionCache:
         self.release_idle(state.chat_id)
 
     def release_idle(self, chat_id: str) -> None:
+        """聊天无使用者、任务、缓冲、阻塞状态及持有中的锁时，回收提交锁和代次等瞬态状态。
+
+        保留短期去重记录，并把未删除的 reaction 登记到独立清理队列，不执行网络请求。
+        """
         if (self._users.get(chat_id) or self.pending_chat_requests.get(chat_id)
                 or chat_id in self.reset_tasks or chat_id in self.buffer_tasks
                 or chat_id in self.buffered_events or chat_id in self.blocked_chats
@@ -196,7 +209,7 @@ class SessionCache:
                     if not self.reaction_message_ids[chat]:
                         self.reaction_message_ids.pop(chat)
                     self._reaction_times.pop((chat, mid), None)
-                logger.error("reaction 超过 24 小时仍未确认删除，已丢弃: %s", key)
+                logger.error("Reaction deletion remains unconfirmed after 24 hours; discarded: %s", key)
         for chat, timestamp in list(self._buffer_times.items()):
             if chat not in self.buffered_events or now - timestamp >= RETENTION_SECONDS:
                 self._buffer_times.pop(chat, None)

@@ -118,5 +118,5 @@ class DailyLogTests(unittest.IsolatedAsyncioTestCase):
             records = [json.loads(line) for path in Path(directory).glob('*.jsonl')
                        for line in path.read_text().splitlines()]
             self.assertEqual(records, [{'event': 'fresh'}])
-            with self.assertRaisesRegex(RuntimeError, '未全部写入'):
+            with self.assertRaisesRegex(RuntimeError, 'not all records were written'):
                 await journal.flush()

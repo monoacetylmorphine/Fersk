@@ -37,7 +37,7 @@ class ProbeTests(unittest.TestCase):
 
     def test_stream_activity_stays_live_but_only_final_item_is_recorded(self) -> None:
         probe = RunProbe("run", "chat", frozenset({"m"}), last_activity=0)
-        item_data = {"id": "tool", "type": "commandExecution", "aggregatedOutput": "完成\n"}
+        item_data = {"id": "tool", "type": "commandExecution", "aggregatedOutput": "Done\n"}
         item = NS(id="tool", type="commandExecution", model_dump=Mock(return_value=item_data))
         with patch("fersk_codex.codex.thread_watchdog.journal.record") as record:
             probe.activity(NS(method="item/started", payload=NS(item=NS(root=item))))
@@ -319,7 +319,7 @@ class GatewayWatchdogTests(unittest.IsolatedAsyncioTestCase):
             yield {"type": "started"}
             yield {"type": "done"}
         self.runtime.codex.running = healthy
-        following = helpers.batch_from_chat_history(helpers.event("下一条", message_id="next"), [])
+        following = helpers.batch_from_chat_history(helpers.event("Next message", message_id="next"), [])
         await asyncio.wait_for(self.execution._handle_message_batch(following, 0), 1)
         self.assertFalse(self.runtime.cache.all_runs)
 
@@ -495,12 +495,12 @@ class JournalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([json.loads(line) for line in path.read_text().splitlines()],
                              [{"event": "old"}, {"event": "started"}, {"event": "stopped"}])
             previous = path.read_bytes()
-            journal.record({"event": "下一次运行"})
+            journal.record({"event": "Next run"})
             await journal.flush()
             self.assertTrue(path.read_bytes().startswith(previous))
             self.assertEqual([json.loads(line) for line in path.read_text().splitlines()],
                              [{"event": "old"}, {"event": "started"}, {"event": "stopped"},
-                              {"event": "下一次运行"}])
+                              {"event": "Next run"}])
 
 
 if __name__ == "__main__":

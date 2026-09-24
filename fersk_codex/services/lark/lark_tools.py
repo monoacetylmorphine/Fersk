@@ -35,6 +35,10 @@ from fersk_codex.middleware.resource_validator import (
 
 
 async def adding_reaction_emoji(message_id: str) -> str | None:
+    """为消息添加配置的处理中 reaction，成功返回 reaction_id，业务响应失败时记录日志并返回 None。
+
+    请求执行异常向调用方传播。
+    """
 
     request: CreateMessageReactionRequest = CreateMessageReactionRequest.builder() \
             .message_id(message_id) \
@@ -56,6 +60,7 @@ async def adding_reaction_emoji(message_id: str) -> str | None:
 
 
 async def delete_reaction_emoji(message_id: str, reaction_id: str) -> bool:
+    """删除指定消息的 reaction；业务响应成功返回 True，失败记录日志并返回 False，请求异常向外传播。"""
 
     request: DeleteMessageReactionRequest = DeleteMessageReactionRequest.builder() \
         .message_id(message_id) \
@@ -78,8 +83,13 @@ async def download_msg_resource(
     resource_key: str,
     resource_type: str,
 ) -> str | None:
+    """请求飞书消息资源，在线程中校验并保存到目标工作区，成功返回保存路径字符串。
 
-    logger.debug("获取消息资源: message_id=%s, type=%s", message_id, resource_type)
+    业务响应失败返回 None；资源校验、请求或文件写入异常向外传播。union_id 用作工作区标识，
+    群聊调用方可传入 chat_id，本函数不验证该标识的归属。
+    """
+
+    logger.debug("Fetching message resource: message_id=%s, type=%s", message_id, resource_type)
 
     request: GetMessageResourceRequest = GetMessageResourceRequest.builder() \
         .message_id(message_id) \
@@ -93,7 +103,7 @@ async def download_msg_resource(
         _log_lark_failure(response, "client.im.v1.message_resource.get")
         return
 
-    # 响应读取、校验和磁盘写入整体移出事件循环。
+    # Move response reading, validation, and disk writes off the event loop together.
     return await asyncio.to_thread(_save_resource, response, union_id, message_id, resource_key, resource_type)
 
 
@@ -104,6 +114,10 @@ def _save_resource(
     resource_key: str,
     resource_type: str,
 ) -> str:
+    """读取并校验下载响应，向目标工作区的入站目录写入带时间戳的文件，返回路径字符串。
+
+    校验失败记录日志并抛出 ResourceValidationError；目录创建和文件写入异常原样传播。
+    """
     saving_path = (
         Path(CONFIG["storage"]["workspaceRoot"])
         / union_id
@@ -122,7 +136,7 @@ def _save_resource(
         )
     except ResourceValidationError as error:
         lark.logger.error(
-            f"消息资源校验失败, message_id={message_id}, "
+            f"Message resource validation failed, message_id={message_id}, "
             f"resource_key={resource_key}, error={error}"
         )
         raise
@@ -136,10 +150,14 @@ def _save_resource(
     with open(file_path, "wb") as file:
         file.write(resource.data)
 
-    logger.debug("资源已保存: path=%s", file_path)
+    logger.debug("Resource saved: path=%s", file_path)
     return str(file_path)
 
 async def getting_chat_history(chat_id: str, messages_num: int) -> list[Message]:
+    """按创建时间倒序获取一页聊天历史，messages_num 作为 page_size，不继续翻页。
+
+    业务响应失败时记录日志并返回空列表；请求执行异常向调用方传播。
+    """
 
     request: ListMessageRequest = ListMessageRequest.builder() \
             .container_id_type("chat") \

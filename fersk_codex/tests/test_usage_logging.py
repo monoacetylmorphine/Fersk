@@ -1,4 +1,4 @@
-"""SQLite 持久化使用临时文件，保留调用数据，不生成 CSV。"""
+"""SQLite persistence uses temporary files, retains call data, and does not produce CSV."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(result, original)
 
     async def test_save_preserves_numeric_fields_and_unicode(self) -> None:
-        record = dict(usage.DEFAULT_VALUES, timeStamp='2026-09-08', userId='用户,"one"\nnext',
+        record = dict(usage.DEFAULT_VALUES, timeStamp='2026-09-08', userId='user,"one"\nnext',
                       threadId="thread'); DROP TABLE token_usage; --", model='model',
                       input_tokens=11, output_tokens=7, total_tokens=18, taskDuration_ms=123)
         before = record.copy()

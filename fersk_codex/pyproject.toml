@@ -42,7 +42,7 @@ package-dir = { fersk_codex = "." }
 fersk_codex = ["configs/*.json"]
 
 [tool.setuptools_scm]
-# 本项目位于 Git 仓库的子目录中。
+# This project is located in a subdirectory of the Git repository.
 search_parent_directories = true
-# 来源：项目构建策略；源码缺少 Git 和分发元数据时标记为未知版本。
+# Source: project build policy; mark the version as unknown when Git and distribution metadata are unavailable.
 fallback_version = "0.0.0"

@@ -1,9 +1,8 @@
-"""模型路由、重试、事件流转换以及用量记录。"""
+"""Model routing, retries, event stream conversion, and usage recording."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
@@ -43,7 +42,7 @@ logger = get_logger("Codex")
 
 
 class RunEvent(TypedDict):
-    """SDK 与网关之间的字典事件；可选字段保持原有缺省语义。"""
+    """Dictionary events between the SDK and gateway; optional fields preserve existing defaults."""
 
     type: str
     content: NotRequired[str]
@@ -55,8 +54,47 @@ class RunEvent(TypedDict):
     control: NotRequired[CardSteer]
 
 
+def _tool_progress(item: Any, *, completed: bool) -> str | None:
+    """将已识别的工具事件转换为名称与执行状态文案，其他 item 返回 None。
+
+    completed 表示收到完成事件，不代表执行成功；失败标志优先于成功标志，
+    无可靠结果标志时显示状态未知。仅读取名称和状态字段，不展开参数或结果正文。
+    """
+    if item.type not in {
+        "commandExecution", "mcpToolCall", "dynamicToolCall", "fileChange",
+        "collabAgentToolCall", "webSearch", "imageView", "imageGeneration", "sleep",
+    }:
+        return None
+    tool = getattr(item, "tool", None)
+    name = getattr(tool, "value", tool) or item.type
+    prefix = (getattr(item, "server", None) if item.type == "mcpToolCall"
+              else getattr(item, "namespace", None) if item.type == "dynamicToolCall" else None)
+    if prefix:
+        name = f"{prefix}.{name}"
+    content = f"Agent executing {name} tool"
+    if not completed:
+        return content + "\n"
+
+    status = getattr(item, "status", None)
+    status = getattr(status, "value", status)
+    exit_code = getattr(item, "exit_code", None) if item.type == "commandExecution" else None
+    success = getattr(item, "success", None) if item.type == "dynamicToolCall" else None
+    failed = (status in {"failed", "declined", "interrupted"}
+              or (exit_code is not None and exit_code != 0) or success is False
+              or getattr(item, "error", None) is not None
+              or getattr(item, "failure", None) is not None)
+    if failed:
+        suffix = "failed"
+    elif status == "completed" or exit_code == 0 or success is True:
+        suffix = "succeeded"
+    else:
+        # SDK items such as webSearch and imageView have no success flag; completion does not imply success.
+        suffix = "finished (status unknown)"
+    return content + ": " + suffix + "\n"
+
+
 def _resolve_model(prompt: str | list[InputItem]) -> tuple[str, str]:
-    """保留文本、附件与图片路由优先级，空列表沿用多模态路由。"""
+    """按输入类型返回模型名称和 provider：纯文本走文本路由，包含本地图片走图片路由，其余列表走多模态路由。"""
     if isinstance(prompt, str):
         route = "text"
     elif isinstance(prompt, list):
@@ -70,6 +108,7 @@ def _resolve_model(prompt: str | list[InputItem]) -> tuple[str, str]:
 
 
 def _sandbox_from_config() -> Sandbox:
+    """将配置中的 sandbox 名称转换为 SDK 枚举；不支持的名称抛出 RuntimeError。"""
     attribute = CONFIG["codex"]["sandbox"].replace("-", "_")
     try:
         return getattr(Sandbox, attribute)
@@ -87,7 +126,11 @@ async def _retry_on_overload_async(
     jitter_ratio: float | None = None,
     backoff_multiplier: float | None = None,
 ) -> T:
-    """Async equivalent of the SDK overload retry helper."""
+    """按配置或显式覆盖值重试 SDK 判定可重试的异常，返回操作结果。
+
+    max_attempts 包含首次尝试；等待时间采用指数退避并加入随机抖动。
+    不可重试异常和最后一次失败原样抛出，取消不重试。
+    """
     retry_config = CONFIG["codex"]["retry"]
     max_attempts = retry_config["maxAttempts"] if max_attempts is None else max_attempts
     initial_delay_s = retry_config["initialDelaySeconds"] if initial_delay_s is None else initial_delay_s
@@ -119,7 +162,7 @@ async def _retry_on_overload_async(
 
 
 def _error_event(exc: Exception, *, operation: str) -> RunEvent:
-    """Convert SDK failures into the generator's user-facing event format."""
+    """将异常分类为用户可见的 error 事件，并记录操作名及原始错误；文案取自配置。"""
     if is_retryable_error(exc):
         code = "retry_exhausted"
         content = CONFIG["messages"]["codexBusy"]
@@ -143,8 +186,12 @@ async def _save_turn_usage(
     duration_ms: int | None = None,
     finalize: bool = False,
 ) -> None:
-    """在有限时间内完成单条写入或耗时回填，抵御调用方重复取消。"""
+    """在配置的收尾超时内尝试写入单条用量或回填耗时，不重复提交失败写入。
+
+    写入异常仅记录日志；调用方取消时等待受保护的写入任务结束，再传播取消。
+    """
     async def save() -> None:
+        """执行一次有超时限制的写入或回填；异常仅记录，不重试可能已提交的事务。"""
         try:
             async with asyncio.timeout(settings()["cleanupTimeoutSeconds"]):
                 if finalize:
@@ -169,7 +216,7 @@ async def _save_turn_usage(
 
 
 class FerskCodex(CodexSession, CodexRuntime):
-    """执行请求，并复用会话管理和运行控制的共享状态。"""
+    """Execute requests using shared session-management and runtime-control state."""
 
     @classmethod
     async def running(
@@ -180,6 +227,12 @@ class FerskCodex(CodexSession, CodexRuntime):
         *,
         notify_started: bool = False,
     ) -> AsyncGenerator[RunEvent, None]:
+        """准备用户工作区、恢复或创建线程，并启动一个 turn，逐项产出 RunEvent。
+
+        启动前保存线程绑定及历史名称；notify_started 为真时在流开始前产出 started。
+        可重试的启动操作按配置重试，流开始后不重新提交 turn；已捕获的业务异常转为
+        error 事件，取消和未捕获异常向调用方传播。调用方应关闭生成器以释放 SDK 会话。
+        """
         try:
             thread_id = await thread_manager.get_user_thread(user_id)
         except Exception as error:
@@ -190,7 +243,7 @@ class FerskCodex(CodexSession, CodexRuntime):
 
         workspace = Path(CONFIG["storage"]["workspaceRoot"]).expanduser() / user_id
         try:
-            # 10 秒是项目默认策略，兼容尚未填写新字段的挂载配置。
+            # The project default of 10 seconds supports mounted configurations that omit the new field.
             await prepare_workspace(workspace, CONFIG["codex"].get("gitInitTimeoutSeconds", 10))
         except Exception as error:
             yield _error_event(error, operation="workspace_init")
@@ -198,7 +251,7 @@ class FerskCodex(CodexSession, CodexRuntime):
 
         thread_config = {
             "cwd":str(workspace),
-            # 来源：Codex shell_environment_policy.set；只覆盖当前用户的环境路径。
+            # Source: Codex shell_environment_policy.set; override only the current user environment paths.
             "config": {f"shell_environment_policy.set.{key}": value
                        for key, value in workspace_environment(workspace).items()},
             "sandbox":_sandbox_from_config(),
@@ -238,7 +291,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                             lambda: codex.thread_unarchive(thread_id),
                             operation_name="thread_unarchive",
                         )
-                        # 解归档本身不接收配置，重新恢复才能注入当前用户的依赖路径。
+                        # Unarchive does not accept configuration; resume again to inject the current user dependency paths.
                         thread = await _retry_on_overload_async(
                             lambda: codex.thread_resume(thread_id=thread_id, **thread_config),
                             operation_name="thread_resume",
@@ -267,7 +320,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                     yield _error_event(error, operation="session_history_register")
                     return
             logger.info("Codex : user_id=%s, thread_id=%s, prompt=%s", user_id, thread.id, prompt)
-            # 启动 turn 前先保存绑定，避免数据库失败后留下已执行的请求。
+            # Save the binding before starting the turn so database failure cannot leave an executed request behind.
             try:
                 await thread_manager.set_user_thread(user_id, thread.id)
             except Exception as error:
@@ -316,7 +369,12 @@ class FerskCodex(CodexSession, CodexRuntime):
         running_timestamp: datetime,
         probe: RunProbe | None,
     ) -> AsyncGenerator[RunEvent, None]:
-        """转换单个 turn 的事件；由调用方在 SDK 会话关闭前完成收尾。"""
+        """将单个 SDK turn 的事件转换为推理、回答、工具状态、用量及结束事件。
+
+        工具参数和结果不进入输出；推理 delta 和回答 phase 保持原样，用量逐条持久化。
+        流异常或缺少完成事件时产出 error，不重放 turn；finally 等待并发控制操作，
+        清理活跃索引、同步已完成线程的时间，并为已记录用量回填已知耗时。
+        """
         thread, handle, model = live.thread, live.handle, live.model
         usage_run_id = run_id or uuid4().hex
         usage_received = False
@@ -324,7 +382,6 @@ class FerskCodex(CodexSession, CodexRuntime):
         completed = False
         interrupted = False
         message_phases = {}
-        tool_output = {}
         try:
             if run_id is not None:
                 async with cls._turns_guard:
@@ -354,26 +411,9 @@ class FerskCodex(CodexSession, CodexRuntime):
                                 else:
                                     message_phases.pop(item.id, None)
                             elif item.type not in {"userMessage", "reasoning"}:
-                                # 工具参数、状态和结果均展示；已流出的命令输出不重复追加。
-                                data = (item.model_dump(mode="json", exclude_none=True)
-                                        if hasattr(item, "model_dump") else vars(item).copy())
-                                output = data.pop("aggregated_output", data.pop("aggregatedOutput", None))
-                                if event.method == "item/completed":
-                                    streamed = tool_output.pop(item.id, "")
-                                    if output and output.startswith(streamed):
-                                        output = output[len(streamed):]
-                                if output:
-                                    data["output"] = output
-                                label = "Tool Call Starting" if event.method == "item/started" else "Tool Call Ending"
-                                yield {"type": "progress", "item_id": item.id,
-                                       "content": "\n" + label + ": " + item.type + "\n"
-                                       + json.dumps(data, ensure_ascii=False, default=str) + "\n"}
-
-                        elif event.method == "item/commandExecution/outputDelta":
-                            item_id = event.payload.item_id
-                            delta = event.payload.delta
-                            tool_output[item_id] = tool_output.get(item_id, "") + delta
-                            yield {"type": "progress", "item_id": item_id, "content": delta}
+                                content = _tool_progress(item, completed=event.method == "item/completed")
+                                if content:
+                                    yield {"type": "progress", "item_id": item.id, "content": content}
 
                         elif event.method in {
                             "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
@@ -397,20 +437,14 @@ class FerskCodex(CodexSession, CodexRuntime):
                                     "threadId": thread.id,
                                     "runId": usage_run_id,
                                     "model": model,
-                                    # 收到完成事件后回填；0 表示尚未获得任务总耗时。
+                                    # Backfill after completion; 0 means the total task duration is not yet available.
                                     "taskDuration_ms": 0,
                                     **usage,
                                 })
-                                yield {"type": "usage", "content": str(usage)}
 
                         elif event.method not in {"turn/completed", "turn/started"}:
-                            # 其他运行时输出（例如 hook、工具进度、plan）保留原事件类型。
-                            payload = event.payload
-                            data = (payload.model_dump(mode="json", exclude_none=True)
-                                    if hasattr(payload, "model_dump") else vars(payload))
-                            yield {"type": "progress", "item_id": event.method,
-                                   "content": event.method + "\n" + json.dumps(
-                                       data, ensure_ascii=False, default=str) + "\n"}
+                            # Output deltas, tool progress, hooks, and unknown events are consumed only by the logging and watchdog code above.
+                            continue
 
                         elif event.method == "turn/completed":
                             completed = True
@@ -454,7 +488,7 @@ class FerskCodex(CodexSession, CodexRuntime):
                 if completed:
                     await session_codex._sync_session_time(user_id, thread)
             finally:
-                # 所有退出路径仅收尾一次；已知耗时时回填，不重复插入用量。
+                # Finalize once on every exit path; backfill known duration without inserting usage again.
                 if usage_received:
                     await _save_turn_usage({
                         "userId": user_id,

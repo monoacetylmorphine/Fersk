@@ -1,4 +1,4 @@
-"""离线注入阻塞请求，验证两个独立服务的真实线程容量与事件准入。"""
+"""Inject blocking requests offline to verify actual thread capacity and event admission in two independent services."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class RequestLimitTests(unittest.IsolatedAsyncioTestCase):
                 entered.set()
                 release.wait(2)
                 exited.set()
-                raise OSError("迟到的网络异常")
+                raise OSError("Late network error")
             try:
                 task = asyncio.create_task(pool.call(blocked, timeout=0.03))
                 while not entered.is_set():
@@ -90,7 +90,7 @@ class RequestLimitTests(unittest.IsolatedAsyncioTestCase):
         async def handler(data):
             entered.set()
             await release.wait()
-            raise OSError("模拟处理失败")
+            raise OSError("Simulated processing failure")
         async def control(data):
             stopped.set()
         with patch("fersk_codex.utils.event_dispatcher.logger") as logger:
