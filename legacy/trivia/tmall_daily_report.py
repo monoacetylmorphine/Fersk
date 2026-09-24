@@ -1,6 +1,7 @@
 import os
 import re
 
+import numpy as np
 import pandas as pd
 
 from datetime import datetime, timezone, timedelta
@@ -9,15 +10,16 @@ timestamp = datetime.now(eastern8)
 today = timestamp.strftime("%Y%m%d")
 yesterday = (timestamp - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# 文件名前缀
+
 file_prefix = "xbtc-sycm"
 
-# 目标目录
 downloads_dir = "/Users/fersk/Downloads/"
 
-xbtc_sales_data = pd.read_csv("/Users/fersk/Downloads/xbtc-daily-sales-report.csv")
+history = pd.read_csv("/Users/fersk/Downloads/xbtc-daily-sales-report.csv")
 
-def record(daily:str)->pd.DataFrame:
+
+
+def insert(daily:str, history:str)->pd.DataFrame:
 
     # 构建正则：前缀_当日日期_随机十六进制字符串.xlsx
     pattern = re.compile(
@@ -44,40 +46,79 @@ def record(daily:str)->pd.DataFrame:
         print("匹配成功:", target_filename)
         sycm = pd.read_excel(full_path)
 
-        yesterday_idx = (xbtc_sales_data[xbtc_sales_data.loc[:,"Date"] == yesterday]).index.start
+        yesterday_idx = (history[history.loc[:,"Date"] == yesterday]).index.start
 
-        xbtc_sales_data.fillna(value=0, inplace=True)
+        history.fillna(value=0, inplace=True)
 
-        xbtc_sales_data.loc[yesterday_idx, "访客数\nUV"] = sycm.loc[0, "访客数"]
-        xbtc_sales_data.loc[yesterday_idx, "客单价\nATV"] = sycm.loc[0, "客单价"]
-        xbtc_sales_data.loc[yesterday_idx, "买家数\nBuyer"] = sycm.loc[0, "支付买家数"]
-        xbtc_sales_data.loc[yesterday_idx, "成交金额\nSold Val"] = sycm.loc[0, "支付金额"]
-        xbtc_sales_data.loc[yesterday_idx, "成交订单\nSold Order"] = sycm.loc[0, "支付子订单数"]
-        xbtc_sales_data.loc[yesterday_idx, "退款金额\nReturn Val"] = sycm.loc[0, "成功退款金额"]
-        xbtc_sales_data.loc[yesterday_idx, "站内推广花费\nPromotion Expenses"] = sycm.loc[0, "全站推广花费"]
+        history.loc[yesterday_idx, "访客数\nUV"] = sycm.loc[0, "访客数"]
+        history.loc[yesterday_idx, "客单价\nATV"] = sycm.loc[0, "客单价"]
+        history.loc[yesterday_idx, "买家数\nBuyer"] = sycm.loc[0, "支付买家数"]
+        history.loc[yesterday_idx, "成交金额\nSold Val"] = sycm.loc[0, "支付金额"]
+        history.loc[yesterday_idx, "成交订单\nSold Order"] = sycm.loc[0, "支付子订单数"]
+        history.loc[yesterday_idx, "退款金额\nReturn Val"] = sycm.loc[0, "成功退款金额"]
+        history.loc[yesterday_idx, "站内推广花费\nPromotion Expenses"] = sycm.loc[0, "全站推广花费"]
 
-        xbtc_sales_data["转化率\nCR%"] = xbtc_sales_data["买家数\nBuyer"] / xbtc_sales_data["访客数\nUV"]
-        xbtc_sales_data["退款率\nRefund Rate"] = xbtc_sales_data["退款金额\nReturn Val"] / xbtc_sales_data["成交金额\nSold Val"]
-        xbtc_sales_data["推广费比\nCost Ratio"] = xbtc_sales_data["站内推广花费\nPromotion Expenses"] / xbtc_sales_data["成交金额\nSold Val"]
-        xbtc_sales_data["净销金额\nNet Val"] = xbtc_sales_data["成交金额\nSold Val"] - xbtc_sales_data["退款金额\nReturn Val"] - xbtc_sales_data["刷单金额\nFake Val"]
+        history["转化率\nCR%"] = history["买家数\nBuyer"] / history["访客数\nUV"]
+        history["退款率\nRefund Rate"] = history["退款金额\nReturn Val"] / history["成交金额\nSold Val"]
+        history["推广费比\nCost Ratio"] = history["站内推广花费\nPromotion Expenses"] / history["成交金额\nSold Val"]
+        history["Completion Rate\n完成率(%)"] = history["成交金额\nSold Val"] / history["Turnover TARGET\n销售额目标"]
+        history["净销金额\nNet Val"] = history["成交金额\nSold Val"] - history["退款金额\nReturn Val"] - history["刷单金额\nFake Val"]
 
-        xbtc_sales_data["sortingDate"] = pd.to_datetime(xbtc_sales_data["Date"], format="%Y-%m-%d")
-        xbtc_sales_data.sort_values(by="sortingDate", inplace=True)
+        history["sortingDate"] = pd.to_datetime(history["Date"], format="%Y-%m-%d")
+        history.sort_values(by="sortingDate", inplace=True)
 
-        return xbtc_sales_data
-
-        print(xbtc_sales_data.loc[yesterday_idx])
-        xbtc_sales_data.iloc[:yesterday_idx+1, :-1].to_csv(f"/Users/fersk/Downloads/xbtc-daily-sales-report-{today}.csv", index=False, encoding="utf-8-sig")
+        history.to_csv("/Users/fersk/Downloads/xbtc-daily-sales-report.csv", index=False, encoding="utf-8-sig")
+        return history
 
 
 def preview(data:pd.DataFrame)->pd.DataFrame:
 
+    RATE_COLS = {
+        "Completion Rate\n完成率(%)",
+        "转化率\nCR%",
+        "退款率\nRefund Rate",
+        "推广费比\nCost Ratio",
+    }
 
+    SKIP_COLS = {"Date", "sortingDate"}
+
+    data["Date"] = (
+        data["sortingDate"].dt.strftime("%Y-%m-%d")
+        + " "
+        + data["sortingDate"].dt.day_name().str[:3].str.capitalize()
+        )
+    
+    def fmt(val, col_name):
+        # 1. 跳过列：日期类
+        if col_name in SKIP_COLS:
+            return val
+
+        # 2. 跳过空值、日期、字符串
+        if isinstance(val, (pd.Timestamp, datetime, str)) or pd.isna(val):
+            return val
+
+        # 3. 跳过 inf / -inf（否则 int(inf) 会 OverflowError）
+        if isinstance(val, (int, float, np.number)) and not np.isfinite(val):
+            return val
+
+        # 4. 率值列 → xx%
+        if col_name in RATE_COLS:
+            return f"{int(round(float(val), 2) * 100)}%"
+
+        # 5. 其余数值列 → int
+        return int(val)
+
+    data = data.replace([np.inf, -np.inf], np.nan)
+    data = data.apply(lambda col: col.map(lambda v: fmt(v, col.name)))
+
+    truncated_idx = (data[data["sortingDate"] == yesterday]).index.start
+    data.iloc[:truncated_idx+1, :-1].to_csv(f"/Users/fersk/Downloads/xbtc-daily-sales-report-{today}.csv", index=False, encoding="utf-8-sig")
 
 
 
 if __name__=="__main__":
-    record(file_prefix=file_prefix)
+    data = insert(daily=file_prefix, history=history)
+    preview(data=data)
 
 
 
