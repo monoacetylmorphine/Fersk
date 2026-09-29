@@ -99,19 +99,33 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(len(summarize_event(event)["error"]["additionalDetails"]), 501)
 
     def test_startup_idle_and_terminal_rules(self) -> None:
-        with patch.dict(settings(), maxRunSeconds=1000, startupTimeoutSeconds=10, idleTimeoutSeconds=5):
-            probe = RunProbe("r", "c", frozenset(), received_at=0, phase_at=0)
-            probe.phase = "starting"
-            self.assertEqual(probe.expired(10), "startup_timeout")
-            probe.phase = "running"
-            probe.last_activity = 0
-            self.assertEqual(probe.expired(5), "idle_timeout")
-            probe.tools.add("tool")
-            self.assertIsNone(probe.expired(5))
-            probe.finish("completed")
-            probe.finish("run_timeout")
-            self.assertEqual(probe.terminal, "completed")
-            self.assertIsNone(probe.expired(2000))
+        # 来源：人工测试时钟，覆盖零起点、刚启动和长时间运行的机器。
+        # 替换模块的 time 引用，不修改全局 time.monotonic 或 asyncio 时钟。
+        for origin in (0.0, 100.0, 1_000_000.0):
+            clock = NS(monotonic=Mock(return_value=origin))
+            with (self.subTest(origin=origin),
+                  patch('fersk_codex.codex.thread_watchdog.time', clock),
+                  patch.dict(settings(), maxRunSeconds=1000, startupTimeoutSeconds=10,
+                             idleTimeoutSeconds=5, finalizationTimeoutSeconds=30)):
+                probe = RunProbe('r', 'c', frozenset(), received_at=origin,
+                                 phase_at=origin, last_activity=origin)
+                probe.phase = 'starting'
+                self.assertEqual(probe.expired(origin + 10), 'startup_timeout')
+                probe.phase = 'running'
+                self.assertEqual(probe.expired(origin + 5), 'idle_timeout')
+                probe.tools.add('tool')
+                self.assertIsNone(probe.expired(origin + 5))
+
+                # 总运行期限到达前五秒结束，切换到独立的三十秒收尾期限。
+                clock.monotonic.return_value = origin + 995
+                probe.finish('completed')
+                clock.monotonic.return_value = origin + 1000
+                probe.finish('run_timeout')
+                self.assertEqual(probe.terminal, 'completed')
+                self.assertEqual(probe.cleanup_at, origin + 995)
+                self.assertIsNone(probe.expired())
+                self.assertIsNone(probe.expired(origin + 1024.999))
+                self.assertEqual(probe.expired(origin + 1025), 'cleanup_timeout')
 
     def test_schema_and_invalid_deadlines(self) -> None:
         import jsonschema
