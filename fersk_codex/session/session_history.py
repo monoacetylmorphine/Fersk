@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+import sqlite3
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -19,6 +21,9 @@ if TYPE_CHECKING:
 
 
 DB_PATH = CONFIG["storage"]["databasePath"]
+# 来源：沿用原连接的 30 秒锁等待预算；50ms 为初始化竞争的异步退避间隔。
+INITIALIZATION_TIMEOUT = 30.0
+INITIALIZATION_RETRY_DELAY = 0.05
 
 
 CREATE_TABLE_SQL = """
@@ -94,16 +99,34 @@ def _truncate_thread_name(text: str) -> str | None:
 
 @asynccontextmanager
 async def _connect() -> AsyncIterator[aiosqlite.Connection]:
-    """创建数据库父目录，打开 SQLite 连接并启用 WAL，确保历史表和索引存在后交给调用方使用，退出时关闭连接。"""
+    """有界重试初始化锁竞争；连接交给调用方后不重放业务操作。"""
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(DB_PATH, timeout=30) as db:
-        async with db.execute("PRAGMA journal_mode=WAL") as cursor:
-            if (await cursor.fetchone())[0] != "wal":
-                raise aiosqlite.OperationalError("Unable to enable SQLite WAL mode")
-        await db.execute(CREATE_TABLE_SQL)
-        await db.execute(CREATE_INDEX_SQL)
-        await db.commit()
-        yield db
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + INITIALIZATION_TIMEOUT
+    while True:
+        async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+            try:
+                # 初始化由异步期限统一管理，避免每条 DDL 各自等待完整 30 秒。
+                await db.execute('PRAGMA busy_timeout=0')
+                async with db.execute("PRAGMA journal_mode=WAL") as cursor:
+                    if (await cursor.fetchone())[0] != "wal":
+                        raise aiosqlite.OperationalError("Unable to enable SQLite WAL mode")
+                await db.execute(CREATE_TABLE_SQL)
+                await db.execute(CREATE_INDEX_SQL)
+                await db.commit()
+                # 调用方业务操作仍沿用原来的 SQLite 锁等待策略。
+                await db.execute('PRAGMA busy_timeout=30000')
+            except aiosqlite.OperationalError as error:
+                # 只按 SQLite 错误码识别其他连接的竞争，不吞掉 I/O、SQL 或同连接错误。
+                code = getattr(error, 'sqlite_errorcode', None)
+                if code is None or code & 0xff != sqlite3.SQLITE_BUSY or loop.time() >= deadline:
+                    raise
+            else:
+                # 业务代码抛出的异常不进入初始化重试分支。
+                yield db
+                return
+        # 先关闭失败连接释放锁，再让出事件循环；取消直接向外传播。
+        await asyncio.sleep(min(INITIALIZATION_RETRY_DELAY, max(0.0, deadline - loop.time())))
 
 
 async def register_session(user_id: str, thread_id: str, prompt: str | list[InputItem]) -> None:

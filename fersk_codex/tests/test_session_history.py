@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fersk_codex.middleware import gateway_commands
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -89,6 +90,66 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row.thread_id for row in records], ["c", "b", "a"])
         self.assertEqual(records[-1].thread_name, "same")
         self.assertIsNone(await history.get_session("other", "a"))
+
+    def fail_initialization(self, code, attempts=None):
+        """仅注入初始化错误，后续连接仍走真实 SQLite。"""
+        original = history.aiosqlite.Connection.execute
+        connections = []
+        @asynccontextmanager
+        async def failing():
+            error = sqlite3.OperationalError('injected initialization failure')
+            error.sqlite_errorcode = code
+            raise error
+            yield  # 保持异步上下文管理器协议。
+        def execute(connection, sql, *args, **kwargs):
+            if sql == 'PRAGMA journal_mode=WAL' and (attempts is None or len(connections) < attempts):
+                connections.append(connection)
+                return failing()
+            return original(connection, sql, *args, **kwargs)
+        self.enterContext(patch.object(history.aiosqlite.Connection, 'execute', execute))
+        return connections
+
+    async def test_initialization_busy_retries_with_closed_connection(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_BUSY, attempts=1)
+        await self.register()
+        self.assertEqual((await history.get_session('user', 'thread-1')).thread_name, 'first')
+        self.assertEqual(len(connections), 1)
+        with self.assertRaises(ValueError):
+            await connections[0].execute('SELECT 1')
+        async with history._connect() as db:
+            async with db.execute('PRAGMA busy_timeout') as cursor:
+                self.assertEqual((await cursor.fetchone())[0], 30000)
+
+    async def test_initialization_busy_has_a_deadline(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_BUSY)
+        with patch.object(history, 'INITIALIZATION_TIMEOUT', 0.02):
+            with self.assertRaises(sqlite3.OperationalError):
+                await asyncio.wait_for(self.register(), timeout=1)
+        self.assertGreaterEqual(len(connections), 1)
+
+    async def test_initialization_other_errors_are_not_retried(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_IOERR)
+        with self.assertRaises(sqlite3.OperationalError):
+            await self.register()
+        self.assertEqual(len(connections), 1)
+
+    async def test_cancellation_during_initialization_retry_propagates(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_BUSY)
+        clock = NS(get_running_loop=asyncio.get_running_loop,
+                   sleep=AsyncMock(side_effect=asyncio.CancelledError))
+        with patch.object(history, 'asyncio', clock):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.register()
+        self.assertEqual(len(connections), 1)
+        with self.assertRaises(ValueError):
+            await connections[0].execute('SELECT 1')
+
+    async def test_busy_from_caller_is_not_replayed(self) -> None:
+        error = sqlite3.OperationalError('business write busy')
+        error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        with self.assertRaisesRegex(sqlite3.OperationalError, 'business write busy'):
+            async with history._connect():
+                raise error
 
     async def test_time_does_not_regress_and_name_is_fixed(self) -> None:
         await self.register()
