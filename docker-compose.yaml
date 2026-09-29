@@ -1,13 +1,7 @@
 services:
   fersk-codex:
-    build:
-      context: .
-      dockerfile: fersk_codex/Dockerfile
-      args:
-        APP_USER: ${APP_USER:-app}
-        APP_UID: ${LOCAL_UID:-1000}
-        APP_GID: ${LOCAL_GID:-1000}
-        PYTHON_PACKAGE_INDEX: ${PYTHON_PACKAGE_INDEX:-https://pypi.org/simple}
+    image: ghcr.io/monoacetylmorphine/fersk/fersk-codex:latest
+    platform: linux/arm64
     security_opt:
       - seccomp=unconfined
     init: true
@@ -31,14 +25,8 @@ services:
           create_host_path: false
 
   fersk-mcp:
-    build:
-      context: .
-      dockerfile: fersk_mcp/Dockerfile
-      args:
-        APP_USER: ${APP_USER:-app}
-        APP_UID: ${LOCAL_UID:-1000}
-        APP_GID: ${LOCAL_GID:-1000}
-        PYTHON_PACKAGE_INDEX: ${PYTHON_PACKAGE_INDEX:-https://pypi.org/simple}
+    image: ghcr.io/monoacetylmorphine/fersk/fersk-mcp:latest
+    platform: linux/arm64
     init: true
     restart: unless-stopped
     stop_grace_period: 30s

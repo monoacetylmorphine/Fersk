@@ -73,7 +73,7 @@ jobs:
           if [ -n "$VERSION_TAG" ]; then
             docker tag "fersk-ci:$SERVICE" "$repository:$VERSION_TAG"
             docker push "$repository:$VERSION_TAG"
-            printf '版本镜像：`%s:%s`\n' "$repository" "$VERSION_TAG" >> "$GITHUB_STEP_SUMMARY"
+            printf 'Image Version: `%s:%s`\n' "$repository" "$VERSION_TAG" >> "$GITHUB_STEP_SUMMARY"
           fi
           digest=$(docker inspect "$tag" | jq -er --arg prefix "$repository@sha256:" \
             'first(.[0].RepoDigests[] | select(startswith($prefix)))')
