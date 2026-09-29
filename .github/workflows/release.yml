@@ -73,7 +73,11 @@ jobs:
           if [ -n "$VERSION_TAG" ]; then
             docker tag "fersk-ci:$SERVICE" "$repository:$VERSION_TAG"
             docker push "$repository:$VERSION_TAG"
+            # 仅正式版本发布更新 latest，复用同一个通过测试的镜像。
+            docker tag "fersk-ci:$SERVICE" "$repository:latest"
+            docker push "$repository:latest"
             printf 'Image Version: `%s:%s`\n' "$repository" "$VERSION_TAG" >> "$GITHUB_STEP_SUMMARY"
+            printf '最新版本镜像：`%s:latest`\n' "$repository" >> "$GITHUB_STEP_SUMMARY"
           fi
           digest=$(docker inspect "$tag" | jq -er --arg prefix "$repository@sha256:" \
             'first(.[0].RepoDigests[] | select(startswith($prefix)))')

@@ -181,7 +181,9 @@ fersk_mcp/.venv/bin/python -m fersk_mcp.server
 
 生产目标为 Apple Silicon 对应的 **Linux ARM64 Docker**；流水线没有构建 amd64 镜像。镜像使用 `ghcr.io/<owner>/<repo>/fersk-codex` 和 `fersk-mcp`，部署按 `release.json` 中的 digest 和 revision 校验。源码中的 workflow 不代表目标仓库和生产主机已经配置或运行成功。
 
-推送 `v1.0.0` 这样的 Git tag，会为两个镜像增加 `1.0.0` 标签，同时保留 `sha-…-run-…` 追溯标签。版本号由发布者指定，不自动递增；仅支持无前导零的三段数字正式版本。Deploy 仍只接受来自 `main` 的 Release run，不能填入 tag 触发的 run ID。详细命令与限制见 [版本号发布](CICD_GUIDE.md#版本号发布)。
+推送 `v1.0.0` 这样的 Git tag，会为两个镜像增加 `1.0.0` 标签，并将同一镜像推送为 `latest`，同时保留 `sha-…-run-…` 追溯标签。版本号由发布者指定，不自动递增；仅支持无前导零的三段数字正式版本。普通 `main` 推送、手动和定时发布不更新 `latest`。`latest` 指向各镜像最近成功推送的正式发布，不按版本号大小排序；重跑旧版本或并行发布也可能改变其指向，精确部署应使用版本号或 digest。Deploy 仍只接受来自 `main` 的 Release run，不能填入 tag 触发的 run ID。
+
+先提交并推送 workflow 修改，再在包含该修改的目标提交上执行 `git tag v0.1.2` 和 `git push origin v0.1.2`（版本号为示例，请使用尚未发布的实际版本）。已有 Git tag 的 workflow 不会随 `main` 更新；新的发布成功后，Compose 即可使用两个镜像的 `:latest`。私有镜像须先登录 GHCR，再运行 `docker compose pull fersk-codex fersk-mcp` 和 `docker compose up -d --no-build fersk-codex fersk-mcp` 更新应用。
 
 使用前在 GitHub `production` Environment 配置 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`，以及 Variable `DEPLOY_ROOT`。目标主机需准备 `host.json`、应用配置、挂载目录、网络、GHCR 拉取授权，以及 Docker Compose 和 Python 3.9+。SSH 使用端口 22 并严格核验主机公钥。
 
