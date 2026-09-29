@@ -27,7 +27,7 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          # 版本号来自 Git tag；本项目仅接受不含前导零的 vMAJOR.MINOR.PATCH。
+          # 版本号来自 Git tag; 本项目仅接受不含前导零的 vMAJOR.MINOR.PATCH。
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
               echo '版本标签必须采用 vMAJOR.MINOR.PATCH 格式，例如 v1.0.0' >&2
@@ -73,11 +73,11 @@ jobs:
           if [ -n "$VERSION_TAG" ]; then
             docker tag "fersk-ci:$SERVICE" "$repository:$VERSION_TAG"
             docker push "$repository:$VERSION_TAG"
-            # 仅正式版本发布更新 latest，复用同一个通过测试的镜像。
+            # 仅正式版本发布更新 latest, 复用同一个通过测试的镜像。
             docker tag "fersk-ci:$SERVICE" "$repository:latest"
             docker push "$repository:latest"
             printf 'Image Version: `%s:%s`\n' "$repository" "$VERSION_TAG" >> "$GITHUB_STEP_SUMMARY"
-            printf '最新版本镜像：`%s:latest`\n' "$repository" >> "$GITHUB_STEP_SUMMARY"
+            printf 'Image Latest: `%s:latest`\n' "$repository" >> "$GITHUB_STEP_SUMMARY"
           fi
           digest=$(docker inspect "$tag" | jq -er --arg prefix "$repository@sha256:" \
             'first(.[0].RepoDigests[] | select(startswith($prefix)))')
