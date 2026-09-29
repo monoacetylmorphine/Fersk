@@ -1,250 +1,233 @@
-# Fersk-dev
+# Fersk
 
-`fersk_codex` 为主项目，`fersk_mcp` 为 MCP 扩展；根目录 `docker-compose.yaml` 编排两个项目与 Langfuse。
+Fersk 是通过飞书使用 Codex 的自托管助手：将私聊或群聊消息转换为 Codex 任务，在持久化工作区中处理代码、图片和文档，并通过飞书卡片持续返回进度与结果。适合受信任的小团队在自己的运行环境中使用。
 
-## 持久化配置
+仓库包含两个 Python 服务：**`fersk_codex` 是飞书消息网关与任务运行器，`fersk_mcp` 提供文件发送和文生图工具**。根 Compose 另带 Langfuse 及其存储组件；生产发布使用独立 Compose，只更新两个应用服务。
 
-两个项目都挂载宿主机 `~/.codex` 和 `~/.fersk`，容器中对应 `/home/app/.codex` 与 `/home/app/.fersk`；自定义 `APP_USER` 时路径随用户名调整。
+## 能做什么
 
-- `~/.fersk/config.json`：共享业务配置，包含 MCP 端口、路径、模型和持久化数据路径。
-- `~/.fersk/.env`：应用凭据；只由统一配置加载器读取，已有进程环境变量优先。
-- `~/.codex`：Codex 配置、认证、插件与工作区；`langfuse.json` 继续使用原有 Web 地址。
-
-不自动覆盖挂载的配置。`HOST_CODEX_DIR`、`HOST_FERSK_DIR` 可改变宿主机挂载来源；默认目录必须已存在。Compose 的 `${...}` 插值使用 shell 或 `--env-file`，不会自动读取应用加载的 `~/.fersk/.env`。
-
-## 容器通信
-
-两个项目独立启动，使用已存在的外部网络 `ai-infra`，没有服务间启动依赖或自动注册逻辑。主项目直接使用 `AsyncCodex()`，由你通过 Codex CLI 管理挂载目录中的配置。
-
-MCP 在容器内监听 `0.0.0.0`，Compose 默认发布到宿主机 `127.0.0.1:8000`。默认路径 `/mcp` 下：
-
-- 宿主机 Codex CLI：`http://127.0.0.1:8000/mcp`。
-- 同一 `ai-infra` 网络的 Codex 容器：`http://fersk-mcp:8000/mcp`。
-
-请按 CLI 实际运行位置选择地址；容器中的 `127.0.0.1` 不指向宿主机。这里只提供地址，不自动调用 CLI 或改写其配置。
-
-`MCP_PORT` 是 Compose 的宿主机端口及容器监听端口，默认 8000；用 shell 或 `--env-file` 设置，并同步注入 MCP 容器，避免映射不匹配。`MCP_BIND_ADDRESS` 默认 `127.0.0.1`；需要远程访问时可显式设置可访问的宿主机地址。服务当前无鉴权，保持默认本机绑定可避免直接开放到局域网。`mcp.path` 继续来自共享 `config.json`，也可由共享 `.env` 中的 `MCP_PATH` 覆盖。
-
-四个共享文件的唯一实体均在 `fersk_codex/configs/`：`config_default.json`、`config_schema.json`、`validation.py`、`initialization.py`。MCP 的 `configs/` 下同名文件通过符号链接引用；请在完整仓库中开发和构建，保留符号链接，不要单独拷贝项目目录。
-
-两个服务启动均完整校验同一份 `~/.fersk/config.json`，任何配置段格式错误都会阻止启动。校验通过后各自使用所需字段：Codex 不初始化 MCP 服务或消费其模型设置；MCP 使用 `mcp`、飞书凭据/上传设置和共享请求超时，不启动 Codex。校验不读取模型密钥值，缺少图像凭据仅在调用图像工具时报告。
-
-Docker 构建上下文为仓库根目录，镜像内置同一份默认配置。挂载发生在容器启动时，因此两个入口脚本在启动阶段将默认文件原子复制并命名为 `/home/${APP_USER:-app}/.fersk/config.json`。并发首次启动只发布一个完整文件（权限 0600）；已有文件不覆盖。指定 `FERSK_CONFIG_FILE` 时对应文件必须已存在。
-
-`codex.watchdog.maxRunSeconds` 必须为正整数。新增 `codex.gitInitTimeoutSeconds` 默认 10 秒，旧配置缺省时仍使用 10 秒；此值为项目策略。旧 `storage.tokenUsagePath` 仅为挂载兼容保留，不再消费或生成 CSV，历史 CSV 不删除。其他不再符合完整 Schema 的旧配置会明确报错，需要按字段调整；不会自动覆盖或迁移挂载文件。
-
-群聊继续按 `oc_` 群 ID 共享聊天历史、Codex 线程和工作空间。MCP 文件发送要求完整目录名同时满足 `(?:on_|oc_)[A-Za-z0-9]+` 和长度等于 35（含前缀），且接收方唯一；长度来自用户提供的参考 ID。授权与归属校验暂未增加。
-
-## Langfuse
-
-Langfuse 相关服务仅发布 Web `127.0.0.1:3000`，`NEXTAUTH_URL` 默认 `http://localhost:3000`。若继续通过 `http://langfuse-web.observability.orb.local:3000` 访问，请显式设置同值的 `NEXTAUTH_URL`。Worker、MinIO 控制台、S3、数据库及 Redis 均不发布宿主机端口。
-
-仅 Web 模式不配置可选的 S3 媒体上传，因此不提供浏览器直传／读取 MinIO 媒体附件；事件存储仍走 `http://minio:9000`。文本追踪和 Web 界面保留。媒体预签名链接要求浏览器可达的存储入口，不能用 Web 地址直接替换 S3 Endpoint，参见 [Langfuse 存储文档](https://langfuse.com/self-hosting/deployment/infrastructure/blobstorage)。现有持久化数据不会被删除。
-
-Web 与 Worker 通过 YAML anchor 共用数据库、ClickHouse、Redis 和事件 S3 配置，服务专属配置单独保留。Compose 必须通过 shell 或 `--env-file` 提供以下非空变量，否则配置解析直接失败：`NEXTAUTH_SECRET`、`SALT`、`ENCRYPTION_KEY`、`POSTGRES_PASSWORD`、`CLICKHOUSE_PASSWORD`、`MINIO_ROOT_PASSWORD`、`REDIS_AUTH`。`ENCRYPTION_KEY` 应为 64 位十六进制字符串；已有部署应继续使用原来的有效密钥，不要因本次配置整理随意轮换。
-
-默认 `DATABASE_URL` 根据 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB` 构造；健康检查使用容器内相同的用户和数据库变量。自动构造连接串时，用户名和密码应仅含 URI unreserved 字符（字母、数字、`-._~`）；若已有凭据包含其他字符，保留 PostgreSQL 原始凭据，并通过 `DATABASE_URL` 提供用户名、密码经过 percent-encoding 的完整连接串。已有数据卷中的数据库账户不会随环境变量自动修改；本次不执行账户迁移。
-
-事件 S3 的访问凭据统一使用 `MINIO_ROOT_USER`（默认 `minio`）和必填的 `MINIO_ROOT_PASSWORD`。原 `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID`、`LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` 部署变量不再单独生效。当前配置面向内置 MinIO；若使用外部 S3 或独立账户，需要另行调整凭据映射。事件桶默认 `langfuse`；自定义桶必须预先存在。未启用媒体上传，因此不配置 `LANGFUSE_S3_MEDIA_UPLOAD_*`。
-
-推荐使用仓库根目录的 `./compose.sh` 代替 `docker compose`。首次调用时，若根目录 `.env` 不存在，脚本用 OpenSSL 生成上述七项凭据，每项单独一行，以权限 `600` 原子创建文件；并发调用不覆盖已生成文件。随机字节长度沿用用户提供的初始化命令：数据库、ClickHouse、MinIO、Redis 密码及 SALT 各 16 字节，NEXTAUTH_SECRET 与 ENCRYPTION_KEY 各 32 字节，分别输出为 Base64 和十六进制。
-
-已有 `.env` 不会覆盖或补写；缺少必填变量时校验失败，需修正原文件。脚本显式指定仓库根目录的 `.env` 和 Compose 文件，支持从其他目录调用。它不执行 dotenv 中的 Shell 命令，因此不要在 `.env` 中直接写 `$(openssl ...)`。Shell 环境变量仍优先于 `.env`，已导出的空变量也会覆盖文件值；遇到缺失值错误时，应检查并 `unset` 对应空变量。脚本只自动生成部署凭据，不创建飞书/模型 API 密钥，也不创建外部网络或挂载目录。
-
-直接执行 `docker compose` 不会触发自动初始化。已有部署若丢失 `.env`，应恢复原凭据，不能使用新随机密钥替代已有数据库密码、SALT 或加密密钥。即使只选择两个应用服务，Compose 解析整份文件时仍要求这些变量；仅独立构建应用镜像可使用子项目 README 中的 `docker build` 命令。
-
-## CI/CD
-
-流水线直接围绕 `main` 工作，不自动创建开发分支或提交依赖更新。推送 `main` 后，
-GitHub Actions 解析 Python 3.13 的最新兼容依赖，构建并测试两个 `linux/arm64` 镜像，
-随后将同一批已测试镜像发布到 GHCR。每周也会重新验证兼容依赖；生产部署始终手动触发。
-部署目标为 macOS 27 / Apple Silicon 的 Docker，通过 SSH 执行，允许短暂停机。
-配置、首次切换、备份与回退说明见 [CI/CD 指南](CICD_GUIDE.md)。
-
-## 构建与验证
-
-两个服务均从仓库根目录构建，统一使用根目录 `.dockerignore`，子项目不再维护独立忽略文件。Codex 使用源码与构建输入白名单（包含 `configs`、`codex`、`middleware`、`session`、`services`、`utils` 和入口脚本），MCP 保留目录内容；最后统一排除 `.venv`、`__pycache__`、`*.egg-info`、`build`、`dist`、`.env`、`.git`、`tests` 和 `.DS_Store`。新增 Codex 源码目录或非 Python 资源时，需要同步更新根目录白名单。
-
-两个项目限制 Python 为 3.13 系列，镜像使用滚动的 `3.13-slim-bookworm`；Node 使用最新 `lts-bookworm-slim`，uv 与 pnpm 跟随最新稳定版本。默认 Docker 构建通过 `uv sync --upgrade` 解析最新兼容依赖；CI 每轮先升级锁文件，再传入 `UV_SYNC_FLAGS=--locked` 测试和构建同一组合，随后直接发布该镜像，不重新解析或构建。锁文件记录依赖快照，不代表长期冻结；基础设施的 `latest` 策略保持不变。
-
-手动构建若需要最新依赖，请使用 `docker build --pull --no-cache`，避免命中旧的依赖安装层；复现某轮已验证依赖时显式传入 `--build-arg UV_SYNC_FLAGS=--locked`。镜像 revision label 和发布 digest 用于追溯，未宣称逐字节可复现构建。
-
-```sh
-./compose.sh config --quiet
-./compose.sh build --no-cache
-# 需要启动服务时执行：
-./compose.sh up -d
-fersk_codex/.venv/bin/python -B fersk_codex/tests/run_tests.py
-fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
-```
-
-应用配置或镜像更新需要重建／重启后生效。当前已有单独 Compose 部署时，不要直接启动第二套同名服务；先核对现有项目与数据卷，再安排切换。
-
-## Runtime：从飞书消息接收到 reaction 删除
-
-正常对话的主流程：
-
-**飞书推送消息 → 入口限流 → 过滤去重 → 添加 reaction → 路由与历史组装 → 创建运行状态和 watchdog → 准备输入 → 启动或追加 Codex 任务 → 流式卡片交付 → 模型完成 → 关闭卡片与事件流 → 删除 reaction → 释放任务。**
-
-以下流程根据当前源码整理，数值均为默认配置，实际运行以加载的配置为准。8 个飞书请求名额、32 个普通事件名额、4 个控制事件名额和 30 秒收尾期限，来源于内部 30 人以内、最多 5 个任务并发的初始保护策略，尚非压测最优值。
-
-### 1. 飞书 WebSocket 接收到消息
-
-入口为 [main.py](fersk_codex/main.py) 的 `main()`。启动时初始化业务日志、事件处理器和缓存维护任务，通过独立守护线程启动飞书长连接。主循环每秒发布连接心跳；SIGTERM 关闭入站、取消缓冲和进入既有任务中断清理。SDK 没有公开停止接口，进程结束回收线程连接；容器退出仍受 Compose 的 60 秒期限约束，不能承诺所有在途请求正常完成。
-
-收到 `im.message.receive_v1` 后，SDK 调用同步回调 `do_p2_im_message_receive_v1()`。回调判断是否为 `/stop`、`/new`，再通过 [EventDispatcher.submit()](fersk_codex/utils/event_dispatcher.py) 把处理协程提交到主事件循环。
-
-普通事件默认最多 32 个在途处理；控制事件独立预留 4 个名额。容量不足时尝试发送繁忙提示，提示自身最多一个在途。事件 Future 的异常会被消费并记录。
-
-### 2. 检查消息是否需要处理
-
-进入 [message_router.py](fersk_codex/middleware/message_router.py) 的 `processing()` → `_processing()`：
-
-- 私聊消息继续处理；群聊要求当前消息提及机器人。
-- 已接收过的 `message_id` 直接跳过。
-- 记录接收时间，用于后续计算运行期限。
-- `/stop`、`/new` 转入命令分支，不进入模型输入。
-- 普通消息检查会话是否正在重置，以及 `generation` 是否仍有效。
-
-`generation` 是会话版本号：停止或重置会推进版本；旧消息处理过程中发现版本变化，就停止继续提交。入站处理外层还有 24 小时期限，会话引用通过 `cache.hold()` 管理。
-
-### 3. 给用户消息添加“处理中”reaction
-
-普通消息的调用链为：
-
-`adding_reaction_emoji()` → `call_lark()` → `BoundedExecutor.call()` → 飞书 `message_reaction.create`。
-
-添加成功后，保存 `chat_id → message_id → reaction_id`，后续使用 `reaction_id` 删除表情。添加失败只记日志，仍继续处理用户任务。
-
-[飞书请求入口](fersk_codex/services/lark/lark_requests.py)使用[专用执行器](fersk_codex/utils/bounded_executor.py)，默认每个服务进程最多 8 个实际在途请求，单次调用默认 10 秒期限。容量满时立即失败，不继续堆积请求。调用方超时或取消后，已经开始的同步线程仍占用名额，直到真正结束；该机制不能强制终止永久阻塞的线程。
-
-### 4. 根据消息类型立即处理或等待缓冲
-
-`_route_message()` 按配置分流：
-
-| 消息类型 | 默认行为 |
+| 能力 | 当前实现 |
 | --- | --- |
-| 文本、富文本、语音 | 立即处理，并取消该会话尚未结束的附件缓冲计时 |
-| 图片、文件 | 进入固定 10 秒缓冲窗口 |
-| 不支持的类型 | 发送提示，清理该消息的 reaction |
+| 飞书对话 | 通过 WebSocket 长连接接收消息；支持私聊，群聊要求当前消息提及机器人 |
+| 多种输入 | 接收文本、富文本、图片、文件和语音；下载附件并校验格式，将音频转写为文本后交给 Codex |
+| 连续任务 | 持久化用户与 Codex thread 的绑定；运行中追加消息可通过 steer 补充当前任务 |
+| 进度与控制 | 流式卡片、处理中 reaction、`/stop`、`/new`、私聊 `/history`，以及关联消息撤回后的任务停止处理 |
+| 工作区 | 按私聊用户或群建立目录，初始化 Git、Python 和 Node 文档处理依赖，保留附件与任务产物 |
+| MCP 扩展 | `sending_file(file_path)` 上传并发送本地文件到飞书；`image_generator(prompt)` 调用图像模型并返回图片 URL |
+| 运行记录 | SQLite 保存 thread 绑定、会话历史索引与 token 用量；业务日志写入配置的数据目录 |
+| 交付与运维 | 两个 Docker 镜像、离线回归测试、GitHub Actions 验证与 GHCR 发布、手动 SSH 部署及有条件的镜像回退 |
 
-缓冲窗口内的新消息不会延长计时。缓存保存最新触发事件，窗口结束后通过飞书历史接口收集消息，而不是直接把缓存事件逐条拼接。直接消息到达时也通过历史收集吸收符合条件的先前附件。
+代码执行、联网、文件生成和其他工具能力取决于实际配置的 Codex 模型、认证、沙箱及插件。Office 依赖提供执行基础，不保证任意文档都能无损解析或转换；仓库也不会自动安装或启用参考配置中的全部插件。
 
-### 5. 拉取历史并形成消息批次
+## 如何在飞书中使用
 
-`_process_chat_history()` 获取最近默认 10 条历史消息，再由 [message_collector.py](fersk_codex/middleware/message_collector.py) 的 `batch_from_chat_history()` 生成 `MessageBatch`：
+1. 私聊机器人发送任务；群聊中先提及机器人。图片和文件默认进入 **10 秒固定缓冲窗口**，窗口内可继续发送附件；文本、富文本或语音到达时会立即触发历史组装。
+2. 用自然语言说明要处理的内容和期望输出，例如“总结这份 PDF”或“分析表格并生成报告”。附件会保存到当前工作区的 `resources/inbound/`。
+3. 运行中补充要求会尝试加入当前任务。若追加图片需要切换模型，当前任务无法直接切换；等待完成，或停止后将图片和任务说明一起重发。
+4. 查看流式卡片；需要接收产物文件时，Codex 必须能调用已配置的 `sending_file`。仅生成文件或给出服务器路径，不代表文件已发送到飞书。
 
-- 以本次触发消息为边界，避免提前吞入之后才到达的新输入。
-- 从新向旧扫描，遇到最近的应用回复、`/new` 或 `/stop` 就停止。
-- 保留未删除、受支持的用户消息，再恢复为时间正序。
-- 历史接口尚未出现当前消息时，用接收事件补入当前消息。
+| 操作 | 行为与限制 |
+| --- | --- |
+| `/stop` | 停止当前任务并取消缓冲；若退出尚未确认，该会话暂时禁止新任务，可稍后再次执行 |
+| `/new` | 停止当前工作、归档旧 thread 并重置绑定；下一条消息新建会话，不删除工作区文件 |
+| `/history` | **仅私聊**提供历史会话选择卡片，可激活所选会话；默认展示最近 30 条，不通过翻页访问更早记录 |
+| 撤回消息 | 尝试移除缓冲消息或停止与该消息关联的任务；不撤销已经发生的文件修改和外部操作 |
 
-私聊的回复目标和工作区标识使用 `union_id`；群聊使用 `chat_id`，按群共享会话与工作区。历史请求失败时发送失败提示并尝试清理 reaction，不提交模型任务。
+命令应作为独立文本发送。默认命令名及消息缓冲行为见 [默认配置](fersk_codex/configs/config_default.json)；`/history` 为固定入口。
 
-### 6. 创建运行状态，准备模型输入
+**私聊按 `on_…` 用户隔离目录；群聊按 `oc_…` 群 ID 共享工作区、聊天上下文和 Codex thread。** 同群成员的任务可能互相影响，群聊不能作为成员之间的数据隔离边界。
 
-批次进入 `middleware/gateway_execution.py` 的 `GatewayExecution._handle_message_batch()`。先检查容量、会话阻塞状态，并过滤已经处理或正在处理的消息；随后创建 `ActiveCodexRun`、唯一 `run_id` 和 `RunProbe`，同时启动执行任务与 watchdog。
-
-执行任务 `_execute_message_batch()` 取得该会话的 `_submission_lock`，再次检查消息状态，登记活动消息归属，进入 `preparing` 阶段，然后调用 [assemble_codex_input()](fersk_codex/middleware/message_assemble.py)：
-
-- 文本转换为 `TextInput`。
-- 图片下载并校验后转换为 `LocalImageInput`。
-- 文件下载并校验后转换为带本地路径的 `MentionInput`。
-- 语音经检测、必要的转码和 ASR 后转换为 `TextInput`。
-- 每批附件总量默认不超过 10 个，与 `messaging.historyPageSize` 共用上限。
-- 部分附件失败时提示并处理其余可用输入；附件全部不可用时，整批附件及附带文本都不提交。
-
-解析错误、空输入或附件超限会发送对应提示，随后进入收尾。
-
-### 7. 决定追加旧任务，还是启动新任务
-
-输入准备完成后查询 `active_runs_by_chat`。如果会话已有 owner，优先尝试 `FerskCodex.steer()`：
-
-- 追加成功：把新消息归属转交给旧 owner，协调卡片切换；后续输出和这些消息的 reaction 清理由旧 owner 负责。
-- 旧模型已经结束：等待旧 owner 的 `finished`，再检查会话状态并尝试启动新任务。
-- 追加出错：提示错误并结束当前提交。
-
-没有可追加的 owner 时，进入 `starting`，调用 [FerskCodex.running()](fersk_codex/codex/codex_execution.py)：
-
-1. 从数据库读取用户或群对应的 thread 绑定。
-2. 根据文本、文件或图片输入选择模型配置。
-3. 准备工作区和 Codex 客户端。
-4. 尝试恢复已有 thread；按错误类型尝试解除归档或新建。
-5. 保存 thread 绑定，再调用 `thread.turn(input=prompt)`。
-6. 返回内部 `started` 状态。
-
-gateway 收到 `started` 后创建 `CardStreamSession`，登记会话 owner，进入 `running`，随后释放提交锁。模型输出和卡片更新期间不一直持有提交锁。
-
-### 8. 边消费模型事件，边更新飞书卡片
-
-输出链为：
-
-`FerskCodex.running()` → `CardStreamSession.events()` → `_reply_content()` → `sending_card()`。
-
-模型事件会更新 probe 活动时间，并按类型转换：
-
-- 推理和 commentary 作为过程内容展示。
-- 最终答案首段通过 `CardReplace` 替换之前的正文，后续片段继续追加。
-- 工具事件主要用于状态和日志，不直接作为卡片正文。
-- 用量事件写入数据库；当时尚未获得最终耗时，日志中的 `taskDuration_ms` 可以是 `0`，结束时再回填。
-
-[lark_message_card.py](fersk_codex/services/lark/lark_message_card.py) 在首次需要展示内容时创建 CardKit 卡片，再发送引用该卡片的飞书消息；之后持续更新正文，普通更新按约 0.25 秒间隔合并，实际也受网络耗时影响。单张流式卡片约 9 分钟后关闭，后续内容按需续卡。
-
-卡片交付失败时记录错误并继续消费模型事件，不直接打断健康的模型任务，也不自动重发结果不确定的请求。
-
-### 9. 模型完成，结束输出和清理
-
-收到 `turn/completed` 后，probe 记录模型结果并开始独立收尾计时；此时还没有完成整个任务释放。
-
-后续正常流程包括：
-
-- 结束模型事件消费，清理 live turn 状态，回填用量耗时。
-- 将剩余卡片内容刷新到飞书。
-- 调用 CardKit settings 关闭 `streaming_mode`，产生“流式卡片已关闭”日志。
-- 关闭事件生成器及相关客户端资源。
-- 进入 gateway 的 `finally` 收尾。
-
-这些输出和源流关闭操作存在嵌套关系，并非每项都有独立终端日志。
-
-### 10. 删除 reaction，再完成任务释放
-
-正常收尾先移除本任务拥有的活动消息索引、会话 owner 索引，并调用 `FerskCodex.forget_run()` 清理运行记录，然后对未转交给其他 owner 的消息调用 `_clear_reaction()`。
-
-删除调用链为：
-
-`_clear_reaction()` → [delete_reaction_emoji()](fersk_codex/services/lark/lark_tools.py) → `call_lark()` → 专用执行器 → 飞书 `message_reaction.delete`。
-
-`_clear_reaction()` 检查归属和正在清理的标记，防止并发重复删除：
-
-- 成功：移除本地 reaction 记录。
-- 请求异常：记录完整堆栈，继续后续释放。
-- 当前没有网络恢复后补删机制，远端表情可能遗留；最终任务释放也会清除对应本地记录。
-
-最后设置 `state.finished`，外层 `_release_run()` 幂等清理剩余运行索引和缓存，并记录类似日志：
+## 项目结构
 
 ```text
-任务已释放: run_id=..., terminal=completed, cleanup_timeout=False
+.
+├── fersk_codex/                 # 主服务
+│   ├── main.py                 # 启动、飞书事件注册、后台任务与退出处理
+│   ├── middleware/             # 消息路由、附件组装、ASR、控制命令与卡片交付
+│   ├── codex/                  # SDK 执行、模型路由、工作区、thread 与 watchdog
+│   ├── session/                # 运行缓存、会话恢复与历史索引
+│   ├── services/lark/          # 飞书 API、流式和交互卡片
+│   ├── configs/                # 共享默认配置、Schema、加载与初始化逻辑
+│   ├── utils/                  # 日志、用量、并发限制与健康检查
+│   ├── tests/                 # 回归测试；专题说明统一在项目 README
+│   └── Dockerfile、pyproject.toml、uv.lock
+├── fersk_mcp/                   # 独立 MCP 服务及两个工具
+├── .github/workflows/          # CI、Release、Deploy
+├── deploy.sh                   # 生产预检、备份、更新和失败处理
+├── test_deploy.py              # 部署事务测试
+├── docker-compose.yaml         # 源码构建的应用 + Langfuse 全栈
+├── compose.production.yaml     # 基于发布镜像的两个应用
+├── compose_initial.sh          # 根 Compose 包装器，首次创建部署 .env
+└── CICD_GUIDE.md                # CI/CD 配置和首次切换指南
 ```
 
-飞书随后推送的 `im.message.reaction.deleted_v1` 是删除结果事件通知，当前 handler 直接忽略；它不是任务释放的前置条件。
+两个项目使用独立的 `pyproject.toml` 与 `uv.lock`，均要求 **Python 3.13 系列**。MCP 的五个配置文件及 `services/lark/lark_requests.py` 通过相对符号链接复用 Codex 源码。开发和 Docker 构建须保留完整仓库及链接，不能只复制 `fersk_mcp/`。两个进程仍各自加载配置和创建请求执行器。
 
-### 贯穿流程的异常保护与特殊分支
+## 配置与数据
 
-[watchdog](fersk_codex/codex/thread_watchdog.py) 与执行任务并行运行，默认每秒检查一次：
+默认使用两个宿主机目录，容器中分别挂载到 `/home/app/.fersk` 与 `/home/app/.codex`：
 
-| 检查项 | 配置字段 | 默认值 |
+| 位置 | 用途 |
+| --- | --- |
+| `~/.fersk/config.json` | 共享业务配置：消息、存储、模型路由、ASR、MCP、超时与日志 |
+| `~/.fersk/.env` | 飞书、ASR 和图像服务等应用环境变量；加载器只读取此处的 dotenv，已有进程环境变量优先 |
+| `~/.fersk/state.sqlite` | 默认 SQLite 数据库，保存 thread 绑定、会话索引和用量 |
+| `~/.fersk/logs/` | 默认业务日志目录 |
+| `~/.codex/` | Codex 的配置、认证、插件、会话及用户工作区 |
+| `~/.codex/workspace/<on_…或oc_…>/` | 工作目录，含 `AGENTS.md`、Git、`.venv`、Node 依赖及任务文件 |
+| 仓库根目录 `.env` | **Compose 插值用的部署配置**，主要包含 Langfuse 及存储凭据；不是应用 dotenv |
+
+配置优先级与生命周期：
+
+- `FERSK_CONFIG_FILE` 可指定业务 JSON 文件；它不改变应用 dotenv 的默认位置。容器首次启动只在默认配置缺失时原子创建文件，已有文件不覆盖；自定义路径必须预先存在。
+- 两个服务都完整校验同一份 JSON Schema，任何配置段不合法都可能阻止启动；校验通过后各自使用相关字段。
+- JSON 中的 `apiKeyEnv` 等字段填写**环境变量名**，不填写密钥。网关启动要求 `LARK_APP_ID`、`LARK_APP_SECRET`，且 `LARK_ROBOT_UNION_ID` 或 `LARK_ROBOT_NAME` 至少有一项非空；推荐使用 Union ID。
+- ASR 与文生图默认读取 `DOUBAO_API_KEY`。MCP 在调用具体工具时才检查其凭据：缺少图像凭据不阻止文件工具使用，反之亦然。模型是否可用还取决于提供方与账户权限。
+- Codex 主任务的模型及 provider 来自 `codex.models`，认证与 provider 连接配置由实际运行环境中的 Codex 管理。仓库不会自动注册 MCP 或覆盖 Codex 配置。
+- 修改挂载的业务配置后需重启应用；修改源码或镜像依赖后需重建镜像并重建容器，仅重启旧容器不会更新代码。
+
+首次处理每个用户或群的任务时，会准备 Git 和 Office 依赖环境，即使任务只是文本对话也会执行该检查。初始化需要 Git、uv、Node.js ≥22、pnpm 和包源网络访问，默认总期限 600 秒。已有完整环境可复用；现存非受管或不兼容环境会报错，不自动删除。缺失的 `AGENTS.md` 只创建空文件，使用规则需要自行配置。
+
+## 本地部署与启动
+
+推荐使用 Docker，Codex 镜像已包含 Python、Node.js、uv、pnpm、Git、ffmpeg/ffprobe、LibreOffice、Poppler、qpdf、Pandoc、Tesseract 中英日 OCR 和 Inter/Noto CJK 字体。用户级 Python/npm 文档依赖仍在首次任务时安装。
+
+### 1. 准备运行环境
+
+需要 Docker 与 Compose、用于首次生成部署凭据的 OpenSSL，以及可访问飞书、模型服务、镜像和包源的网络。
+
+```sh
+# 从仓库根目录执行；不覆盖既有文件
+mkdir -p "$HOME/.codex" "$HOME/.fersk"
+docker network inspect ai-infra >/dev/null 2>&1 || docker network create ai-infra
+```
+
+在 `~/.fersk/.env` 中配置自己的真实应用凭据，并按需要设置 `config.json`；可参考[默认值](fersk_codex/configs/config_default.json)和 [Schema](fersk_codex/configs/config_schema.json)。不要用占位密钥启动服务，也不要覆盖已有部署的凭据。
+
+在飞书应用后台启用机器人和长连接事件接收，配置消息接收、消息撤回及卡片交互回调所需能力，并授予读取消息/资源、发送与更新卡片、上传文件和操作 reaction 等对应权限。事件注册以 [main.py](fersk_codex/main.py) 为准；本项目不自动创建应用、申请权限或发布应用版本。
+
+同时准备实际容器使用的 Codex 认证与 provider 配置。宿主机的路径、`localhost` 地址及原生二进制插件不能直接假定在 Linux 容器内有效。挂载目录须允许容器用户写入，默认 UID/GID 为 1000；根 Compose 可用 `LOCAL_UID`、`LOCAL_GID`、`APP_USER` 调整构建参数。
+
+### 2. 构建并启动
+
+```sh
+# 首次调用会在根 .env 不存在时生成 Langfuse/存储凭据；已有文件不覆盖
+./compose_initial.sh config --quiet
+./compose_initial.sh build --no-cache
+
+# 启动根 Compose 的两个应用与 Langfuse 全栈
+./compose_initial.sh up -d
+./compose_initial.sh ps
+./compose_initial.sh logs --tail=100 fersk-codex fersk-mcp
+```
+
+包装器显式使用根 `.env` 和 `docker-compose.yaml`，可从其他目录调用；直接运行 `docker compose` 不会触发凭据初始化。已有 `.env` 不会补写缺项。必须提供的部署变量为 `NEXTAUTH_SECRET`、`SALT`、`ENCRYPTION_KEY`、`POSTGRES_PASSWORD`、`CLICKHOUSE_PASSWORD`、`MINIO_ROOT_PASSWORD`、`REDIS_AUTH`；`ENCRYPTION_KEY` 应为 64 位十六进制字符串。
+
+已有部署丢失 `.env` 时应恢复原凭据，不能重新生成后连接旧数据卷。即使只启动 `fersk-codex fersk-mcp`，根 Compose 解析时也仍要求上述部署变量。脚本不会创建飞书/模型 API 凭据、外部网络或宿主机挂载目录。
+
+`HOST_CODEX_DIR`、`HOST_FERSK_DIR` 可改变挂载来源，必须通过 shell 或 Compose 的环境文件提供。Compose 不自动读取 `~/.fersk/.env`；shell 中已导出的空值也可能覆盖 dotenv 中的有效值。
+
+### 3. 连接 MCP 并检查就绪
+
+| 调用位置 | 默认 MCP 地址 |
+| --- | --- |
+| 宿主机客户端 | `http://127.0.0.1:8000/mcp` |
+| 同一 `ai-infra` 网络内的容器 | `http://fersk-mcp:8000/mcp` |
+
+在实际使用的 Codex 配置中注册对应地址。容器内的 `127.0.0.1` 指向该容器自身。根 Compose 的 `MCP_PORT` 同时控制宿主机映射和容器监听端口，`MCP_BIND_ADDRESS` 默认 `127.0.0.1`；`MCP_PATH` 可覆盖默认路径 `/mcp`。
+
+```sh
+./compose_initial.sh exec fersk-codex python -m fersk_codex.utils.health
+./compose_initial.sh exec fersk-mcp python -m fersk_mcp.utils.health
+```
+
+Codex 探测主循环心跳及飞书连接，MCP 探测协议握手和工具注册；两者均不验证真实模型调用、文件上传或 Office 任务。启动后还需用真实对话验证目标环境的完整链路。根 Compose 未配置自动 healthcheck，生产 Compose 已配置；仅显示容器运行中不等于服务就绪。
+
+### 源码运行
+
+从完整仓库根目录执行，先准备 Python 3.13、uv 及前述系统工具、应用凭据和 Codex 配置：
+
+```sh
+uv sync --project fersk_codex --locked
+uv sync --project fersk_mcp --locked
+
+# 仅初始化缺失的默认业务配置，不生成应用凭据
+fersk_codex/.venv/bin/python -B fersk_codex/configs/initialization.py
+
+# 分别在两个终端运行
+fersk_codex/.venv/bin/python -m fersk_codex.main
+fersk_mcp/.venv/bin/python -m fersk_mcp.server
+```
+
+安装为包后也提供 `fersk-codex` 和 `fersk-mcp` 入口。工作区初始化使用 POSIX 文件锁和进程组，原生 Windows 不是当前运行目标。
+
+## Langfuse 与观测
+
+根 Compose 启动 Langfuse Web、Worker、PostgreSQL、ClickHouse、MinIO 和 Redis，仅发布 Web 到 `127.0.0.1:3000`。`NEXTAUTH_URL` 默认 `http://localhost:3000`，应与实际浏览器访问地址一致。数据库、Redis 和 S3 不发布宿主机端口。
+
+事件存储默认走内部 `http://minio:9000` 的 `langfuse` 桶；自定义桶须预先存在。当前未配置可选的 S3 媒体上传，浏览器直传或读取 MinIO 媒体附件不在这套编排的默认能力内。启动 Langfuse 不会自动启用 Codex tracing，还需在实际 Codex 环境配置对应插件、地址和凭据。
+
+默认数据库连接串由 PostgreSQL 环境变量构造。凭据含 URI 特殊字符时，通过 `DATABASE_URL` 提供正确编码的完整连接串；修改环境变量不会自动修改已有数据库账户。内置 MinIO 的事件存储统一使用 `MINIO_ROOT_USER` 与 `MINIO_ROOT_PASSWORD`。
+
+已有观测服务时，应先核对端口、容器名和数据卷，避免重复启动。基础设施使用滚动镜像标签，升级前需独立评估数据兼容性并备份。
+
+## CI/CD 与生产发布
+
+| Workflow | 触发条件 | 实际工作 |
 | --- | --- | --- |
-| 运行硬期限，基于接收时间计算 | `codex.watchdog.maxRunSeconds` | 900 秒 |
-| 启动阶段期限 | `codex.watchdog.startupTimeoutSeconds` | 120 秒 |
-| 空闲超时 | `codex.watchdog.idleTimeoutSeconds` | 0，关闭 |
-| 模型终态或停止后的收尾期限 | `codex.watchdog.finalizationTimeoutSeconds` | 30 秒 |
-| 收尾超时后的关闭宽限 | `codex.watchdog.cleanupTimeoutSeconds` | 5 秒 |
-| 飞书单次请求期限 | `codex.watchdog.cardRequestTimeoutSeconds` | 10 秒 |
+| [CI](.github/workflows/ci.yml) | 面向 `main` 的 PR、手动、可复用调用 | 在原生 ARM64 runner 升级解析 Python 依赖，构建两个镜像，在容器运行测试，并验证部署逻辑 |
+| [Release](.github/workflows/release.yml) | 推送 `main`、手动、每周一 02:23 UTC | 调用 CI；将同一批通过测试的镜像发布到 GHCR，不重新构建；生成 `release` artifact |
+| [Deploy](.github/workflows/deploy.yml) | 仅 `main` 手动触发 | 验证指定的成功 Release，下载对应部署包，通过 SSH 更新生产应用 |
 
-超时触发停止或有界清理。若残留 worker 未结束、进程退出未确认，则唤醒等待者并隔离会话，避免新旧任务重叠。这种异常释放路径不保证远端 reaction 已经删除。后台还会维护 24 小时缓存保留期限；事件循环本身阻塞时不承诺准点超时。
+生产目标为 Apple Silicon 对应的 **Linux ARM64 Docker**；流水线没有构建 amd64 镜像。镜像使用 `ghcr.io/<owner>/<repo>/fersk-codex` 和 `fersk-mcp`，部署按 `release.json` 中的 digest 和 revision 校验。源码中的 workflow 不代表目标仓库和生产主机已经配置或运行成功。
 
-`/stop` 和撤回走中断及 reaction 清理分支；`/new` 先停止旧任务，再重置 thread 绑定。“进入机器人单聊”、已读及 reaction 创建／删除通知注册了空处理器，不进入模型流程。
+使用前在 GitHub `production` Environment 配置 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`，以及 Variable `DEPLOY_ROOT`。目标主机需准备 `host.json`、应用配置、挂载目录、网络、GHCR 拉取授权，以及 Docker Compose 和 Python 3.9+。SSH 使用端口 22 并严格核验主机公钥。
 
-飞书 SDK 的 HTTP 和 WebSocket 日志均保持 DEBUG，连接 URL 凭据会被脱敏。Codex 业务日志使用 `logging.logLevel`，MCP 业务日志使用 `mcp.logLevel`。
+生产 Compose 只管理两个应用，容器用户固定为 `app`，MCP 容器端口固定为 8000，`host.json` 的 `mcp_port` 仅改变宿主机回环端口。首次切换前需停止旧项目的两个应用，保留基础设施与数据；不能让两个网关同时消费消息。
 
-`fersk_mcp` 只在模型实际调用相应 MCP 工具时参与，例如文件上传发送；普通文字对话从接收到 reaction 删除，并不必然经过 MCP 服务。MCP 文件发送使用该服务自己的有界执行器。
+部署脚本先预检并拉取镜像，再停止旧应用、备份 `config.json` 与 SQLite、启动并等待就绪，成功后写入 `current.json`。新版本切换失败时，只有存在旧发布且明确确认 `rollback_compatible` 才回退旧镜像；**不自动恢复数据库，不备份整个工作区，也不提供零停机或自动配置/数据迁移**。应用自身仍会按实现初始化表或补充兼容字段，镜像回退前须确认实际数据兼容性。
+
+部署详情、首次切换和失败恢复见 [CI/CD 指南](CICD_GUIDE.md)。其中的历史测试数量、实施记录和原始规划不应视为当前版本或当前部署的验证结果。
+
+## 能力边界与注意事项
+
+- **安全边界：** MCP 当前无鉴权，文件工具从解析后的绝对路径中提取唯一接收方目录；目录名须匹配 `(?:on_|oc_)[A-Za-z0-9]+` 且总长为 35。它没有额外校验调用者身份或文件是否属于指定工作区，因此目录规则不等于授权控制。保持本机绑定，仅向受信任的客户端和网络开放。
+- **凭据：** 密钥通过环境变量或受控 Secret 配置，不提交真实值；业务配置、日志和工作区在分享前应检查敏感信息。
+- **沙箱：** 默认 `workspace-write` 需要运行器允许非特权 user namespace，且 seccomp、AppArmor/SELinux 不阻止 Bubblewrap。当前 Compose 为 Codex 设置 `seccomp=unconfined`，会放宽容器限制；这不是独立多租户隔离方案。应在目标运行器验证沙箱，不自动修改宿主机内核策略。
+- **附件：** 默认每批最多 10 个附件，与 `messaging.historyPageSize` 共用参数。支持范围由 `resources.acceptedExtensions` 和实际格式校验共同决定；不因扩展名合法就接受内容。旧 `.doc/.xls/.ppt`、通用压缩包和视频不在默认输入白名单中。部分附件失败会明确提示并继续处理可用内容；附件全部不可用时，不单独提交伴随文本。
+- **音频与图像：** 音频先经 ffmpeg/ffprobe 处理，再调用外部 ASR；不提供本地离线识别。图像工具只接收提示词并返回首张图片 URL，不自动下载或发送文件；`mcp.videoModel` 配置存在不代表视频工具已实现。图像请求使用提供方特定参数，不能保证任意兼容接口都接受。
+- **时间与容量：** 默认任务总期限 900 秒、启动期限 120 秒、空闲超时关闭；普通入站事件上限 32，每进程飞书请求并发上限 8。这些来自当前默认配置及小团队初始保护策略，不是吞吐或 SLA 承诺。超时、取消不能强制终止已经阻塞的同步请求线程。
+- **停止与恢复：** 开发全栈 Compose 的退出宽限为 30 秒，生产为 60 秒；进程结束可能中断外部请求或卡片收尾。没有持久化任务队列，重启不保证恢复在途工作。停止或回退镜像不能撤销已发送消息和其他外部副作用。
+- **数据维护：** 工作区、附件、日志、会话和发布备份需要运维安排容量、访问控制及备份策略。token 用量仅写 SQLite，不再生成 CSV；旧 `storage.tokenUsagePath` 仅兼容保留。备份正在使用 WAL 的 SQLite 时，不应只复制主数据库文件。
+
+## 开发与验证
+
+```sh
+# 在仓库根目录、完成 uv sync 后运行
+fersk_codex/.venv/bin/python -B fersk_codex/tests/run_tests.py
+fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
+fersk_codex/.venv/bin/python -B test_deploy.py -v
+
+git diff --check
+```
+
+测试覆盖消息/附件处理、会话与停止控制、并发及超时、工作区初始化、用量、MCP 和部署失败/回退逻辑。测试使用临时配置和模拟外部客户端，MCP 另含本地 HTTP 握手验证；不能替代真实飞书、模型、GHCR、SSH 和生产切换验收。
+
+两个镜像始终从仓库根目录构建：
+
+```sh
+docker build -f fersk_codex/Dockerfile -t fersk-codex .
+docker build -f fersk_mcp/Dockerfile -t fersk-mcp .
+```
+
+默认 Docker 构建使用 `uv sync --upgrade`；需要重新获取基础镜像及依赖时使用 `--pull --no-cache`。CI 每轮先执行 `uv lock --upgrade --python 3.13`，再传入 `--build-arg UV_SYNC_FLAGS=--locked`，使构建和测试使用本轮同一依赖快照。CI 锁文件作为 artifact 保存，不自动提交回仓库。
+
+Python 基础镜像跟随 3.13 补丁，Node 跟随 LTS，uv 与 pnpm 跟随滚动版本；用户工作区首次安装时也解析最新兼容依赖，已有完整环境不会自动追新。镜像 digest 可追溯产物，不代表构建可逐字节复现。包版本由 `setuptools-scm` 推导，无 Git/分发元数据时回退为 `0.0.0`，不作为生产发布依据。
+
+根 [.dockerignore](.dockerignore) 使用源码白名单并排除测试、虚拟环境、凭据和缓存；新增 Codex 源码目录或资源时须同步检查构建输入。共享模块变化需验证两个服务，并重新安装或构建才能更新已有 wheel/镜像。
+
+进一步阅读：[Codex 服务说明](fersk_codex/README.md)、[MCP 服务说明](fersk_mcp/README.md)、[测试说明](fersk_codex/tests/README.md)、[会话与历史恢复](fersk_codex/README.md#会话持久化与历史恢复)、[流式卡片与样式](fersk_codex/README.md#流式卡片与样式定制)、[日志与 Token 用量](fersk_codex/README.md#日志与-token-用量)。实现细节统一收录于各项目 README，历史维护记录不代表当前部署验证结果。
+
+## 许可证
+
+本仓库使用 [MIT License](LICENSE)。模型服务、飞书、插件及其他第三方组件遵循各自的许可与服务条款。

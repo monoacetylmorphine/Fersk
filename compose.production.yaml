@@ -1,4 +1,4 @@
-# 参数来源：生产主机 host.json，由 scripts/deploy.sh 校验后通过环境传入。
+# 参数来源：生产主机 host.json，由 deploy.sh 校验后通过环境传入。
 # 使用独立项目名；首次接管前先停止旧项目的两个应用，基础设施继续运行。
 # 健康检查的 interval/timeout/retries/start_period 来源：本项目单机部署的初始探测预算。
 services:

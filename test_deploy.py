@@ -12,14 +12,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
-SOURCE = (ROOT / 'scripts/deploy.sh').read_text().split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+ROOT = Path(__file__).resolve().parent
+SOURCE = (ROOT / 'deploy.sh').read_text().split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
 
 
 class DeployTests(unittest.TestCase):
     def setUp(self):
         namespace = {'__name__': 'deploy_test'}
-        exec(compile(SOURCE, str(ROOT / 'scripts/deploy.sh'), 'exec'), namespace)
+        exec(compile(SOURCE, str(ROOT / 'deploy.sh'), 'exec'), namespace)
         self.code = namespace
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -27,8 +27,8 @@ class DeployTests(unittest.TestCase):
         self.state = self.root / 'state'
         self.state.mkdir()
         self.bundle = self.root / 'bundle'
-        (self.bundle / 'scripts').mkdir(parents=True)
-        (self.bundle / 'scripts/deploy.sh').write_text('test fixture')
+        self.bundle.mkdir()
+        (self.bundle / 'deploy.sh').write_text((ROOT / 'deploy.sh').read_text())
         (self.bundle / 'compose.production.yaml').write_text('test fixture')
         self.data = self.root / 'data'
         self.data.mkdir()
@@ -50,7 +50,7 @@ class DeployTests(unittest.TestCase):
             for service in ('fersk-codex', 'fersk-mcp')}}
         self.write_manifest()
         self.enterContext(patch.dict(os.environ, {
-            'DEPLOY_ROOT': str(self.state), 'FERSK_DEPLOY_SCRIPT_DIR': str(self.bundle / 'scripts'),
+            'DEPLOY_ROOT': str(self.state), 'FERSK_DEPLOY_SCRIPT_DIR': str(self.bundle),
             'ROLLBACK_COMPATIBLE': 'false',
         }))
         self.calls = []
@@ -102,6 +102,8 @@ class DeployTests(unittest.TestCase):
         with closing(sqlite3.connect(Path(receipt['bundle']) / 'state.backup.sqlite')) as db:
             self.assertEqual(db.execute('SELECT value FROM example').fetchone(), (42,))
         self.assertEqual(receipt['release'], self.manifest)
+        self.assertEqual((Path(receipt['bundle']) / 'deploy.sh').read_text(),
+                         (ROOT / 'deploy.sh').read_text())
         self.assertFalse((self.state / '.deploy-lock').exists())
 
     def test_missing_variable_stops_before_docker(self):

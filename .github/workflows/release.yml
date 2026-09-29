@@ -80,5 +80,5 @@ jobs:
           path: |
             release.json
             compose.production.yaml
-            scripts/deploy.sh
+            deploy.sh
           if-no-files-found: error

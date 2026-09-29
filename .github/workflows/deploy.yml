@@ -83,8 +83,8 @@ jobs:
           # shellcheck disable=SC2029
           ssh "${options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "umask 077; mkdir '$remote'"
           # shellcheck disable=SC2029
-          tar -C bundle -cf - release.json compose.production.yaml scripts/deploy.sh |
+          tar -C bundle -cf - release.json compose.production.yaml deploy.sh |
             ssh "${options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "tar -xf - -C '$remote'"
           # shellcheck disable=SC2029
           ssh "${options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; DEPLOY_ROOT='$DEPLOY_ROOT' ROLLBACK_COMPATIBLE='$ROLLBACK_COMPATIBLE' sh '$remote/scripts/deploy.sh'"
+            "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; DEPLOY_ROOT='$DEPLOY_ROOT' ROLLBACK_COMPATIBLE='$ROLLBACK_COMPATIBLE' sh '$remote/deploy.sh'"
