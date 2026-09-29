@@ -176,15 +176,30 @@ fersk_mcp/.venv/bin/python -m fersk_mcp.server
 | Workflow | 触发条件 | 实际工作 |
 | --- | --- | --- |
 | [CI](.github/workflows/ci.yml) | 面向 `main` 的 PR、手动、可复用调用 | 在原生 ARM64 runner 升级解析 Python 依赖，构建两个镜像，在容器运行测试，并验证部署逻辑 |
+<<<<<<< HEAD
+| [Release](.github/workflows/release.yml) | 推送 `main` 或 `vMAJOR.MINOR.PATCH` tag、手动、每周一 02:23 UTC | 调用 CI；将同一批通过测试的镜像发布到 GHCR，不重新构建；生成 `release` artifact |
+=======
 | [Release](.github/workflows/release.yml) | 推送 `main`、手动、每周一 02:23 UTC | 调用 CI；将同一批通过测试的镜像发布到 GHCR，不重新构建；生成 `release` artifact |
+>>>>>>> main
 | [Deploy](.github/workflows/deploy.yml) | 仅 `main` 手动触发 | 验证指定的成功 Release，下载对应部署包，通过 SSH 更新生产应用 |
 
 生产目标为 Apple Silicon 对应的 **Linux ARM64 Docker**；流水线没有构建 amd64 镜像。镜像使用 `ghcr.io/<owner>/<repo>/fersk-codex` 和 `fersk-mcp`，部署按 `release.json` 中的 digest 和 revision 校验。源码中的 workflow 不代表目标仓库和生产主机已经配置或运行成功。
+
+<<<<<<< HEAD
+推送 `v1.0.0` 这样的 Git tag，会为两个镜像增加 `1.0.0` 标签，并将同一镜像推送为 `latest`，同时保留 `sha-…-run-…` 追溯标签。版本号由发布者指定，不自动递增；仅支持无前导零的三段数字正式版本。普通 `main` 推送、手动和定时发布不更新 `latest`。`latest` 指向各镜像最近成功推送的正式发布，不按版本号大小排序；重跑旧版本或并行发布也可能改变其指向，精确部署应使用版本号或 digest。Deploy 仍只接受来自 `main` 的 Release run，不能填入 tag 触发的 run ID。
+
+先提交并推送 workflow 修改，再在包含该修改的目标提交上执行 `git tag v0.1.2` 和 `git push origin v0.1.2`（版本号为示例，请使用尚未发布的实际版本）。已有 Git tag 的 workflow 不会随 `main` 更新；新的发布成功后，Compose 即可使用两个镜像的 `:latest`。私有镜像须先登录 GHCR，再运行 `docker compose pull fersk-codex fersk-mcp` 和 `docker compose up -d --no-build fersk-codex fersk-mcp` 更新应用。
 
 使用前在 GitHub `production` Environment 配置 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`，以及 Variable `DEPLOY_ROOT`。目标主机需准备 `host.json`、应用配置、挂载目录、网络、GHCR 拉取授权，以及 Docker Compose 和 Python 3.9+。SSH 使用端口 22 并严格核验主机公钥。
 
 生产 Compose 只管理两个应用，容器用户固定为 `app`，MCP 容器端口固定为 8000，`host.json` 的 `mcp_port` 仅改变宿主机回环端口。首次切换前需停止旧项目的两个应用，保留基础设施与数据；不能让两个网关同时消费消息。
 
+=======
+使用前在 GitHub `production` Environment 配置 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`，以及 Variable `DEPLOY_ROOT`。目标主机需准备 `host.json`、应用配置、挂载目录、网络、GHCR 拉取授权，以及 Docker Compose 和 Python 3.9+。SSH 使用端口 22 并严格核验主机公钥。
+
+生产 Compose 只管理两个应用，容器用户固定为 `app`，MCP 容器端口固定为 8000，`host.json` 的 `mcp_port` 仅改变宿主机回环端口。首次切换前需停止旧项目的两个应用，保留基础设施与数据；不能让两个网关同时消费消息。
+
+>>>>>>> main
 部署脚本先预检并拉取镜像，再停止旧应用、备份 `config.json` 与 SQLite、启动并等待就绪，成功后写入 `current.json`。新版本切换失败时，只有存在旧发布且明确确认 `rollback_compatible` 才回退旧镜像；**不自动恢复数据库，不备份整个工作区，也不提供零停机或自动配置/数据迁移**。应用自身仍会按实现初始化表或补充兼容字段，镜像回退前须确认实际数据兼容性。
 
 部署详情、首次切换和失败恢复见 [CI/CD 指南](CICD_GUIDE.md)。其中的历史测试数量、实施记录和原始规划不应视为当前版本或当前部署的验证结果。
