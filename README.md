@@ -176,10 +176,12 @@ fersk_mcp/.venv/bin/python -m fersk_mcp.server
 | Workflow | 触发条件 | 实际工作 |
 | --- | --- | --- |
 | [CI](.github/workflows/ci.yml) | 面向 `main` 的 PR、手动、可复用调用 | 在原生 ARM64 runner 升级解析 Python 依赖，构建两个镜像，在容器运行测试，并验证部署逻辑 |
-| [Release](.github/workflows/release.yml) | 推送 `main`、手动、每周一 02:23 UTC | 调用 CI；将同一批通过测试的镜像发布到 GHCR，不重新构建；生成 `release` artifact |
+| [Release](.github/workflows/release.yml) | 推送 `main` 或 `vMAJOR.MINOR.PATCH` tag、手动、每周一 02:23 UTC | 调用 CI；将同一批通过测试的镜像发布到 GHCR，不重新构建；生成 `release` artifact |
 | [Deploy](.github/workflows/deploy.yml) | 仅 `main` 手动触发 | 验证指定的成功 Release，下载对应部署包，通过 SSH 更新生产应用 |
 
 生产目标为 Apple Silicon 对应的 **Linux ARM64 Docker**；流水线没有构建 amd64 镜像。镜像使用 `ghcr.io/<owner>/<repo>/fersk-codex` 和 `fersk-mcp`，部署按 `release.json` 中的 digest 和 revision 校验。源码中的 workflow 不代表目标仓库和生产主机已经配置或运行成功。
+
+推送 `v1.0.0` 这样的 Git tag，会为两个镜像增加 `1.0.0` 标签，同时保留 `sha-…-run-…` 追溯标签。版本号由发布者指定，不自动递增；仅支持无前导零的三段数字正式版本。Deploy 仍只接受来自 `main` 的 Release run，不能填入 tag 触发的 run ID。详细命令与限制见 [版本号发布](CICD_GUIDE.md#版本号发布)。
 
 使用前在 GitHub `production` Environment 配置 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`，以及 Variable `DEPLOY_ROOT`。目标主机需准备 `host.json`、应用配置、挂载目录、网络、GHCR 拉取授权，以及 Docker Compose 和 Python 3.9+。SSH 使用端口 22 并严格核验主机公钥。
 

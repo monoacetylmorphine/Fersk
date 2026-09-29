@@ -21,12 +21,34 @@
 | 文件 | 触发 | 行为 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | PR、手动、可复用调用 | 原生 ARM64 构建；运行两个服务测试及部署事务测试；保存镜像和依赖快照 |
-| `.github/workflows/release.yml` | 推送 `main`、手动、每周一 02:23 UTC | 调用 CI；通过后将同一批镜像推送 GHCR，保存 `release` artifact |
+| `.github/workflows/release.yml` | 推送 `main` 或 `vMAJOR.MINOR.PATCH` tag、手动、每周一 02:23 UTC | 调用 CI；通过后将同一批镜像推送 GHCR，保存 `release` artifact |
 | `.github/workflows/deploy.yml` | `main` 手动触发 | 验证成功 Release 的来源，下载同批部署脚本和 Compose，通过 SSH 更新生产 |
 
 每周触发时间是维护策略，非业务时限。生产不会随推送或定时发布自动更新。CI 测试用临时配置和 mock；MCP 另有本地真实 HTTP 握手测试，不调用模型或发送飞书消息。
 
 镜像命名为 `ghcr.io/<owner>/<repo>/fersk-codex`、`ghcr.io/<owner>/<repo>/fersk-mcp`，仓库路径统一小写。标签包含 commit SHA、workflow run ID 和 run attempt，避免同一提交的依赖更新混淆。发布依据为 `release.json` 中的两个 digest 和 revision label；包内 `0.0.0` 后备版本不作为部署依据。
+
+### 版本号发布
+
+版本号由发布者通过 Git tag 指定；例如 `v1.0.0` 对应两个镜像的 `1.0.0` 标签。只接受无前导零的 `vMAJOR.MINOR.PATCH` 正式版本，不接受预发布或构建元数据。匹配 `v*` 但格式不合法的 tag 会在构建前失败。普通 `main` 推送、在 `main` 手动运行和定时运行仍仅生成追溯标签。
+
+先将 workflow 修改合入 `main`，在需要发布的提交上执行（`v1.0.0` 为示例，请按实际发布版本填写）：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Release 会重新调用 CI，并给同一批通过测试的镜像同时推送版本号标签和追溯标签，无需为两个标签分别构建。成功后可执行：
+
+```bash
+docker pull ghcr.io/monoacetylmorphine/fersk/fersk-codex:1.0.0
+docker pull ghcr.io/monoacetylmorphine/fersk/fersk-mcp:1.0.0
+```
+
+以上镜像路径来源于当前仓库的 GHCR 命名。私有镜像须先完成 GHCR 登录。版本号不会自动递增，也不更新 `latest`。同一个 tag 的 Release 重跑会重新解析依赖，成功推送后版本号标签可能指向新镜像；精确复用产物应使用 digest。
+
+Deploy 的来源限制保持不变：仅接受来自 `main` 的成功 Release run，不能使用 tag 触发的 run ID。tag 发布用于 GHCR 版本号拉取；生产部署继续选择 `main` 的 Release，两个独立 run 的依赖及 digest 不保证相同。
 
 ### 目标主机准备
 
