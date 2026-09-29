@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from fersk_codex.utils import logging as usage
+from fersk_codex.utils import token_usage as usage
 
 
 class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):

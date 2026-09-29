@@ -1,5 +1,7 @@
 # Token 用量记录
 
+用量持久化模块为 `fersk_codex.utils.token_usage`，通过 `SavingLog` 写入明细，通过 `finalize_usage` 回填耗时。
+
 每次收到 `thread/tokenUsage/updated`，立即将 `token_usage.last` 的六个增量字段作为一行写入 SQLite 并提交。不会保存或累加 `token_usage.total`。`total_tokens` 表示当次增量的总 tokens。
 
 原表追加 `runId`，同一次任务的明细共享网关提供的 `run_id`。直接调用未提供该参数时，为用量记录生成独立 UUID。首次写入自动追加旧表缺少的字段，旧行保留且 `runId` 为空，无法从旧行恢复此前漏记的增量。

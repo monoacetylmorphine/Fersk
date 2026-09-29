@@ -18,7 +18,7 @@ from openai_codex import (
 from openai_codex.types import TurnStatus
 
 from fersk_codex.codex.codex_workspace import prepare_workspace, workspace_environment
-from fersk_codex.utils.logging import SavingLog, finalize_usage
+from fersk_codex.utils.token_usage import SavingLog, finalize_usage
 from . import thread_manager
 from fersk_codex.session import session_codex, session_history
 from .codex_runtime import CodexRuntime, LiveTurn

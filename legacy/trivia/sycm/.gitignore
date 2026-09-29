@@ -1,0 +1,6 @@
+context.json
+context.tmp
+.sycm.lock
+.venv/
+__pycache__/
+.env

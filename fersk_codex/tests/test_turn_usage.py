@@ -15,7 +15,7 @@ from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnStatus
 from fersk_codex.codex import codex_execution, codex_runtime, thread_manager
 from fersk_codex.session import session_codex, session_history
 from fersk_codex.codex import codex_execution as codex
-from fersk_codex.utils import logging as usage_log
+from fersk_codex.utils import token_usage as usage_log
 
 
 class TurnUsageTests(unittest.IsolatedAsyncioTestCase):
