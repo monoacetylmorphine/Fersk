@@ -77,7 +77,7 @@ jobs:
             docker tag "fersk-ci:$SERVICE" "$repository:latest"
             docker push "$repository:latest"
             printf 'Image Version: `%s:%s`\n' "$repository" "$VERSION_TAG" >> "$GITHUB_STEP_SUMMARY"
-            printf '最新版本镜像：`%s:latest`\n' "$repository" >> "$GITHUB_STEP_SUMMARY"
+            printf 'Image Latest: `%s:latest`\n' "$repository" >> "$GITHUB_STEP_SUMMARY"
           fi
           digest=$(docker inspect "$tag" | jq -er --arg prefix "$repository@sha256:" \
             'first(.[0].RepoDigests[] | select(startswith($prefix)))')
