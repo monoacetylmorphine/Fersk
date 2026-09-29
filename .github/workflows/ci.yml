@@ -1,5 +1,4 @@
 name: CI
-# timeout 和 artifact 保留期限来源：小型仓库原生 ARM64 构建的初始维护预算。
 
 on:
   pull_request:
