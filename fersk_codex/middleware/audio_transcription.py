@@ -15,7 +15,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 
 logger = get_logger("Audio")
 

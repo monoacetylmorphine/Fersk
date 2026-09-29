@@ -25,7 +25,7 @@ from .codex_runtime import CodexRuntime, LiveTurn
 from fersk_codex.session.session_codex import CodexSession
 from .thread_watchdog import RunProbe, probes, should_log_event, summarize_event
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 from .thread_watchdog import settings
 
 if TYPE_CHECKING:

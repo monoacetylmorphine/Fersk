@@ -176,6 +176,7 @@ OGG 删除失败记录日志，不覆盖转写结果或异常；转写失败和�
 提示失败或控制入口也耗尽时只记录错误，不无限创建通知任务。所有事件 Future 的异常都会被消费。
 这些容量是针对内部 30 人以内、最多 5 个任务并发的初始保护策略，尚非压测最优值。
 
+终端日志模块为 `fersk_codex.utils.terminal_log`，提供 `get_logger`、`configure_logging` 和 `protect_sdk_logs`。
 业务日志由 `logging.logLevel` 控制，缺省 INFO；飞书 SDK HTTP 和 WebSocket 日志始终保持 DEBUG。
 连接日志仅遮蔽 URL 中的 `access_key`、`ticket`、`access_token`，保留 DEBUG 诊断信息。
 业务异常保留堆栈，同一卡片交付错误在 gateway 只记录带 run_id 的摘要，任务释放写入终端及 JSONL。

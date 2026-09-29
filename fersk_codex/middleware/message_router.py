@@ -10,7 +10,7 @@ from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 from fersk_codex.codex.thread_watchdog import RunProbe, settings
 from fersk_codex.session.session_gateway import ActiveCodexRun, RETENTION_SECONDS
 from fersk_codex.middleware.message_collector import batch_from_chat_history, is_new_command, is_stop_command, is_history_command

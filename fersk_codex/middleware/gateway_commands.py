@@ -13,7 +13,7 @@ from fersk_codex.codex.thread_manager import get_user_thread
 from fersk_codex.codex.thread_watchdog import settings
 from fersk_codex.services.lark import lark_interactive_card as interactive
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 from .gateway_runtime import GatewayRuntime
 
 if TYPE_CHECKING:

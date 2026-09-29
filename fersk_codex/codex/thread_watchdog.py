@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 from fersk_codex.session.session_gateway import RETENTION_SECONDS
 
 if TYPE_CHECKING:

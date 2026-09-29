@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from fersk_codex.codex import thread_manager
 from fersk_codex.codex.thread_watchdog import settings
 from fersk_codex.session import session_history
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 
 if TYPE_CHECKING:
     from openai_codex import AsyncThread, InputItem

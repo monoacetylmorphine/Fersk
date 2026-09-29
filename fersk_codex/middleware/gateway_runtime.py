@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fersk_codex.codex.thread_watchdog import probes, settings
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 from .message_collector import MessageBatch
 from fersk_codex.session.session_gateway import ActiveCodexRun, SessionCache
 

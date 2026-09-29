@@ -15,7 +15,7 @@ if not __package__:
 from fersk_codex.codex.codex_execution import FerskCodex
 from fersk_codex.codex.thread_watchdog import journal
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger, configure_logging
+from fersk_codex.utils.terminal_log import get_logger, configure_logging
 from fersk_codex.utils.event_dispatcher import EventDispatcher
 from fersk_codex.services.lark.lark_client import create_websocket_client
 from fersk_codex.services.lark.lark_tools import getting_chat_history, adding_reaction_emoji, delete_reaction_emoji

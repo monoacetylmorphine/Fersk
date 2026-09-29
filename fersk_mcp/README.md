@@ -49,7 +49,7 @@ docker run --rm \
 `codex.watchdog.cardRequestTimeoutSeconds`。上传文件由 worker 打开和关闭，避免超时后提前关闭句柄。
 该方案不能强制终止永久阻塞的线程，不自动重试结果不确定的发送。
 
-业务 logger 使用 `mcp.logLevel`，不再固定 INFO；飞书 SDK 仍保持 DEBUG，仅遮蔽连接 URL 凭据。
+业务日志模块为 `fersk_mcp.utils.terminal_log`，使用 `mcp.logLevel`，不再固定 INFO；飞书 SDK 仍保持 DEBUG，仅遮蔽连接 URL 凭据。
 上述新增容量字段可省略，兼容旧配置。两个独立安装的服务各自包含标准库执行器实现，回归测试同时验证两份实现。
 
 服务启动仅加载共享配置和注册工具，不校验各工具的 API 凭据。图像工具在每次调用时校验 `mcp.imageModel` 及其环境变量，并通过异步上下文关闭客户端；缺少图像配置或调用失败不会阻止文件工具使用。飞书客户端同样仅在调用文件工具时初始化，缺少飞书凭据不影响图像工具。

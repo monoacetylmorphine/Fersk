@@ -8,12 +8,12 @@ import logging
 from pathlib import Path
 import unittest
 
-from fersk_codex.utils import logger as codex_logger
+from fersk_codex.utils import terminal_log as codex_logger
 
 
 class BusinessLoggerTests(unittest.TestCase):
     def test_levels_traceback_redaction_and_sdk_debug(self) -> None:
-        path = Path(__file__).resolve().parents[2] / "fersk_mcp/utils/logger.py"
+        path = Path(__file__).resolve().parents[2] / "fersk_mcp/utils/terminal_log.py"
         spec = importlib.util.spec_from_file_location("mcp_logger_test", path)
         mcp_logger = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mcp_logger)

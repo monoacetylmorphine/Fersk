@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine
 from concurrent.futures import CancelledError, Future
 from typing import Any, TypeVar
 
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 
 EventT = TypeVar("EventT")
 

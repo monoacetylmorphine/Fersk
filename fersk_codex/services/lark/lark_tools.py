@@ -24,7 +24,7 @@ from fersk_codex.configs.loader import CONFIG
 
 from fersk_codex.services.lark.lark_client import client
 from fersk_codex.services.lark.lark_requests import call_lark
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 
 logger = get_logger("LarkTools")
 from fersk_codex.middleware.resource_validator import (

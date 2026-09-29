@@ -15,7 +15,7 @@ from fersk_codex.services.lark.lark_message_card import (
     CardDeliveryError, CardReplace, CardStreamSession, CardStreamStopped,
 )
 from fersk_codex.configs.loader import CONFIG
-from fersk_codex.utils.logger import get_logger
+from fersk_codex.utils.terminal_log import get_logger
 from .message_assemble import InputAssemblyError
 from .message_collector import MessageBatch
 from fersk_codex.session.session_gateway import ActiveCodexRun
