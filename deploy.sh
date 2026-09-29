@@ -55,7 +55,7 @@ def main():
     if not root.is_absolute() or not root.is_dir():
         raise ValueError('DEPLOY_ROOT 必须是已准备好的绝对目录')
     root = root.resolve()
-    bundle = Path(os.environ['FERSK_DEPLOY_SCRIPT_DIR']).parent.resolve()
+    bundle = Path(os.environ['FERSK_DEPLOY_SCRIPT_DIR']).resolve()
     manifest = read_json(bundle / 'release.json')
     refs = image_refs(manifest)
     host = read_json(root / 'host.json')
@@ -164,7 +164,7 @@ def main():
         record.mkdir(mode=0o700)
         for filename in ('release.json', 'compose.production.yaml'):
             shutil.copy2(bundle / filename, record / filename)
-        shutil.copy2(bundle / 'scripts/deploy.sh', record / 'deploy.sh')
+        shutil.copy2(bundle / 'deploy.sh', record / 'deploy.sh')
         stopped = False
         changed = False
         try:

@@ -66,7 +66,7 @@ SSH 当前采用标准端口 22，严格验证主机公钥，不自动信任现�
 ### 首次切换与后续发布
 
 1. 将本次代码提交、推送至 `main`，等待 Release 成功。
-2. 记录 Release run ID。`release` artifact 包含 `release.json`、对应版本的生产 Compose 和部署脚本；artifact 过期后需重新执行 Release。
+2. 记录 Release run ID。`release` artifact 包含 `release.json`、对应版本的生产 Compose 和部署脚本；artifact 过期后需重新执行 Release。三个文件在发布包根目录并列存放：`release.json`、`compose.production.yaml`、`deploy.sh`。目录调整后需使用新结构的 Release artifact；旧结构的 artifact 不能交给当前 Deploy workflow。
 3. 初次切换时，确认旧 Compose 项目名称和挂载目录，安排短暂停机，仅停止旧项目的 `fersk-codex`、`fersk-mcp`；保留旧容器和原有基础设施。若其他项目的应用仍运行，新脚本会拒绝接管。不要执行全栈 `down` 或删除数据卷。
 4. 在 Actions 的 Deploy 中选择 `main`，填入成功的 Release run ID。只有确认数据和配置向后兼容，才勾选 `rollback_compatible`。
 5. 部署脚本依次检查、拉取、停止已有受管应用、备份、启动并等待两个服务健康，成功后原子更新 `current.json`。
@@ -209,14 +209,14 @@ CI/CD 不直接提升模型回答质量或运行速度。模拟测试不能证�
 | --- | --- | --- | ---: |
 | `compose.production.yaml` | 新增 | 应用镜像、挂载、网络及健康检查 | 60～90 |
 | `.github/workflows/deploy.yml` | 新增 | 手动选版本、生产环境串行部署 | 60～100 |
-| `scripts/deploy.sh` | 新增 | 预检、拉取、备份、更新、检查和受限回退 | 120～200 |
+| `deploy.sh` | 新增 | 预检、拉取、备份、更新、检查和受限回退 | 120～200 |
 | `fersk_codex/utils/health.py` | 新增 | 网关本地就绪状态和探测 | 60～100 |
 | `fersk_codex/main.py` | 修改 | 就绪状态、SIGTERM、停止接收新任务 | 50～100 |
 | `fersk_mcp/utils/health.py` | 新增 | MCP 协议初始化及工具注册检查 | 30～60 |
 | `fersk_mcp/server.py` | 按需要修改 | 配合探测的生命周期或状态处理 | 10～30 |
 | `fersk_codex/tests/test_gateway_startup.py` | 修改 | 就绪、退出信号及任务清理回归 | 60～100 |
 | `fersk_mcp/tests/test_runtime.py` | 修改 | 探测成功、失败和超时回归 | 40～80 |
-| `scripts/tests/test_deploy.py` | 新增 | 缺少配置、部署失败和回退失败分支 | 60～100 |
+| `test_deploy.py` | 新增 | 缺少配置、部署失败和回退失败分支 | 60～100 |
 | `CICD_GUIDE.md` | 追加 | 实际部署、备份恢复和回退限制 | 40～60 |
 | **本阶段合计** | **新增 6，修改 5** | | **约 690～1,120** |
 

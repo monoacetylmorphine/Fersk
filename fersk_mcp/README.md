@@ -1,73 +1,140 @@
 # Fersk MCP
 
-CI/CD 使用 `main` 和 Python 3.13 系列最新补丁，详见 [CI/CD 指南](../CICD_GUIDE.md)。默认 Docker 构建升级最新兼容依赖；CI 先更新锁文件，再以 `UV_SYNC_FLAGS=--locked` 构建和测试同一快照，发布时不重建镜像。`python -m fersk_mcp.utils.health` 通过本地 MCP 协议握手及工具列表验证就绪，不执行工具、不需要业务 API 凭据。
+Fersk MCP 是独立运行的工具服务，默认通过 Streamable HTTP 向 Codex 或其他 MCP 客户端提供两个工具：**将本地文件发送到飞书，以及根据提示词生成图片 URL**。
 
-## 启动
+它不接收飞书对话、不运行 Codex 任务，也不管理聊天会话。对话入口由 [Fersk Codex](../fersk_codex/README.md) 提供；整体部署及网络说明见[仓库 README](../README.md)。两个服务独立启动，客户端需要自行注册 MCP 连接。
 
-在项目根目录中，优先使用项目虚拟环境启动：
+## 工具接口
 
-```bash
-./.venv/bin/python server.py
+| 工具 | 输入 | 成功结果 |
+| --- | --- | --- |
+| `sending_file` | `file_path: str`，服务可读取的绝对文件路径 | 包含 `recipient_id`、`file_key`、`message_id` 的对象 |
+| `image_generator` | `prompt: str`，非空图片描述 | 图像服务返回的首张图片 URL 字符串 |
+
+### 文件发送
+
+`sending_file` 先展开并解析路径，确认目标是普通文件，再从父目录中识别接收方，上传文件并发送飞书文件消息。
+
+- 接收方目录须完整匹配 `(?:on_|oc_)[A-Za-z0-9]+`，且含前缀总长为 35 个字符；长度来自当前实现采用的参考 ID 规则。
+- 解析后的路径中只能识别到一个不同接收方。`on_` 使用飞书 `union_id`，`oc_` 使用 `chat_id`。
+- 文件必须在 **MCP 服务所在环境**可读。宿主机路径不等于容器路径；与 Codex 共用工作区挂载后，应传容器内的绝对路径。
+- 上传类型由 `lark.upload.nativeFileTypes` 决定，未列出的扩展名使用 `stream`。这是发送规则，不等于网关的入站附件白名单。
+- 成功需同时取得上传 `file_key` 和发送 `message_id`。API 失败或响应缺项会抛出异常，不以“上传成功”代替“发送完成”。
+
+**接收方目录不是授权机制。** 当前工具未校验调用者身份，也未限制文件一定属于 `storage.workspaceRoot`。能连接服务的调用者可能指定其他服务可读文件，因此只能向受信任的客户端开放。
+
+发送超时后结果可能不确定，工具不会自动重试整次发送；先核对飞书是否已经收到，避免重复交付。
+
+### 文生图
+
+`image_generator` 使用 `mcp.imageModel` 指定的 API、模型和密钥环境变量，通过 `AsyncOpenAI.images.generate` 请求图片。当前请求固定使用 `2K`、URL 响应，以及提供方特定的生成参数，返回第一张图片的 URL。
+
+工具不下载图片、不将图片存入工作区，也不自动发送到飞书。它只接收文本提示词，不提供图片编辑或视频生成；存在 `mcp.videoModel` 配置不代表服务注册了视频工具。切换提供方前需核实其接口能接受当前参数。
+
+## 配置与凭据
+
+默认业务配置为 `~/.fersk/config.json`，可通过 `FERSK_CONFIG_FILE` 指定其他已有文件。配置定义见[共享默认配置](../fersk_codex/configs/config_default.json)和 [Schema](../fersk_codex/configs/config_schema.json)。服务启动时完整校验 Schema，再注册工具；不会因为暂时缺少某个工具的 API 凭据而拒绝启动。
+
+应用只加载 `~/.fersk/.env`，已有进程环境变量优先；指定其他 JSON 路径不会改变 dotenv 的位置。不要把真实密钥写入 JSON 或仓库。
+
+| 字段或变量 | 默认值及用途 |
+| --- | --- |
+| `mcp.transport` | `streamable-http`；当前生产健康检查要求此模式 |
+| `mcp.host` / `MCP_HOST` | 默认 `127.0.0.1`，环境变量可覆盖；Compose 显式设为 `0.0.0.0` 供容器外连接 |
+| `mcp.port` / `MCP_PORT` | 默认 8000，环境变量可覆盖监听端口 |
+| `mcp.path` / `MCP_PATH` | 默认 `/mcp`，环境变量可覆盖 |
+| `mcp.logLevel` | 业务日志等级，默认 `DEBUG` |
+| `mcp.imageModel` | 文生图的模型、`baseUrl` 及 `apiKeyEnv`；默认密钥变量为 `DOUBAO_API_KEY` |
+| `lark.credentials` | 文件工具使用的飞书变量名，默认 `LARK_APP_ID`、`LARK_APP_SECRET` |
+| `lark.upload` | 飞书原生上传类型和后备类型 |
+| `lark.requestConcurrency` | 默认每进程最多 8 个实际在途飞书请求 |
+| `codex.watchdog.cardRequestTimeoutSeconds` | 共享飞书 API 超时，默认 10 秒；MCP 不启动 Codex watchdog |
+
+文生图在每次调用时校验模型参数及密钥；飞书客户端在调用文件工具时才初始化。缺少图像凭据只影响图像调用，缺少飞书凭据只影响文件调用，但任意配置段的 JSON/Schema 错误仍会阻止服务启动。修改配置或凭据文件后需重启服务。
+
+## 启动与连接
+
+以下命令均从**完整仓库根目录**执行。Python 版本要求为 `>=3.13,<3.14`；保留两个项目的相邻位置与相对符号链接。
+
+### 源码运行
+
+```sh
+uv sync --project fersk_mcp --locked
+# 只初始化缺失的默认业务配置，不覆盖现有配置
+fersk_mcp/.venv/bin/python -B fersk_mcp/configs/initialization.py
+fersk_mcp/.venv/bin/python -m fersk_mcp.server
 ```
 
-也可以在安装为包后使用：
+也可在 `fersk_mcp/` 中执行 `.venv/bin/python server.py`，安装为包后使用 `fersk-mcp`。按需在 `~/.fersk/.env` 中提供真实业务凭据；启动和协议检查成功并不代表工具凭据已有效。
 
-```bash
-python -m fersk_mcp.server
-# 或
-fersk-mcp
-```
+### Docker
 
-直接执行 `server.py` 已兼容源码目录结构。
-
-## Docker
-
-从仓库根目录构建镜像：
-
-```bash
+```sh
 docker build -f fersk_mcp/Dockerfile -t fersk-mcp .
-```
 
-首次启动会从镜像中的共享默认配置原子初始化挂载的 `~/.fersk/config.json`，已有文件不覆盖。两个服务均完整校验共享配置；指定自定义配置路径时，文件必须已存在。镜像支持 Compose 中的 `APP_USER`、`LOCAL_UID`、`LOCAL_GID` 和 `PYTHON_PACKAGE_INDEX` 构建参数；容器的 `HOME` 与 `CODEX_HOME` 会与相应的 `.fersk`、`.codex` 挂载目录对齐。以下命令将主机的 `~/.fersk` 挂载到默认容器用户的配置目录，并将默认 MCP HTTP 端口映射到主机：
-
-```bash
+# 挂载目录须预先存在，且允许容器用户读取/写入
+# 示例使用默认路径和监听端口；自定义配置须同步调整
+mkdir -p "$HOME/.fersk" "$HOME/.codex"
 docker run --rm \
   -p 127.0.0.1:8000:8000 \
   -e MCP_HOST=0.0.0.0 \
-  -v "$HOME/.fersk:/home/app/.fersk" \
-  -v "$HOME/.codex:/home/app/.codex" \
+  -e MCP_PORT=8000 \
+  --mount "type=bind,src=$HOME/.fersk,dst=/home/app/.fersk" \
+  --mount "type=bind,src=$HOME/.codex,dst=/home/app/.codex" \
   fersk-mcp
 ```
 
-`config.json` 中的 `mcp.port`、`mcp.host` 与 `mcp.path` 可分别通过 `MCP_PORT`、`MCP_HOST`、`MCP_PATH` 环境变量覆盖。若配置文件不在默认位置，可设置 `FERSK_CONFIG_FILE`；该变量取值的来源由部署环境决定，Dockerfile 未预置任何凭据或配置内容。
+容器首次启动会原子初始化缺失的默认配置，已有配置不覆盖。自定义 `FERSK_CONFIG_FILE` 对应的文件必须已经存在。默认镜像用户为 UID/GID 1000，单独构建可用 `APP_USER`、`APP_UID`、`APP_GID` 调整；根 Compose 将 `LOCAL_UID`、`LOCAL_GID` 映射为对应构建参数。
 
-综合部署使用仓库根目录 Compose，默认发布 `127.0.0.1:8000`，宿主机 URL 为 `http://127.0.0.1:8000/mcp`，同网络容器 URL 为 `http://fersk-mcp:8000/mcp`。由用户通过 Codex CLI 自行配置连接。根 Compose 的 `MCP_PORT` 同时控制宿主机映射和容器监听端口，`MCP_BIND_ADDRESS` 控制宿主机绑定地址；通过 shell 或 `--env-file` 设置。镜像通过 `uv sync --no-dev --no-editable` 安装依赖，默认升级、CI 显式锁定本轮快照，并使用 `UV_NO_CACHE=1` 避免保留 uv 缓存；包含 `fersk_mcp.utils`。独立运行示例仅将无鉴权 MCP 端口发布到宿主机回环地址。新增生产 Compose 的容器端口固定为 8000，`host.json` 只指定宿主机映射端口。
+根 Compose 部署使用 `./compose_initial.sh up -d --build fersk-mcp`，需要先完成根 README 中的网络、挂载和部署凭据准备；仅启动该服务也会解析整个 Compose。
 
-## 工具解耦
+| 客户端所在位置 | 根 Compose 默认连接地址 |
+| --- | --- |
+| 宿主机 | `http://127.0.0.1:8000/mcp` |
+| 同一 `ai-infra` 网络内的容器 | `http://fersk-mcp:8000/mcp` |
 
-飞书上传和发送使用本进程独立的有界执行器，`lark.requestConcurrency` 缺省 8；来源为内部最多
-5 个并发任务的初始保护策略，尚非压测结论。满额立即报错，实际线程结束才归还名额，调用方
-超时或取消不会增加可提交容量。SDK timeout 与调用方 timeout 均使用
-`codex.watchdog.cardRequestTimeoutSeconds`。上传文件由 worker 打开和关闭，避免超时后提前关闭句柄。
-该方案不能强制终止永久阻塞的线程，不自动重试结果不确定的发送。
+服务不会替客户端注册连接。容器中的 `127.0.0.1` 指向该容器自身；客户端必须使用自己能够访问的地址。
 
-业务日志模块为 `fersk_mcp.utils.terminal_log`，使用 `mcp.logLevel`，不再固定 INFO；飞书 SDK 仍保持 DEBUG，仅遮蔽连接 URL 凭据。
-上述新增容量字段可省略，兼容旧配置。两个独立安装的服务各自包含标准库执行器实现，回归测试同时验证两份实现。
+根 Compose 的 `MCP_PORT` 同时改变宿主机与容器端口，`MCP_BIND_ADDRESS` 默认只绑定宿主机回环地址。生产 Compose 则固定容器端口 8000，`host.json` 中的 `mcp_port` 只改变宿主机映射。不要混用两种端口约定，也不要将无鉴权服务直接暴露到公网。
 
-服务启动仅加载共享配置和注册工具，不校验各工具的 API 凭据。图像工具在每次调用时校验 `mcp.imageModel` 及其环境变量，并通过异步上下文关闭客户端；缺少图像配置或调用失败不会阻止文件工具使用。飞书客户端同样仅在调用文件工具时初始化，缺少飞书凭据不影响图像工具。
+## 代码与共享关系
 
-环境变量统一从 `~/.fersk/.env` 加载，模块不再搜索或覆盖其他 `.env`。修改挂载配置后重启服务生效。JSON 语法和共享 Schema 错误仍会阻止启动。
+```text
+fersk_mcp/
+├── server.py                   # MCP 服务入口、工具注册及监听配置
+├── tools/
+│   ├── lark_tools/sending_file.py
+│   └── internal_tools/text2image.py
+├── services/lark/              # 延迟初始化的飞书客户端及共享请求封装
+├── configs/                    # 配置入口与共享文件的相对符号链接
+├── utils/                      # 日志、有界执行器和协议健康检查
+├── tests/test_runtime.py       # 工具、配置、打包与健康探测回归
+└── Dockerfile、pyproject.toml、uv.lock
+```
 
-共享配置中的机器人身份字段统一为 `lark.credentials.robotUnionIdEnv`，其默认环境变量为 `LARK_ROBOT_UNION_ID`；旧字段 `robotOpenIdEnv` 不再通过 Schema 校验。
+`configs/` 中的 `config_default.json`、`config_schema.json`、`loader.py`、`validation.py`、`initialization.py` 通过相对符号链接指向 `../../fersk_codex/configs/`。`services/lark/lark_requests.py` 同样引用 Codex 的对应文件；`lark_client.py` 保持独立，以便延迟检查工具凭据。
 
-离线验证：从仓库根目录运行 `fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py`，测试使用临时配置和模拟客户端，不发送真实请求。
+两个服务分别加载共享源码，配置对象与线程池互不共享。MCP 保留配置中的存储路径原值，不承担 Codex 的工作区初始化。Dockerfile 保持两个源码目录在 `/opt/` 下相邻，使符号链接在构建时可解析；单独复制本项目或改成开发机绝对链接会破坏构建。
 
-默认配置、Schema、校验逻辑和初始化脚本的唯一实体位于 `fersk_codex/configs/`；本项目内同名路径是指向它们的符号链接，校验与初始化模块分别为 `configs/validation.py` 和 `configs/initialization.py`。两个服务执行相同的完整校验后各自使用所需字段，详情见根目录 README。已有挂载配置不自动覆盖。
+已安装 wheel 和镜像使用构建时的内容。修改共享源码后须重新安装或构建，并验证两个服务；仅修改挂载配置则重启即可。
 
-`configs/loader.py` 通过符号链接共用 `fersk_codex/configs/loader.py`，MCP 保留存储路径原值，Codex 将其解析为绝对路径；模块分别加载，配置对象相互独立。
+## 健康检查、测试与运维边界
 
-共享文件必须使用相对符号链接：`configs/` 下指向 `../../fersk_codex/configs/`，`services/lark/` 下指向 `../../../fersk_codex/services/lark/`。不要使用本机绝对路径，否则 Docker 内无法解析链接，`uv sync` 构建 wheel 时会报文件不存在。修改 Codex 中的共享源码后，MCP 源码目录立即同步读取同一文件，无需手动复制；Dockerfile 保留两者在 `/opt/` 下的相邻目录结构，使这些链接在构建时仍然有效。已安装的 wheel 和已构建的镜像包含构建时的文件内容，源码更新后需重新安装或重新构建镜像并重建容器；Compose 部署可运行 `docker compose up -d --build fersk-mcp`。
+```sh
+# 从仓库根目录运行，使用临时配置及模拟外部客户端
+fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
 
-`services/lark/lark_requests.py` 通过符号链接共用 `fersk_codex/services/lark/lark_requests.py`，两个服务仍各自加载配置并创建独立线程池。Docker 构建会一并复制共享源码。`services/lark/lark_client.py` 保持独立，以保留 MCP 调用工具时才校验飞书凭据的行为；Codex 则在启动时校验凭据并提供 WebSocket 客户端。
+# 已启动本地服务时，在同一运行环境中执行
+fersk_mcp/.venv/bin/python -m fersk_mcp.utils.health
 
-文件发送的接收方目录必须同时满足正则 `(?:on_|oc_)[A-Za-z0-9]+` 与总长度 35，并且只识别到一个接收方。长度取自用户提供的参考 ID（3 字符前缀加 32 字符主体）；不新增调用授权或工作区归属检查。
+# 或检查根 Compose 内的服务
+./compose_initial.sh exec fersk-mcp python -m fersk_mcp.utils.health
+```
+
+健康检查在 8 秒内完成本地 MCP 握手和工具列表读取，要求两个工具都已注册；不执行工具，不消耗模型额度，也不发送飞书消息。该超时来自容器探测预算，不是工具调用 SLA。根 Compose 未自动配置 healthcheck，生产 Compose 已配置。
+
+飞书请求使用有界执行器，满额立即失败；调用方取消或超时后，已经开始的线程仍占用名额，直到真实请求结束。上传句柄由 worker 持有，避免超时后提前关闭；永久阻塞的线程无法由此机制强制终止。默认并发容量来自项目初始保护策略，未作为压测上限承诺。
+
+默认 DEBUG 日志可能包含提示词片段、生成结果 URL 和运行信息，应限制访问并安排保留策略。MCP 的文件读取权限与挂载范围决定可暴露的数据，回环绑定也不能替代客户端授权控制。
+
+CI 使用 Linux ARM64 构建和测试，默认 Docker 构建升级兼容依赖；CI 先解析本轮锁文件，再以 `UV_SYNC_FLAGS=--locked` 构建，Release 发布同一镜像。生产发布使用仓库根目录 [deploy.sh](../deploy.sh)，部署事务由 [test_deploy.py](../test_deploy.py) 验证。具体流程、备份及回退限制见 [CI/CD 指南](../CICD_GUIDE.md)。协议测试和模拟测试不能证明真实上传、模型或生产网络可用。

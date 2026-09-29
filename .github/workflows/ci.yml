@@ -32,7 +32,7 @@ jobs:
         run: uv lock --upgrade --python 3.13
       - name: Check deployment logic
         if: matrix.service == 'fersk_codex'
-        run: uv run --no-project --python 3.13 python -B -m unittest discover -s scripts/tests -v
+        run: uv run --no-project --python 3.13 python -B test_deploy.py -v
       - name: Build once with the resolved dependencies
         env:
           SERVICE: ${{ matrix.service }}
