@@ -1,5 +1,7 @@
 # Fersk MCP
 
+CI/CD 使用 `main` 和 Python 3.13 系列最新补丁，详见 [CI/CD 指南](../CICD_GUIDE.md)。默认 Docker 构建升级最新兼容依赖；CI 先更新锁文件，再以 `UV_SYNC_FLAGS=--locked` 构建和测试同一快照，发布时不重建镜像。`python -m fersk_mcp.utils.health` 通过本地 MCP 协议握手及工具列表验证就绪，不执行工具、不需要业务 API 凭据。
+
 ## 启动
 
 在项目根目录中，优先使用项目虚拟环境启动：
@@ -39,7 +41,7 @@ docker run --rm \
 
 `config.json` 中的 `mcp.port`、`mcp.host` 与 `mcp.path` 可分别通过 `MCP_PORT`、`MCP_HOST`、`MCP_PATH` 环境变量覆盖。若配置文件不在默认位置，可设置 `FERSK_CONFIG_FILE`；该变量取值的来源由部署环境决定，Dockerfile 未预置任何凭据或配置内容。
 
-综合部署使用仓库根目录 Compose，默认发布 `127.0.0.1:8000`，宿主机 URL 为 `http://127.0.0.1:8000/mcp`，同网络容器 URL 为 `http://fersk-mcp:8000/mcp`。由用户通过 Codex CLI 自行配置连接。Compose 的 `MCP_PORT` 同时控制宿主机映射和容器监听端口，`MCP_BIND_ADDRESS` 控制宿主机绑定地址；通过 shell 或 `--env-file` 设置。镜像通过 `uv sync --locked --no-dev --no-editable` 安装锁定依赖，并使用 `UV_NO_CACHE=1` 避免保留 uv 缓存；包含 `fersk_mcp.utils`。独立运行示例仅将无鉴权 MCP 端口发布到宿主机回环地址。
+综合部署使用仓库根目录 Compose，默认发布 `127.0.0.1:8000`，宿主机 URL 为 `http://127.0.0.1:8000/mcp`，同网络容器 URL 为 `http://fersk-mcp:8000/mcp`。由用户通过 Codex CLI 自行配置连接。根 Compose 的 `MCP_PORT` 同时控制宿主机映射和容器监听端口，`MCP_BIND_ADDRESS` 控制宿主机绑定地址；通过 shell 或 `--env-file` 设置。镜像通过 `uv sync --no-dev --no-editable` 安装依赖，默认升级、CI 显式锁定本轮快照，并使用 `UV_NO_CACHE=1` 避免保留 uv 缓存；包含 `fersk_mcp.utils`。独立运行示例仅将无鉴权 MCP 端口发布到宿主机回环地址。新增生产 Compose 的容器端口固定为 8000，`host.json` 只指定宿主机映射端口。
 
 ## 工具解耦
 

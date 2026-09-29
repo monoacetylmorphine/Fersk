@@ -1,0 +1,90 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: '成功的 Release workflow run ID'
+        required: true
+        type: string
+      rollback_compatible:
+        description: '确认本次数据及配置向后兼容，失败时允许回退旧镜像'
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+    steps:
+      - name: Verify trusted successful release
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$REPOSITORY/actions/runs/$RELEASE_RUN_ID" > run.json
+          jq -e '.conclusion == "success" and .head_branch == "main" and
+            (.event == "push" or .event == "workflow_dispatch" or .event == "schedule") and
+            .path == ".github/workflows/release.yml"' run.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: bundle
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate bundle and SSH configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_KEY KNOWN_HOSTS DEPLOY_ROOT; do
+            if [ -z "${!name}" ]; then echo "缺少 $name" >&2; exit 1; fi
+          done
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_-]*$ ]]
+          [[ "$DEPLOY_ROOT" =~ ^/[a-zA-Z0-9_./-]+$ && "$DEPLOY_ROOT" != *'/../'* ]]
+          jq -e --arg sha "$(jq -r .head_sha run.json)" --arg run "$RELEASE_RUN_ID" \
+            '.revision == $sha and .run_id == $run' bundle/release.json
+          install -d -m 700 "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ssh/key" "$RUNNER_TEMP/ssh/known_hosts"
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+          ROLLBACK_COMPATIBLE: ${{ inputs.rollback_compatible }}
+        run: |
+          set -euo pipefail
+          # 已验证字符集的路径在 runner 展开后以单引号传给远端，属于预期行为。
+          # 来源：OpenSSH 标准端口 22；远端需允许访问并提前配置 Docker GHCR 登录。
+          remote="$DEPLOY_ROOT/incoming-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          options=(-i "$RUNNER_TEMP/ssh/key" -o BatchMode=yes -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts" -o ConnectTimeout=20)
+          # shellcheck disable=SC2029
+          ssh "${options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "umask 077; mkdir '$remote'"
+          # shellcheck disable=SC2029
+          tar -C bundle -cf - release.json compose.production.yaml scripts/deploy.sh |
+            ssh "${options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "tar -xf - -C '$remote'"
+          # shellcheck disable=SC2029
+          ssh "${options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; DEPLOY_ROOT='$DEPLOY_ROOT' ROLLBACK_COMPATIBLE='$ROLLBACK_COMPATIBLE' sh '$remote/scripts/deploy.sh'"

@@ -1,0 +1,74 @@
+name: CI
+# timeout 和 artifact 保留期限来源：小型仓库原生 ARM64 构建的初始维护预算。
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # 目标是 Apple Silicon 上的 Linux 容器，使用原生 arm64 runner。
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [fersk_codex, fersk_mcp]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: '3.13'
+          enable-cache: true
+      - name: Resolve newest compatible Python dependencies
+        working-directory: ${{ matrix.service }}
+        run: uv lock --upgrade --python 3.13
+      - name: Check deployment logic
+        if: matrix.service == 'fersk_codex'
+        run: uv run --no-project --python 3.13 python -B -m unittest discover -s scripts/tests -v
+      - name: Build once with the resolved dependencies
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          docker build --pull --build-arg UV_SYNC_FLAGS=--locked \
+            --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -f "$SERVICE/Dockerfile" -t "fersk-ci:$SERVICE" .
+      - name: Test the built runtime
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          if [ "$SERVICE" = fersk_codex ]; then
+            entry=tests/run_tests.py
+          else
+            entry=tests/test_runtime.py
+          fi
+          docker run --rm --network none --entrypoint python \
+            -v "$GITHUB_WORKSPACE/fersk_codex:/checkout/fersk_codex:ro" \
+            -v "$GITHUB_WORKSPACE/fersk_mcp:/checkout/fersk_mcp:ro" -w "/checkout/$SERVICE" \
+            "fersk-ci:$SERVICE" -B "$entry"
+      - name: Export tested image
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: docker save "fersk-ci:$SERVICE" -o "$RUNNER_TEMP/$SERVICE.tar"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.service }}
+          overwrite: true
+          path: ${{ runner.temp }}/${{ matrix.service }}.tar
+          compression-level: 0
+          retention-days: 2
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dependencies-${{ matrix.service }}
+          overwrite: true
+          path: ${{ matrix.service }}/uv.lock
+          if-no-files-found: error

@@ -2,6 +2,10 @@
 
 主项目通过飞书消息驱动 Codex，持久化配置与工作区从宿主机 `~/.fersk`、`~/.codex` 挂载读取。部署方式见[根目录说明](../README.md)。
 
+CI/CD 直接使用 `main`，详见 [CI/CD 指南](../CICD_GUIDE.md)。Python 使用 3.13 系列最新补丁，Node 跟随最新 LTS；默认镜像构建升级最新兼容 Python 依赖，CI 在本轮升级解析后用 `UV_SYNC_FLAGS=--locked` 构建并验证同一快照。生产以发布镜像 digest 部署，不在目标主机重新解析依赖。
+
+容器健康检查入口为 `python -m fersk_codex.utils.health`，检查主循环心跳和飞书 WebSocket 连接状态。SIGTERM 关闭入站并取消缓冲，进入既有中断收尾；SDK 使用守护线程，进程退出回收连接。此检查不验证真实模型调用或 Office 功能。
+
 主项目直接使用 `AsyncCodex()`，由你通过 Codex CLI 管理挂载的用户配置；代码不注册扩展或覆盖其连接设置。两个服务共用本项目 `configs/` 下的 `config_default.json`、`config_schema.json`、`validation.py` 和 `initialization.py`，启动时完整校验，主项目不消费 `mcp` 段。共享源仍归属于本项目，MCP 使用符号链接引用。
 
 群聊机器人身份使用 `lark.credentials.robotUnionIdEnv` 指定环境变量名，默认读取 `LARK_ROBOT_UNION_ID`，并与飞书消息中的 `mention.id.union_id` 匹配；`robotNameEnv` 可作为名称匹配后备。

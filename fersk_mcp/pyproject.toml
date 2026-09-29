@@ -3,7 +3,7 @@ name = "fersk_mcp"
 dynamic = ["version"]
 description = "Fersk MCP server"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "lark-oapi>=1.7.3",
     "mcp>=2.2.0",

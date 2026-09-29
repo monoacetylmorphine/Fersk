@@ -1,0 +1,61 @@
+# 参数来源：生产主机 host.json，由 scripts/deploy.sh 校验后通过环境传入。
+# 使用独立项目名；首次接管前先停止旧项目的两个应用，基础设施继续运行。
+# 健康检查的 interval/timeout/retries/start_period 来源：本项目单机部署的初始探测预算。
+services:
+  fersk-codex:
+    image: ${CODEX_IMAGE:?必须提供 CODEX_IMAGE}
+    platform: linux/arm64
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - seccomp=unconfined
+    # 来源：为既有任务中断、卡片收尾和 SDK 退出预留 60 秒。
+    stop_grace_period: 60s
+    environment:
+      HOME: /home/app
+      CODEX_HOME: /home/app/.codex
+      FERSK_CONFIG_FILE: /home/app/.fersk/config.json
+    volumes: &app-volumes
+      - type: bind
+        source: ${HOST_CODEX_DIR:?必须提供 HOST_CODEX_DIR}
+        target: /home/app/.codex
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_FERSK_DIR:?必须提供 HOST_FERSK_DIR}
+        target: /home/app/.fersk
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, python, -m, fersk_codex.utils.health]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks: [ai-infra]
+  fersk-mcp:
+    image: ${MCP_IMAGE:?必须提供 MCP_IMAGE}
+    platform: linux/arm64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      HOME: /home/app
+      CODEX_HOME: /home/app/.codex
+      FERSK_CONFIG_FILE: /home/app/.fersk/config.json
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: '8000'
+    ports:
+      - '127.0.0.1:${MCP_PORT:?必须提供 MCP_PORT}:8000'
+    volumes: *app-volumes
+    healthcheck:
+      test: [CMD, python, -m, fersk_mcp.utils.health]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks: [ai-infra]
+networks:
+  ai-infra:
+    external: true
+    name: ai-infra

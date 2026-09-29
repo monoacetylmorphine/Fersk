@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13.15-slim-bookworm
+FROM python:3.13-slim-bookworm
+
+ARG SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -7,6 +10,8 @@ ARG APP_USER=app
 ARG APP_UID=1000
 ARG APP_GID=1000
 ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
+# 默认升级兼容依赖；CI 传入 --locked 复用本轮已测试的解析结果。
+ARG UV_SYNC_FLAGS=--upgrade
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -29,7 +34,7 @@ COPY fersk_mcp/tools ./tools
 COPY fersk_mcp/utils ./utils
 
 RUN chmod 0755 /usr/local/bin/fersk-entrypoint \
-    && uv sync --locked --no-dev --no-editable --python /usr/local/bin/python \
+    && uv sync ${UV_SYNC_FLAGS} --no-dev --no-editable --python /usr/local/bin/python \
         --default-index "${PYTHON_PACKAGE_INDEX}" \
     && if ! getent group "${APP_GID}" > /dev/null; then \
         groupadd --gid "${APP_GID}" "${APP_USER}"; \

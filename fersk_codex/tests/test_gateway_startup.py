@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from pathlib import Path
+import signal
+import tempfile
+import time
 from types import SimpleNamespace as NS
 import tomllib
 import unittest
@@ -75,7 +80,9 @@ class GatewayStartupTests(unittest.IsolatedAsyncioTestCase):
               patch.object(self.g, 'EventDispatcher', side_effect=[dispatcher, notices]),
               patch.object(self.g.lark.EventDispatcherHandler, 'builder', return_value=builder),
               patch.object(self.g, 'create_websocket_client', return_value=websocket) as connect,
-              patch.object(self.g.asyncio, 'to_thread', side_effect=run_websocket),
+              patch.object(self.g, 'run_websocket', side_effect=run_websocket),
+              patch.object(self.g, 'write_health'),
+              patch.object(self.g, 'heartbeat', AsyncMock()),
               patch.object(self.runtime, 'maintain', side_effect=maintain),
               patch.object(self.runtime, '_interrupt_run', AsyncMock(return_value=True)) as stop,
               patch.object(self.commands, 'dispatch_history_action', return_value=card_result) as action,
@@ -110,3 +117,74 @@ class GatewayStartupTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('CMD ["python", "-m", "fersk_codex.main"]', (root / 'Dockerfile').read_text())
         self.assertTrue((root / 'main.py').is_file())
         self.assertFalse((root / 'gateway.py').exists())
+
+
+class HealthTests(unittest.IsolatedAsyncioTestCase):
+    def test_missing_stale_disconnected_and_dead_process_fail_closed(self):
+        from fersk_codex.utils.health import healthy, write_health
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'health.json'
+            self.assertFalse(healthy(path))
+            write_health(True, path)
+            self.assertTrue(healthy(path))
+            for state in (
+                {'pid': os.getpid(), 'time': time.monotonic() - 30, 'ready': True},
+                {'pid': os.getpid(), 'time': time.monotonic(), 'ready': False},
+                {'pid': -1, 'time': time.monotonic(), 'ready': True},
+                {},
+            ):
+                path.write_text(json.dumps(state))
+                self.assertFalse(healthy(path))
+            path.write_text('invalid')
+            self.assertFalse(healthy(path))
+
+    def test_sdk_connection_state_is_required(self):
+        from fersk_codex.utils.health import connected
+        self.assertFalse(connected(NS()))
+        self.assertFalse(connected(NS(_conn=None)))
+        self.assertFalse(connected(NS(_conn=NS(state=NS(name='CLOSED')))))
+        self.assertTrue(connected(NS(_conn=NS(state=NS(name='OPEN')))))
+
+    async def test_websocket_exceptions_reach_main(self):
+        from fersk_codex.utils.health import run_websocket
+        def fail():
+            raise ValueError('connection failed')
+        with self.assertRaisesRegex(ValueError, 'connection failed'):
+            await run_websocket(fail)
+
+    async def test_sigterm_closes_admission_and_requests_cleanup(self):
+        fixture = GatewayStartupTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.runtime.codex.cleanup_control_sessions = AsyncMock()
+        gateway = fixture.g
+        builder = Mock()
+        # 所有 builder 注册均返回同一对象，模拟 SDK 链式注册。
+        for name in ('im_message_receive_v1', 'card_action_trigger', 'im_message_recalled_v1',
+                     'im_message_message_read_v1', 'im_message_reaction_created_v1',
+                     'im_message_reaction_deleted_v1', 'im_chat_access_event_bot_p2p_chat_entered_v1'):
+            getattr(builder, 'register_p2_' + name).return_value = builder
+        loop = asyncio.get_running_loop()
+        handlers = {}
+        async def wait_for_stop(start):
+            handlers[signal.SIGTERM]()
+            handlers[signal.SIGTERM]()  # 重复信号不能再次取消收尾。
+            await asyncio.sleep(0)
+        dispatcher = NS(submit=Mock(return_value=True))
+        with (patch.object(gateway, '_bot_identity'),
+              patch.object(gateway, 'EventDispatcher', return_value=dispatcher),
+              patch.object(gateway.lark.EventDispatcherHandler, 'builder', return_value=builder),
+              patch.object(gateway, 'create_gateway', return_value=(fixture.runtime, fixture.execution, fixture.commands, fixture.router)),
+              patch.object(gateway, 'create_websocket_client', return_value=NS(start=Mock())),
+              patch.object(gateway, 'run_websocket', side_effect=wait_for_stop),
+              patch.object(gateway, 'write_health') as write,
+              patch.object(gateway, 'heartbeat', AsyncMock()),
+              patch.object(gateway.journal, 'flush', AsyncMock()) as flush,
+              patch.object(loop, 'add_signal_handler', side_effect=lambda sig, fn: handlers.update({sig: fn})),
+              patch.object(loop, 'remove_signal_handler')):
+            await gateway.main()
+            write.assert_called_with(False)
+            flush.assert_awaited_once()
+            callback = builder.register_p2_im_message_receive_v1.call_args.args[0]
+            callback(helpers.event('after shutdown'))
+            dispatcher.submit.assert_not_called()

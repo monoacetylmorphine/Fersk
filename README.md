@@ -53,11 +53,21 @@ Web 与 Worker 通过 YAML anchor 共用数据库、ClickHouse、Redis 和事件
 
 直接执行 `docker compose` 不会触发自动初始化。已有部署若丢失 `.env`，应恢复原凭据，不能使用新随机密钥替代已有数据库密码、SALT 或加密密钥。即使只选择两个应用服务，Compose 解析整份文件时仍要求这些变量；仅独立构建应用镜像可使用子项目 README 中的 `docker build` 命令。
 
+## CI/CD
+
+流水线直接围绕 `main` 工作，不自动创建开发分支或提交依赖更新。推送 `main` 后，
+GitHub Actions 解析 Python 3.13 的最新兼容依赖，构建并测试两个 `linux/arm64` 镜像，
+随后将同一批已测试镜像发布到 GHCR。每周也会重新验证兼容依赖；生产部署始终手动触发。
+部署目标为 macOS 27 / Apple Silicon 的 Docker，通过 SSH 执行，允许短暂停机。
+配置、首次切换、备份与回退说明见 [CI/CD 指南](CICD_GUIDE.md)。
+
 ## 构建与验证
 
 两个服务均从仓库根目录构建，统一使用根目录 `.dockerignore`，子项目不再维护独立忽略文件。Codex 使用源码与构建输入白名单（包含 `configs`、`codex`、`middleware`、`session`、`services`、`utils` 和入口脚本），MCP 保留目录内容；最后统一排除 `.venv`、`__pycache__`、`*.egg-info`、`build`、`dist`、`.env`、`.git`、`tests` 和 `.DS_Store`。新增 Codex 源码目录或非 Python 资源时，需要同步更新根目录白名单。
 
-两个项目均使用各自 `uv.lock` 安装依赖。按部署要求，Langfuse、Worker、PostgreSQL、ClickHouse、MinIO 和 Redis 均使用 `latest`；Python 使用 `3.13.15-slim-bookworm`，主项目 Node 使用最新 `lts-bookworm-slim`，两个项目 uv 使用 `latest`。基础设施镜像、Node、uv 与系统包仍随构建或拉取更新，未宣称逐字节可复现构建。
+两个项目限制 Python 为 3.13 系列，镜像使用滚动的 `3.13-slim-bookworm`；Node 使用最新 `lts-bookworm-slim`，uv 与 pnpm 跟随最新稳定版本。默认 Docker 构建通过 `uv sync --upgrade` 解析最新兼容依赖；CI 每轮先升级锁文件，再传入 `UV_SYNC_FLAGS=--locked` 测试和构建同一组合，随后直接发布该镜像，不重新解析或构建。锁文件记录依赖快照，不代表长期冻结；基础设施的 `latest` 策略保持不变。
+
+手动构建若需要最新依赖，请使用 `docker build --pull --no-cache`，避免命中旧的依赖安装层；复现某轮已验证依赖时显式传入 `--build-arg UV_SYNC_FLAGS=--locked`。镜像 revision label 和发布 digest 用于追溯，未宣称逐字节可复现构建。
 
 ```sh
 ./compose.sh config --quiet
@@ -80,7 +90,7 @@ fersk_mcp/.venv/bin/python -B fersk_mcp/tests/test_runtime.py
 
 ### 1. 飞书 WebSocket 接收到消息
 
-入口为 [main.py](fersk_codex/main.py) 的 `main()`。启动时初始化业务日志、事件处理器和缓存维护任务，通过 `asyncio.to_thread(websocket_client.start)` 启动飞书长连接。
+入口为 [main.py](fersk_codex/main.py) 的 `main()`。启动时初始化业务日志、事件处理器和缓存维护任务，通过独立守护线程启动飞书长连接。主循环每秒发布连接心跳；SIGTERM 关闭入站、取消缓冲和进入既有任务中断清理。SDK 没有公开停止接口，进程结束回收线程连接；容器退出仍受 Compose 的 60 秒期限约束，不能承诺所有在途请求正常完成。
 
 收到 `im.message.receive_v1` 后，SDK 调用同步回调 `do_p2_im_message_receive_v1()`。回调判断是否为 `/stop`、`/new`，再通过 [EventDispatcher.submit()](fersk_codex/utils/event_dispatcher.py) 把处理协程提交到主事件循环。
 

@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM node:lts-bookworm-slim AS node-runtime
-FROM python:3.13.15-slim-bookworm
+FROM python:3.13-slim-bookworm
+
+ARG SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY --from=node-runtime /usr/local /usr/local
@@ -45,9 +48,11 @@ ENV CODEX_HOME=${HOME}/.codex
 WORKDIR /opt/fersk_codex
 COPY fersk_codex/pyproject.toml fersk_codex/uv.lock ./
 ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
+# 默认升级兼容依赖；CI 传入 --locked 复用本轮已测试的解析结果。
+ARG UV_SYNC_FLAGS=--upgrade
 # 构建缓存路径须与挂载点一致；仅对本次安装生效，运行时仍使用用户缓存。
 RUN --mount=type=cache,target=/root/.cache/uv \
-    UV_CACHE_DIR=/root/.cache/uv uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python \
+    UV_CACHE_DIR=/root/.cache/uv uv sync ${UV_SYNC_FLAGS} --no-dev --no-install-project --python /usr/local/bin/python \
         --default-index "${PYTHON_PACKAGE_INDEX}" \
     && ln -s "$(python -c 'from codex_cli_bin import bundled_codex_path; print(bundled_codex_path())')" \
         /usr/local/bin/codex \

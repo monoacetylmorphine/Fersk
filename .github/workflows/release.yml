@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  # 每周重新解析兼容依赖；只发布镜像，不自动部署生产。
+  schedule:
+    - cron: '23 2 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: checks
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [fersk_codex, fersk_mcp]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: image-${{ matrix.service }}
+      - name: Push the tested image without rebuilding
+        env:
+          SERVICE: ${{ matrix.service }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker load -i "$SERVICE.tar"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE//_/-}"
+          tag="$repository:sha-$GITHUB_SHA-run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "fersk-ci:$SERVICE" "$tag"
+          docker push "$tag"
+          digest=$(docker inspect "$tag" | jq -er --arg prefix "$repository@sha256:" \
+            'first(.[0].RepoDigests[] | select(startswith($prefix)))')
+          jq -n --arg image "$digest" '{image: $image}' > "$SERVICE.json"
+          docker logout ghcr.io
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.service }}
+          overwrite: true
+          path: ${{ matrix.service }}.json
+          if-no-files-found: error
+  bundle:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: digests
+      - name: Record the release
+        run: |
+          jq -n --arg revision "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" \
+            --slurpfile codex digests/fersk_codex.json --slurpfile mcp digests/fersk_mcp.json \
+            '{revision: $revision, run_id: $run_id, platform: "linux/arm64",
+              images: {"fersk-codex": $codex[0].image, "fersk-mcp": $mcp[0].image}}' > release.json
+          cat release.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          overwrite: true
+          path: |
+            release.json
+            compose.production.yaml
+            scripts/deploy.sh
+          if-no-files-found: error

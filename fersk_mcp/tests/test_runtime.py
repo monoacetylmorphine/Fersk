@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
+import socket
 import tempfile
 import threading
 import unittest
@@ -15,6 +17,51 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_health_probe_over_real_local_http_without_credentials(self):
+        from fersk_mcp.utils.health import probe
+        # 来源：操作系统分配空闲测试端口，不使用生产端口或配置。
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            port = listener.getsockname()[1]
+        root = Path(__file__).resolve().parents[2]
+        env = {'PATH': os.environ.get('PATH', ''), 'HOME': self.temp.name,
+               'FERSK_CONFIG_FILE': str(Path(self.temp.name) / 'config.json'),
+               'MCP_HOST': '127.0.0.1', 'MCP_PORT': str(port), 'PYTHONDONTWRITEBYTECODE': '1'}
+        process = subprocess.Popen([sys.executable, '-B', '-m', 'fersk_mcp.server'],
+                                   cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            async with asyncio.timeout(15):
+                while True:
+                    if process.poll() is not None:
+                        self.fail('Local MCP process exited before readiness')
+                    try:
+                        await probe(f'http://127.0.0.1:{port}/mcp')
+                        break
+                    except Exception:
+                        await asyncio.sleep(0.1)
+        finally:
+            process.terminate()
+            try:
+                await asyncio.to_thread(process.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                await asyncio.to_thread(process.wait, timeout=5)
+
+    async def test_health_probe_only_lists_tools_and_rejects_missing_tools(self):
+        from fersk_mcp.utils.health import probe
+        client = AsyncMock()
+        client.list_tools.return_value = type('Tools', (), {
+            'tools': [type('Tool', (), {'name': name}) for name in ('sending_file', 'image_generator')]
+        })()
+        manager = AsyncMock()
+        manager.__aenter__.return_value = client
+        with patch('fersk_mcp.utils.health.Client', return_value=manager):
+            await probe('http://127.0.0.1:8000/mcp')
+            client.call_tool.assert_not_called()
+            client.list_tools.return_value.tools = []
+            with self.assertRaisesRegex(RuntimeError, 'not ready'):
+                await probe('http://127.0.0.1:8000/mcp')
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="fersk-mcp-tests-")

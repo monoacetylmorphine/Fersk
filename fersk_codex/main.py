@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from fersk_codex.codex.thread_watchdog import journal
 from fersk_codex.configs.loader import CONFIG
 from fersk_codex.utils.terminal_log import get_logger, configure_logging
 from fersk_codex.utils.event_dispatcher import EventDispatcher
+from fersk_codex.utils.health import heartbeat, run_websocket, write_health
 from fersk_codex.services.lark.lark_client import create_websocket_client
 from fersk_codex.services.lark.lark_tools import getting_chat_history, adding_reaction_emoji, delete_reaction_emoji
 from fersk_codex.services.lark.lark_message_card import sending_card
@@ -61,6 +63,20 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     dispatcher = EventDispatcher(loop, CONFIG["messaging"].get("maxPendingEvents", 32))
     notices = EventDispatcher(loop, capacity=1)
+    accepting = True
+    stopping_requested = False
+    incoming_tasks: set[asyncio.Task] = set()
+
+    async def receive(data) -> None:
+        """追踪入站协程，停机后不再开始处理排队消息。"""
+        if not accepting:
+            return
+        task = asyncio.current_task()
+        incoming_tasks.add(task)
+        try:
+            await router.processing(data)
+        finally:
+            incoming_tasks.discard(task)
 
     async def busy(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         """向消息所属聊天发送繁忙提示，不提交模型任务。"""
@@ -68,18 +84,21 @@ async def main() -> None:
 
     def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         """记录入站消息并按普通或控制事件容量提交处理；容量不足时尝试提交繁忙提示。"""
+        if not accepting:
+            return
         message = data.event.message
         logger.debug("Message received: chat_id=%s, message_id=%s, type=%s",
                      message.chat_id, message.message_id, message.message_type)
         control = (is_stop_command(message.message_type, message.content)
                    or is_new_command(message.message_type, message.content)
                    or (message.chat_type == "p2p" and is_history_command(message.message_type, message.content)))
-        if not dispatcher.submit(router.processing, data, control=control):
+        if not dispatcher.submit(receive, data, control=control):
             notices.submit(busy, data)
 
     def do_p2_im_message_recalled_v1(data: lark.im.v1.P2ImMessageRecalledV1) -> None:
         """使用控制事件容量将撤回消息交给异步撤回处理器。"""
-        dispatcher.submit(commands.processing_recall, data, control=True)
+        if accepting:
+            dispatcher.submit(commands.processing_recall, data, control=True)
 
     def do_p2_im_message_read_v1(data: lark.im.v1.P2ImMessageMessageReadV1) -> None:
         """接收已读事件；当前无需业务处理。"""
@@ -102,7 +121,7 @@ async def main() -> None:
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(do_p2_im_message_receive_v1)
-        .register_p2_card_action_trigger(lambda data: commands.dispatch_history_action(dispatcher, data))
+        .register_p2_card_action_trigger(lambda data: commands.dispatch_history_action(dispatcher, data) if accepting else None)
         .register_p2_im_message_recalled_v1(do_p2_im_message_recalled_v1)
         .register_p2_im_message_message_read_v1(do_p2_im_message_read_v1)
         .register_p2_im_message_reaction_created_v1(do_p2_im_message_reaction_created_v1)
@@ -112,12 +131,37 @@ async def main() -> None:
     )
 
     websocket_client = create_websocket_client(event_handler)
+    write_health(False)
+    health_task = asyncio.create_task(heartbeat(websocket_client))
+    main_task = asyncio.current_task()
+
+    def terminate() -> None:
+        """一次性关闭入站后进入既有任务中断流程，不重复取消收尾。"""
+        nonlocal accepting, stopping_requested
+        if accepting:
+            accepting = False
+            stopping_requested = True
+            write_health(False)
+            main_task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, terminate)
     cleanup_tasks = [asyncio.create_task(runtime.maintain(operation)) for operation in
                      (runtime._expire_session_cache, runtime._retry_reactions,
                       commands.prune_history, runtime.codex.cleanup_control_sessions)]
     try:
-        await asyncio.to_thread(websocket_client.start)
+        await run_websocket(websocket_client.start)
+    except asyncio.CancelledError:
+        if not stopping_requested:
+            raise
     finally:
+        accepting = False
+        health_task.cancel()
+        await asyncio.gather(health_task, return_exceptions=True)
+        write_health(False)
+        # 取消尚未形成运行的入站和缓冲，防止清理期间新建任务。
+        pending = set(incoming_tasks) | set(runtime.cache.buffer_tasks.values())
+        for task in pending:
+            task.cancel()
         for task in cleanup_tasks:
             task.cancel()
         await asyncio.gather(*cleanup_tasks, return_exceptions=True)
@@ -130,6 +174,10 @@ async def main() -> None:
             await journal.flush()
         except Exception:
             logger.exception("Run logs were not fully written before exit")
+        if pending:
+            # 来源：沿用既有 cleanupTimeoutSeconds；容器最终退出期限由 Compose 约束。
+            await asyncio.wait(pending, timeout=CONFIG['codex']['watchdog']['cleanupTimeoutSeconds'])
+        loop.remove_signal_handler(signal.SIGTERM)
 
 
 def cli() -> None:
