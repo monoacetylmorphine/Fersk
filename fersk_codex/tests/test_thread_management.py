@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -50,6 +51,122 @@ class ThreadManagementTests(unittest.IsolatedAsyncioTestCase):
         ))
         for user in users:
             self.assertEqual(await thread_management.get_user_thread(user), f"thread:{user}")
+
+    def fail_initialization(self, code, attempts=None):
+        """注入 WAL 初始化错误，未失败的操作仍使用真实 SQLite。"""
+        original = thread_manager.aiosqlite.Connection.execute
+        connections = []
+
+        @asynccontextmanager
+        async def failing():
+            error = sqlite3.OperationalError("injected initialization failure")
+            if code is not None:
+                error.sqlite_errorcode = code
+            raise error
+            yield
+
+        def execute(connection, sql, *args, **kwargs):
+            if sql == "PRAGMA journal_mode=WAL" and (attempts is None or len(connections) < attempts):
+                connections.append(connection)
+                return failing()
+            return original(connection, sql, *args, **kwargs)
+
+        self.enterContext(patch.object(thread_manager.aiosqlite.Connection, "execute", execute))
+        return connections
+
+    async def test_real_reader_lock_retries_after_release(self) -> None:
+        """真实读事务阻止首次切换 WAL，观察到 BUSY 后释放锁，不依赖睡眠碰时序。"""
+        self.db_path.parent.mkdir(parents=True)
+        reader = self.enterContext(closing(sqlite3.connect(self.db_path)))
+        reader.execute("CREATE TABLE hold (value INTEGER)")
+        reader.commit()
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM hold").fetchall()
+        original = thread_manager.aiosqlite.Connection.execute
+        failed = []
+
+        @asynccontextmanager
+        async def observe(connection):
+            try:
+                async with original(connection, "PRAGMA journal_mode=WAL") as cursor:
+                    yield cursor
+            except sqlite3.OperationalError as error:
+                self.assertEqual(error.sqlite_errorcode & 0xff, sqlite3.SQLITE_BUSY)
+                failed.append(connection)
+                reader.rollback()
+                raise
+
+        def execute(connection, sql, *args, **kwargs):
+            if sql == "PRAGMA journal_mode=WAL":
+                return observe(connection)
+            return original(connection, sql, *args, **kwargs)
+
+        with patch.object(thread_manager.aiosqlite.Connection, "execute", execute):
+            await asyncio.wait_for(thread_manager.set_user_thread("user", "thread"), timeout=2)
+        self.assertEqual(await thread_manager.get_user_thread("user"), "thread")
+        self.assertEqual(len(failed), 1)
+        with self.assertRaises(ValueError):
+            await failed[0].execute("SELECT 1")
+
+    async def test_extended_busy_retries_and_restores_business_timeout(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_BUSY_RECOVERY, attempts=1)
+        await thread_manager.set_user_thread("user", "thread")
+        self.assertEqual(len(connections), 1)
+        with self.assertRaises(ValueError):
+            await connections[0].execute("SELECT 1")
+        async with thread_manager._connect() as db:
+            async with db.execute("PRAGMA busy_timeout") as cursor:
+                self.assertEqual((await cursor.fetchone())[0], 30000)
+
+    async def test_initialization_busy_has_a_deadline(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_BUSY)
+        with patch.object(thread_manager, "INITIALIZATION_TIMEOUT", 0.02):
+            with self.assertRaises(sqlite3.OperationalError):
+                await asyncio.wait_for(thread_manager.set_user_thread("user", "thread"), timeout=1)
+        self.assertGreaterEqual(len(connections), 1)
+        for connection in connections:
+            with self.assertRaises(ValueError):
+                await connection.execute("SELECT 1")
+
+    async def test_non_busy_initialization_errors_are_not_retried(self) -> None:
+        for code in (sqlite3.SQLITE_IOERR, sqlite3.SQLITE_LOCKED, None):
+            with self.subTest(code=code):
+                connections = self.fail_initialization(code)
+                with self.assertRaises(sqlite3.OperationalError):
+                    await thread_manager.get_user_thread("user")
+                self.assertEqual(len(connections), 1)
+
+    async def test_cancellation_during_initialization_retry_propagates(self) -> None:
+        connections = self.fail_initialization(sqlite3.SQLITE_BUSY)
+        clock = SimpleNamespace(get_running_loop=asyncio.get_running_loop,
+                                sleep=AsyncMock(side_effect=asyncio.CancelledError))
+        with patch.object(thread_manager, "asyncio", clock):
+            with self.assertRaises(asyncio.CancelledError):
+                await thread_manager.set_user_thread("user", "thread")
+        self.assertEqual(len(connections), 1)
+        with self.assertRaises(ValueError):
+            await connections[0].execute("SELECT 1")
+
+    async def test_business_busy_is_not_replayed(self) -> None:
+        error = sqlite3.OperationalError("business write busy")
+        error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        attempts = 0
+        with self.assertRaises(sqlite3.OperationalError) as caught:
+            async with thread_manager._connect():
+                attempts += 1
+                raise error
+        self.assertIs(caught.exception, error)
+        self.assertEqual(attempts, 1)
+
+    async def test_bindings_and_history_initialize_concurrently(self) -> None:
+        users = [f"user-{index}" for index in range(10)]
+        await asyncio.gather(
+            *(thread_manager.set_user_thread(user, user) for user in users),
+            *(session_history.register_session(user, user, "first") for user in users),
+        )
+        for user in users:
+            self.assertEqual(await thread_manager.get_user_thread(user), user)
+            self.assertEqual((await session_history.get_session(user, user)).thread_name, "first")
 
     async def test_database_failure_is_not_silently_ignored(self) -> None:
         self.db_path.parent.mkdir(parents=True)

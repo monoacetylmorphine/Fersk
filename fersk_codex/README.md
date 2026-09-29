@@ -137,7 +137,9 @@ Docker 构建上下文必须为完整仓库根目录。镜像含 Python 3.13、N
 
 ### 活跃绑定与首次命名
 
-[thread_manager.py](codex/thread_manager.py) 使用 `aiosqlite` 在 `storage.databasePath` 下保存 `user_thread` 表：`user_id TEXT PRIMARY KEY NOT NULL`、`thread_id TEXT NULL`。`get_user_thread(user_id)` 在记录不存在或绑定已重置时返回 `None`；`set_user_thread(user_id, thread_id)` 采用参数化 SQL 和原子 upsert，传 `None` 持久化为 SQL NULL。每次操作独立打开并关闭连接，锁等待为 30 秒，数据库异常向上抛出，不降级为内存绑定。
+[thread_manager.py](codex/thread_manager.py) 使用 `aiosqlite` 在 `storage.databasePath` 下保存 `user_thread` 表：`user_id TEXT PRIMARY KEY NOT NULL`、`thread_id TEXT NULL`。`get_user_thread(user_id)` 在记录不存在或绑定已重置时返回 `None`；`set_user_thread(user_id, thread_id)` 采用参数化 SQL 和原子 upsert，传 `None` 持久化为 SQL NULL。每次操作独立打开并关闭连接，不降级为内存绑定。
+
+WAL 与建表初始化遇到 `SQLITE_BUSY`（含扩展错误码）时，先关闭失败连接，再异步等待后重试；总预算沿用原来的 30 秒，50ms 退避与历史会话模块一致。初始化期间禁用 SQLite 内部锁等待，避免每轮各等待 30 秒；成功后恢复业务 SQL 的 30 秒锁等待。超过预算、非 BUSY 错误和取消直接传播。重试只发生在连接交给调用方之前，不重新执行绑定读写或提交，不修改表结构或迁移数据。
 
 每次请求恢复或创建 thread，在启动 turn 前保存绑定；即使 turn 启动失败，下次仍可恢复该 thread。`/new` 先确认旧任务停止，再归档旧 thread 并清空绑定，失败时不报告成功；它不删除历史或工作区。旧版本仅在内存中的绑定不会自动迁移。
 
