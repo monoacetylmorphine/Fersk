@@ -92,3 +92,12 @@ How to write:
 - One preference per bullet. Keep each bullet short and imperative.
 - Use the user's own wording where possible; do not paraphrase into vague terms.
 - If the file already contains a `## User Preferences` entry for the same topic, edit that line rather than adding a new one.
+
+
+## Workspace File Listing
+
+- When the user requests to list files or view the directory structure of the current workspace, the following files and directories MUST be strictly excluded from the output: `.git`, `.venv`, `node_modules`, `.office-env.json`, `.office-init.lock`, `package.json`, `pnpm-lock.yaml`, `AGENTS.md`, `.DS_Store`.
+- These excluded items must not be mentioned, listed, or exposed in any general file listing tasks.
+- Exception: If the user explicitly requests a specific excluded file by name (e.g., asking to view the contents of `package.json`), you may address that targeted request.
+- For each file listed, you MUST obtain and include its last modified time. If the creation time is unavailable due to file system limitations, explicitly mark it as `N/A`.
+- For such file listing requests, respond directly in the chat message. Do not send the result as a file via any file-sending tool.
