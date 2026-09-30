@@ -172,7 +172,13 @@
           "pptx",
           "self-improving-agent",
           "skill-vetter"
-        ]
+        ],
+        "model": {
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
+          "fallbacks": [
+            "deepseek/deepseek-v4-pro"
+          ]
+        }
       },
       {
         "id": "ceo",
@@ -254,7 +260,7 @@
           "skill-vetter"
         ],
         "model": {
-          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
           "fallbacks": [
             "deepseek/deepseek-v4-pro"
           ]
@@ -339,7 +345,7 @@
           "skill-vetter"
         ],
         "model": {
-          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
           "fallbacks": [
             "deepseek/deepseek-v4-pro"
           ]
@@ -422,7 +428,7 @@
           "skill-vetter"
         ],
         "model": {
-          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
           "fallbacks": [
             "deepseek/deepseek-v4-pro"
           ]
@@ -505,7 +511,7 @@
           "skill-vetter"
         ],
         "model": {
-          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
           "fallbacks": [
             "deepseek/deepseek-v4-pro"
           ]
@@ -588,7 +594,7 @@
           "pptx"
         ],
         "model": {
-          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
           "fallbacks": [
             "deepseek/deepseek-v4-pro"
           ]
@@ -910,9 +916,9 @@
       "streaming": true,
       "accounts": {
         "main": {
-          "enabled": false,
-          "appId": "cli_a976d2e502b9dcb6",
-          "appSecret": "CFHXjN6mkUE1KXDIfckVJeSRQVD2ywiC",
+          "enabled": true,
+          "appId": "${MAIN_APP_ID}",
+          "appSecret": "${MAIN_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -924,8 +930,8 @@
         },
         "ceo": {
           "enabled": true,
-          "appId": "cli_aace18c2af789bdb",
-          "appSecret": "mW5rNEE1gTzSaoBonWwfEdaT2uzSrJLP",
+          "appId": "${CEO_APP_ID}",
+          "appSecret": "${CEO_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -937,8 +943,8 @@
         },
         "product": {
           "enabled": true,
-          "appId": "cli_aacf67d345b99be0",
-          "appSecret": "jYqR2TUXlFmdVjIQzlcb6fJp4TI8qaPc",
+          "appId": "${PROD_APP_ID}",
+          "appSecret": "${PROD_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -950,8 +956,8 @@
         },
         "information": {
           "enabled": true,
-          "appId": "cli_aace3ea373791bd8",
-          "appSecret": "cTV7qTFgaRTwzkweTkRCme0Rvg8pF65y",
+          "appId": "${INFO_APP_ID}",
+          "appSecret": "${INFO_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -963,8 +969,8 @@
         },
         "super": {
           "enabled": true,
-          "appId": "cli_aac98b09dca5dbd9",
-          "appSecret": "K7WFpSxHmxC7nvBFPGUJbhEwK6OfWgDS",
+          "appId": "${SUPER_APP_ID}",
+          "appSecret": "${SUPER_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -976,8 +982,8 @@
         },
         "legal": {
           "enabled": true,
-          "appId": "cli_aacc8f8aebf99be2",
-          "appSecret": "tG58uT4rxFCwVf6UmA5VKbXny782iWh2",
+          "appId": "${LEGAL_APP_ID}",
+          "appSecret": "${LEGAL_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"

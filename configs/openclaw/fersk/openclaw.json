@@ -1,14 +1,10 @@
 {
   "env": {
-    "vars": {
-      "OPENAI_API_KEY": "sk-2zF69vosh6tk72mgIqNSAr2XzbG8YXFtNq37VC2RbIupuRTw",
-      "DEEPSEEK_API_KEY": "sk-aa50c2ecab3b4be3b8f0b51a0ea14e2b",
-      "MOONSHOT_API_KEY": "sk-v9eFnxzqOtQo5Hx6BfT2VwX4OvVYlJXnyIWDhDEGtXirWDoE",
-      "ZHIPU_API_KEY": "30734ce02809439e9e0973c9642a7d1c.22EtsANalPgSG1bx",
-      "TAVILY_API_KEY": "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",
-      "LANGFUSE_SECRET_KEY": "sk-lf-94e6ff00-2a05-4b69-8c22-2749b412ac5f",
-      "LANGFUSE_PUBLIC_KEY": "pk-lf-816bcc00-4be6-45ae-88ea-60f23dd47d2a"
-    }
+    "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+    "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY}",
+    "TAVILY_API_KEY": "${TAVILY_API_KEY}",
+    "LANGFUSE_SECRET_KEY": "${LANGFUSE_SECRET_KEY}",
+    "LANGFUSE_PUBLIC_KEY": "${LANGFUSE_PUBLIC_KEY}"
   },
   "agents": {
     "defaults": {
@@ -782,8 +778,8 @@
       "accounts": {
         "main": {
           "enabled": false,
-          "appId": "cli_a976d2e502b9dcb6",
-          "appSecret": "CFHXjN6mkUE1KXDIfckVJeSRQVD2ywiC",
+          "appId": "${MAIN_APP_ID}",
+          "appSecret": "${MAIN_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -795,8 +791,8 @@
         },
         "aigc": {
           "enabled": true,
-          "appId": "cli_aafbd50210789be0",
-          "appSecret": "ec1tV0Sm4G8qiLc9Wab2wh5aYtWTXypv",
+          "appId": "${AIGC_APP_ID}",
+          "appSecret": "${AIGC_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -808,8 +804,8 @@
         },
         "assistant": {
           "enabled": true,
-          "appId": "cli_aac6278dbd615bdb",
-          "appSecret": "DkMNYoAMW8Wsy99nYx5WRby1CjgINtpV",
+          "appId": "${ASSIS_APP_ID}",
+          "appSecret": "${ASSIS_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"
@@ -821,8 +817,8 @@
         },
         "allen": {
           "enabled": true,
-          "appId": "cli_aaccfb65abb81ce3",
-          "appSecret": "jc8fmnItRRmyhVDkDo82LeiD2ImiGgI6",
+          "appId": "${ALLEN_APP_ID}",
+          "appSecret": "${ALLEN_APP_SECRET}",
           "dmPolicy": "open",
           "allowFrom": [
             "*"

@@ -18,7 +18,7 @@ runtime:
 # 模型
 # =============================================================================
 model:
-  default: gpt-5.6-terra
+  default: gpt-5.6-sol
   provider: custom:ai.soulecho.cc
   base_url: ''
 
