@@ -2,8 +2,6 @@
   "env": {
     "OPENAI_API_KEY": "${OPENAI_API_KEY}",
     "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY}",
-    "MOONSHOT_API_KEY": "${MOONSHOT_API_KEY}",
-    "ZHIPU_API_KEY": "${ZHIPU_API_KEY}",
     "TAVILY_API_KEY": "${TAVILY_API_KEY}",
     "LANGFUSE_SECRET_KEY": "${LANGFUSE_SECRET_KEY}",
     "LANGFUSE_PUBLIC_KEY": "${LANGFUSE_PUBLIC_KEY}"
@@ -49,27 +47,13 @@
         },
         "deepseek/deepseek-v4-pro": {
           "alias": "DeepSeek-V4-PRO"
-        },
-        "moonshot/kimi-k3": {
-          "alias": "Kimi-K3"
-        },
-        "moonshot/kimi-k2.6": {
-          "alias": "Kimi-K2.6"
-        },
-        "zai/glm-5.2": {
-          "alias": "GLM-5.2"
-        },
-        "zai/glm-5.1": {
-          "alias": "GLM-5.1"
         }
       },
       "model": {
         "primary": "custom-ai-soulecho-cc/gpt-5.6-sol",
         "fallbacks": [
           "custom-ai-soulecho-cc/gpt-5.6-terra",
-          "deepseek/deepseek-v4-pro",
-          "zai/glm-5.2",
-          "moonshot/kimi-k3"
+          "deepseek/deepseek-v4-pro"
         ]
       },
       "memorySearch": {
@@ -272,9 +256,7 @@
         "model": {
           "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
           "fallbacks": [
-            "deepseek/deepseek-v4-flash",
-            "zai/glm-5.2",
-            "moonshot/kimi-k3"
+            "deepseek/deepseek-v4-pro"
           ]
         }
       },
@@ -356,7 +338,12 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-        "model": "deepseek/deepseek-v4-flash"
+        "model": {
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "fallbacks": [
+            "deepseek/deepseek-v4-pro"
+          ]
+        }
       },
       {
         "id": "product",
@@ -434,7 +421,12 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-        "model": "deepseek/deepseek-v4-flash"
+        "model": {
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "fallbacks": [
+            "deepseek/deepseek-v4-pro"
+          ]
+        }
       },
       {
         "id": "super",
@@ -512,7 +504,12 @@
           "self-improving-agent",
           "skill-vetter"
         ],
-        "model": "deepseek/deepseek-v4-flash"
+        "model": {
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "fallbacks": [
+            "deepseek/deepseek-v4-pro"
+          ]
+        }
       },
       {
         "id": "legal",
@@ -590,7 +587,12 @@
           "pdf",
           "pptx"
         ],
-        "model": "deepseek/deepseek-v4-flash"
+        "model": {
+          "primary": "custom-ai-soulecho-cc/gpt-5.6-terra",
+          "fallbacks": [
+            "deepseek/deepseek-v4-pro"
+          ]
+        }
       }
     ]
   },
@@ -714,12 +716,6 @@
       "deepseek": {
         "enabled": true
       },
-      "moonshot": {
-        "enabled": true
-      },
-      "zai": {
-        "enabled": true
-      },
       "openclaw-lark": {
         "enabled": true
       },
@@ -731,9 +727,6 @@
             "baseUrl": "https://api.tavily.com"
           }
         }
-      },
-      "diagnostics-prometheus": {
-        "enabled": true
       },
       "langfuse-bridge": {
         "enabled": true,
@@ -747,11 +740,8 @@
     "allow": [
       "openai",
       "deepseek",
-      "moonshot",
-      "zai",
       "openclaw-lark",
       "tavily",
-      "diagnostics-prometheus",
       "langfuse-bridge"
     ]
   },
@@ -766,14 +756,6 @@
       },
       "deepseek:default": {
         "provider": "deepseek",
-        "mode": "api_key"
-      },
-      "moonshot:default": {
-        "provider": "moonshot",
-        "mode": "api_key"
-      },
-      "zai:default": {
-        "provider": "zai",
         "mode": "api_key"
       }
     }
@@ -912,279 +894,6 @@
               "maxTokensField": "max_tokens"
             },
             "api": "openai-completions"
-          }
-        ]
-      },
-      "moonshot": {
-        "baseUrl": "https://api.moonshot.cn/v1",
-        "api": "openai-completions",
-        "models": [
-          {
-            "id": "kimi-k3",
-            "name": "Kimi K3",
-            "reasoning": false,
-            "input": [
-              "text",
-              "image"
-            ],
-            "cost": {
-              "input": 0.95,
-              "output": 4,
-              "cacheRead": 0.16,
-              "cacheWrite": 0
-            },
-            "contextWindow": 262144,
-            "maxTokens": 262144
-          },
-          {
-            "id": "kimi-k2.6",
-            "name": "Kimi K2.6",
-            "reasoning": false,
-            "input": [
-              "text",
-              "image"
-            ],
-            "cost": {
-              "input": 0.95,
-              "output": 4,
-              "cacheRead": 0.16,
-              "cacheWrite": 0
-            },
-            "contextWindow": 262144,
-            "maxTokens": 262144
-          }
-        ]
-      },
-      "zai": {
-        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
-        "api": "openai-completions",
-        "models": [
-          {
-            "id": "glm-5.2",
-            "name": "GLM-5.2",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0,
-              "output": 0,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 1000000,
-            "maxTokens": 131072
-          },
-          {
-            "id": "glm-5.1",
-            "name": "GLM-5.1",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 1.2,
-              "output": 4,
-              "cacheRead": 0.24,
-              "cacheWrite": 0
-            },
-            "contextWindow": 202800,
-            "maxTokens": 131100
-          },
-          {
-            "id": "glm-5",
-            "name": "GLM-5",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 1,
-              "output": 3.2,
-              "cacheRead": 0.2,
-              "cacheWrite": 0
-            },
-            "contextWindow": 202800,
-            "maxTokens": 131100
-          },
-          {
-            "id": "glm-5-turbo",
-            "name": "GLM-5 Turbo",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 1.2,
-              "output": 4,
-              "cacheRead": 0.24,
-              "cacheWrite": 0
-            },
-            "contextWindow": 202800,
-            "maxTokens": 131100
-          },
-          {
-            "id": "glm-5v-turbo",
-            "name": "GLM-5V Turbo",
-            "reasoning": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "cost": {
-              "input": 1.2,
-              "output": 4,
-              "cacheRead": 0.24,
-              "cacheWrite": 0
-            },
-            "contextWindow": 202800,
-            "maxTokens": 131100
-          },
-          {
-            "id": "glm-4.7",
-            "name": "GLM-4.7",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0.6,
-              "output": 2.2,
-              "cacheRead": 0.11,
-              "cacheWrite": 0
-            },
-            "contextWindow": 204800,
-            "maxTokens": 131072
-          },
-          {
-            "id": "glm-4.7-flash",
-            "name": "GLM-4.7 Flash",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0.07,
-              "output": 0.4,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 200000,
-            "maxTokens": 131072
-          },
-          {
-            "id": "glm-4.7-flashx",
-            "name": "GLM-4.7 FlashX",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0.06,
-              "output": 0.4,
-              "cacheRead": 0.01,
-              "cacheWrite": 0
-            },
-            "contextWindow": 200000,
-            "maxTokens": 128000
-          },
-          {
-            "id": "glm-4.6",
-            "name": "GLM-4.6",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0.6,
-              "output": 2.2,
-              "cacheRead": 0.11,
-              "cacheWrite": 0
-            },
-            "contextWindow": 204800,
-            "maxTokens": 131072
-          },
-          {
-            "id": "glm-4.6v",
-            "name": "GLM-4.6V",
-            "reasoning": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "cost": {
-              "input": 0.3,
-              "output": 0.9,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 128000,
-            "maxTokens": 32768
-          },
-          {
-            "id": "glm-4.5",
-            "name": "GLM-4.5",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0.6,
-              "output": 2.2,
-              "cacheRead": 0.11,
-              "cacheWrite": 0
-            },
-            "contextWindow": 131072,
-            "maxTokens": 98304
-          },
-          {
-            "id": "glm-4.5-air",
-            "name": "GLM-4.5 Air",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0.2,
-              "output": 1.1,
-              "cacheRead": 0.03,
-              "cacheWrite": 0
-            },
-            "contextWindow": 131072,
-            "maxTokens": 98304
-          },
-          {
-            "id": "glm-4.5-flash",
-            "name": "GLM-4.5 Flash",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0,
-              "output": 0,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 131072,
-            "maxTokens": 98304
-          },
-          {
-            "id": "glm-4.5v",
-            "name": "GLM-4.5V",
-            "reasoning": true,
-            "input": [
-              "text",
-              "image"
-            ],
-            "cost": {
-              "input": 0.6,
-              "output": 1.8,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 64000,
-            "maxTokens": 16384
           }
         ]
       }
