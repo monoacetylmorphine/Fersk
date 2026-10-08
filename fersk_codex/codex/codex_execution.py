@@ -258,6 +258,8 @@ class FerskCodex(CodexSession, CodexRuntime):
             "model":model,
             "model_provider":model_provider,
         }
+        # 来源：业务 JSON 的 codex.modelReasoningEffort；保留工作区环境变量配置。
+        thread_config["config"]["model_reasoning_effort"] = CONFIG["codex"]["modelReasoningEffort"]
 
         if run_id in cls._pending_interrupts:
             yield {"type": "interrupted"}

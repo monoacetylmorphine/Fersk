@@ -5,25 +5,21 @@ import numpy as np
 import pandas as pd
 
 from datetime import datetime, timezone, timedelta
-eastern8 = timezone(timedelta(hours=8))
-timestamp = datetime.now(eastern8)
-today = timestamp.strftime("%Y%m%d")
-yesterday = (timestamp - timedelta(days=1)).strftime("%Y-%m-%d")
-
-
-file_prefix = "xbtc-sycm"
-
-downloads_dir = "/Users/fersk/Downloads/"
-
-history = pd.read_csv("/Users/fersk/Downloads/xbtc-daily-sales-report.csv")
+EASTERN_8 = timezone(timedelta(hours=8))
+TIMESTAMP = datetime.now(EASTERN_8)
+TODAY = TIMESTAMP.strftime("%Y%m%d")
+YESTERDAY = (TIMESTAMP - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 
-def insert(daily:str, history:str)->pd.DataFrame:
+
+
+
+def insert(file_prefix:str, history:str, today:str)->pd.DataFrame:
 
     # 构建正则：前缀_当日日期_随机十六进制字符串.xlsx
     pattern = re.compile(
-        rf"^{re.escape(daily)}_{today}_[0-9a-fA-F]+\.xlsx$"
+        rf"^{re.escape(file_prefix)}_{today}_[0-9a-zA-Z]+\.xlsx$"
     )
 
     # 在目录中查找所有匹配的文件
@@ -46,7 +42,7 @@ def insert(daily:str, history:str)->pd.DataFrame:
         print("匹配成功:", target_filename)
         sycm = pd.read_excel(full_path)
 
-        yesterday_idx = (history[history.loc[:,"Date"] == yesterday]).index.start
+        yesterday_idx = (history[history.loc[:,"Date"] == YESTERDAY]).index.start
 
         history.fillna(value=0, inplace=True)
 
@@ -67,11 +63,11 @@ def insert(daily:str, history:str)->pd.DataFrame:
         history["sortingDate"] = pd.to_datetime(history["Date"], format="%Y-%m-%d")
         history.sort_values(by="sortingDate", inplace=True)
 
-        history.to_csv("/Users/fersk/Downloads/xbtc-daily-sales-report.csv", index=False, encoding="utf-8-sig")
+        history.to_csv("/Users/fersk/Downloads/xbtc-daily-sales-data.csv", index=False, encoding="utf-8-sig")
         return history
 
 
-def preview(data:pd.DataFrame)->pd.DataFrame:
+def preview(data:pd.DataFrame, today:str)->pd.DataFrame:
 
     RATE_COLS = {
         "Completion Rate\n完成率(%)",
@@ -111,14 +107,28 @@ def preview(data:pd.DataFrame)->pd.DataFrame:
     data = data.replace([np.inf, -np.inf], np.nan)
     data = data.apply(lambda col: col.map(lambda v: fmt(v, col.name)))
 
-    truncated_idx = (data[data["sortingDate"] == yesterday]).index.start
-    data.iloc[:truncated_idx+1, :-1].to_csv(f"/Users/fersk/Downloads/xbtc-daily-sales-report-{today}.csv", index=False, encoding="utf-8-sig")
+    truncated_idx = (data[data["sortingDate"] == YESTERDAY]).index.start
+    data.iloc[:truncated_idx+1, :-1].to_csv(f"/Users/fersk/Downloads/xbtc-daily-sales-preview-{today}.csv", index=False, encoding="utf-8-sig")
 
 
 
 if __name__=="__main__":
-    data = insert(daily=file_prefix, history=history)
-    preview(data=data)
+
+    file_prefix = "xbtc-sycm"
+
+    downloads_dir = "/Users/fersk/Downloads/"
+
+    history = pd.read_csv("/Users/fersk/Downloads/xbtc-daily-sales-data.csv")
+
+    period = [date.strftime("%Y%m%d") for date in pd.date_range(start=pd.Timestamp("20260922"), end=pd.Timestamp("20261008"), freq="D")]
+
+    print(period)
+
+    for date in period:
+
+        data = insert(file_prefix=file_prefix, history=history, today=date)
+
+        preview(data=data, today=date)
 
 
 
