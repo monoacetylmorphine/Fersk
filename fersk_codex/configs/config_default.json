@@ -37,6 +37,7 @@
   },
   "codex": {
     "sandbox": "workspace-write",
+    "modelReasoningEffort": "xhigh",
     "watchdog": {
       "maxRunSeconds": 900,
       "startupTimeoutSeconds": 120,

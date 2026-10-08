@@ -166,11 +166,17 @@
       "additionalProperties": false,
       "required": [
         "sandbox",
+        "modelReasoningEffort",
         "watchdog",
         "models",
         "retry"
       ],
       "properties": {
+        "modelReasoningEffort": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "description": "模型思考强度，传入 SDK config.model_reasoning_effort；实际支持的档位取决于模型和客户端。已有运行配置必须补充此字段。"
+        },
         "sandbox": {
           "enum": [
             "read-only",
