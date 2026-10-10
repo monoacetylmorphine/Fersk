@@ -2,7 +2,7 @@
 # Hermes Agent 配置
 # =============================================================================
 
-_config_version: 39
+_config_version: 46
 
 # ── 数据库 ───────────────────────────────────────────────────────────────
 # 当前 /opt/data 已迁移到 Docker named volume，位于 Linux VM 本地文件系统，
@@ -18,7 +18,7 @@ runtime:
 # 模型
 # =============================================================================
 model:
-  default: gpt-5.6-sol
+  default: gpt-6-sol
   provider: custom:ai.soulecho.cc
   base_url: ''
 
@@ -30,14 +30,15 @@ custom_providers:
   - name: Ai.soulecho.cc
     base_url: https://hk.ai.soulecho.cc/v1
     key_env: HERMES_CUSTOM_AI_SOULECHO_CC_API_KEY
-    model: gpt-5.6-sol
+    model: gpt-6-sol
     models:
       gpt-5.5: {}
-      gpt-5.4: {}
       codex-auto-review: {}
-      gpt-5.3-codex-spark: {}
+      gpt-6-sol: {}
       gpt-5.6-sol: {}
       gpt-5.6-terra: {}
+      gpt-6-astra: {}
+      gpt-6.1-sol: {}
     api_mode: chat_completions
     models_discovered: true
 
@@ -125,8 +126,8 @@ compression:
 # =============================================================================
 auxiliary:
   vision:
-    provider: kimi-coding-cn
-    model: kimi-k3
+    provider: custom:ai.soulecho.cc
+    model: gpt-6-sol
     timeout: 180
   compression:
     provider: deepseek
@@ -134,7 +135,7 @@ auxiliary:
     timeout: 180
   title_generation:
     provider: custom:ai.soulecho.cc
-    model: gpt-5.6-terra
+    model: gpt-6-sol
   profile_describer:
     provider: deepseek
     model: deepseek-v4-flash
@@ -145,7 +146,7 @@ auxiliary:
 agent:
   max_turns: 150
   verbose: false
-  reasoning_effort: low
+  reasoning_effort: medium
   # personalities 用内置默认即可，无需重复定义；如需新增/覆盖，取消注释：
   # personalities:
   #   mentor: "You are a supportive mentor. Guide, don't lecture."
@@ -262,9 +263,10 @@ max_concurrent_sessions: 8
 group_sessions_per_user: true
 
 session_reset:
-  mode: both
-  idle_minutes: 120
-  at_hour: 4
+  mode: daily          # 必填，设置为 "daily" 即可启用每日重置
+  at_hour: 4           # 选填，重置时间（24小时制），默认凌晨 4 点
+  idle_minutes: 1440   # 选填，闲置超时时间（分钟），默认 1440 分钟（24小时）
+  notify: true         # 选填，重置时是否通知用户，默认 true
 
 # =============================================================================
 # MoA（Mixture of Agents）
@@ -322,6 +324,7 @@ platform_toolsets:
   cli:
     - clarify
     - code_execution
+    - connections
     - context_engine
     - cronjob
     - delegation
@@ -333,8 +336,8 @@ platform_toolsets:
     - todo
     - video
     - vision
-    - web
 
+    - web
 platforms:
   feishu:
     enabled: true
@@ -370,6 +373,7 @@ known_builtin_toolsets:
     - clarify
     - code_execution
     - computer_use
+    - connections
     - context_engine
     - cronjob
     - delegation
